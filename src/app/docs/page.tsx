@@ -1,16 +1,9 @@
 'use client'
 
 import { useState } from 'react'
-import {
-  Folder,
-  FileText,
-  ChevronRight,
-  ChevronDown,
-  Edit3,
-  Save,
-  X,
-  Plus,
-} from 'lucide-react'
+import { Folder, FileText, ChevronRight, ChevronDown, Edit3, Save, X, Plus } from 'lucide-react'
+import { Button, Card } from '@/components/ui'
+import { PageHeader } from '@/components/layout'
 
 interface FileNode {
   name: string
@@ -21,10 +14,7 @@ interface FileNode {
 }
 
 export default function DocsPage() {
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set([
-    'company',
-    'projects',
-  ]))
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['company', 'projects']))
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [editingContent, setEditingContent] = useState('')
   const [isEditing, setIsEditing] = useState(false)
@@ -164,7 +154,6 @@ export default function DocsPage() {
   }
 
   const handleSave = () => {
-    // API call to save file
     console.log(`Saving file: ${selectedFile}`)
     setIsEditing(false)
   }
@@ -218,18 +207,17 @@ export default function DocsPage() {
   return (
     <div className="h-full flex gap-6">
       {/* File Tree */}
-      <div className="w-80 card overflow-auto">
-        <h2 className="text-lg font-bold text-white mb-4">Documentation</h2>
+      <Card className="w-80 overflow-auto" title="Documentation">
         <div className="space-y-1">
           {renderTree(fileTree)}
         </div>
-      </div>
+      </Card>
 
       {/* File Editor */}
       <div className="flex-1 card flex flex-col">
         {selectedFile ? (
           <>
-            <div className="flex items-center justify-between pb-4 border-b border-dark-600">
+            <div className="flex items-center justify-between pb-4 border-b border-dark-600 px-6 pt-6">
               <div>
                 <h2 className="text-lg font-bold text-white">
                   {selectedFile.split('/').pop()}
@@ -239,33 +227,21 @@ export default function DocsPage() {
               <div className="flex gap-2">
                 {isEditing ? (
                   <>
-                    <button
-                      onClick={handleSave}
-                      className="btn btn-primary flex items-center gap-2"
-                    >
-                      <Save size={18} />
+                    <Button variant="primary" icon={Save} onClick={handleSave}>
                       Save
-                    </button>
-                    <button
-                      onClick={handleCancel}
-                      className="btn btn-secondary flex items-center gap-2"
-                    >
-                      <X size={18} />
+                    </Button>
+                    <Button variant="secondary" icon={X} onClick={handleCancel}>
                       Cancel
-                    </button>
+                    </Button>
                   </>
                 ) : (
-                  <button
-                    onClick={() => setIsEditing(true)}
-                    className="btn btn-secondary flex items-center gap-2"
-                  >
-                    <Edit3 size={18} />
+                  <Button variant="secondary" icon={Edit3} onClick={() => setIsEditing(true)}>
                     Edit
-                  </button>
+                  </Button>
                 )}
               </div>
             </div>
-            <div className="flex-1 overflow-auto mt-4">
+            <div className="flex-1 overflow-auto p-6">
               {isEditing ? (
                 <textarea
                   value={editingContent}

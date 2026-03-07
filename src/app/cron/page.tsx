@@ -1,15 +1,10 @@
 'use client'
 
 import { useState } from 'react'
-import {
-  Play,
-  Trash2,
-  Calendar,
-  Clock,
-  CheckCircle,
-  XCircle,
-  Plus,
-} from 'lucide-react'
+import { Calendar, Plus, Play, CheckCircle, Clock, XCircle, Trash2 } from 'lucide-react'
+import { Button, Card } from '@/components/ui'
+import { StatusBadge } from '@/components/ui'
+import { PageHeader } from '@/components/layout'
 
 interface CronJob {
   id: string
@@ -54,19 +49,7 @@ export default function CronPage() {
 
   const [showCreateModal, setShowCreateModal] = useState(false)
 
-  const getStatusIcon = (status: CronJob['status']) => {
-    switch (status) {
-      case 'active':
-        return <CheckCircle size={20} className="text-green-400" />
-      case 'paused':
-        return <Clock size={20} className="text-yellow-400" />
-      case 'error':
-        return <XCircle size={20} className="text-red-400" />
-    }
-  }
-
   const handleRunJob = async (jobId: string) => {
-    // API call to run job manually
     console.log(`Running job ${jobId}`)
   }
 
@@ -77,56 +60,45 @@ export default function CronPage() {
   }
 
   const parseCronSchedule = (schedule: string) => {
-    // Simple cron parser for display
     const parts = schedule.split(' ')
     return `${parts[0]} ${parts[1]} ${parts[2]} ${parts[3]} ${parts[4]}`
   }
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-white flex items-center gap-3">
-            <Calendar className="text-primary-500" />
-            Cron Jobs
-          </h1>
-          <p className="text-gray-400 mt-1">
-            Manage scheduled tasks and automation
-          </p>
-        </div>
-        <button
-          onClick={() => setShowCreateModal(true)}
-          className="btn btn-primary flex items-center gap-2"
-        >
-          <Plus size={20} />
-          Create Job
-        </button>
-      </div>
+      <PageHeader
+        title="Cron Jobs"
+        description="Manage scheduled tasks and automation"
+        icon={Calendar}
+        actions={
+          <Button variant="primary" icon={Plus} onClick={() => setShowCreateModal(true)}>
+            Create Job
+          </Button>
+        }
+      />
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="card">
+        <Card>
           <div className="text-sm text-gray-400 mb-1">Total Jobs</div>
           <div className="text-3xl font-bold text-white">{jobs.length}</div>
-        </div>
-        <div className="card">
+        </Card>
+        <Card>
           <div className="text-sm text-gray-400 mb-1">Active Jobs</div>
           <div className="text-3xl font-bold text-green-400">
             {jobs.filter(j => j.status === 'active').length}
           </div>
-        </div>
-        <div className="card">
+        </Card>
+        <Card>
           <div className="text-sm text-gray-400 mb-1">Jobs with Errors</div>
           <div className="text-3xl font-bold text-red-400">
             {jobs.filter(j => j.status === 'error').length}
           </div>
-        </div>
+        </Card>
       </div>
 
       {/* Jobs Table */}
-      <div className="card">
-        <h2 className="text-xl font-bold text-white mb-4">All Cron Jobs</h2>
+      <Card title="All Cron Jobs">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -149,34 +121,26 @@ export default function CronPage() {
                     </code>
                   </td>
                   <td className="py-4">
-                    <div className="flex items-center gap-2">
-                      {getStatusIcon(job.status)}
-                      <span className={`capitalize ${
-                        job.status === 'active' ? 'text-green-400' :
-                        job.status === 'paused' ? 'text-yellow-400' :
-                        'text-red-400'
-                      }`}>
-                        {job.status}
-                      </span>
-                    </div>
+                    <StatusBadge status={job.status} icon />
                   </td>
                   <td className="py-4 text-gray-400">{job.lastRun}</td>
                   <td className="py-4 text-gray-400">{job.nextRun}</td>
                   <td className="py-4">
                     <div className="flex gap-2">
-                      <button
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        icon={Play}
                         onClick={() => handleRunJob(job.id)}
-                        className="btn btn-primary text-sm flex items-center gap-1 px-3"
                       >
-                        <Play size={16} />
                         Run Now
-                      </button>
-                      <button
+                      </Button>
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        icon={Trash2}
                         onClick={() => handleDeleteJob(job.id)}
-                        className="btn btn-danger text-sm flex items-center gap-1 px-3"
-                      >
-                        <Trash2 size={16} />
-                      </button>
+                      />
                     </div>
                   </td>
                 </tr>
@@ -184,25 +148,21 @@ export default function CronPage() {
             </tbody>
           </table>
         </div>
-      </div>
+      </Card>
 
-      {/* Create Modal Placeholder */}
       {showCreateModal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
-          <div className="card max-w-2xl w-full mx-4">
+          <Card>
             <h3 className="text-xl font-bold text-white mb-4">Create Cron Job</h3>
             <p className="text-gray-400 mb-4">
               Create job modal - Form implementation required
             </p>
             <div className="flex justify-end">
-              <button
-                onClick={() => setShowCreateModal(false)}
-                className="btn btn-secondary"
-              >
+              <Button variant="secondary" onClick={() => setShowCreateModal(false)}>
                 Close
-              </button>
+              </Button>
             </div>
-          </div>
+          </Card>
         </div>
       )}
     </div>

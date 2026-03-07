@@ -1,15 +1,11 @@
 'use client'
 
 import { useState } from 'react'
-import {
-  Bot,
-  Play,
-  Pause,
-  FileText,
-  Brain,
-  Trash2,
-} from 'lucide-react'
-import { useWebSocket } from '@/lib/websocket'
+import { Bot, Play, Pause, Trash2 } from 'lucide-react'
+import { Button, Card, getStatusColor } from '@/components/ui'
+import { StatusBadge } from '@/components/ui'
+import { ConnectionStatus } from '@/components/common/connection-status'
+import { PageHeader } from '@/components/layout'
 import AgentModal from '@/components/modals/agent-modal'
 
 interface Agent {
@@ -25,7 +21,6 @@ interface Agent {
 }
 
 export default function AgentsPage() {
-  const { isConnected } = useWebSocket()
   const [agents, setAgents] = useState<Agent[]>([
     { id: 'harvis', name: 'Harvis', status: 'active', model: 'asi1/asi1', sessions: 42, lastActive: '2 min ago' },
     { id: 'codex', name: 'Codex', status: 'active', model: 'asi1/asi1', sessions: 156, lastActive: '5 min ago' },
@@ -35,19 +30,6 @@ export default function AgentsPage() {
   ])
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
   const [showModal, setShowModal] = useState(false)
-
-  const getStatusColor = (status: Agent['status']) => {
-    switch (status) {
-      case 'active':
-        return 'bg-green-900/30 text-green-400'
-      case 'idle':
-        return 'bg-yellow-900/30 text-yellow-400'
-      case 'error':
-        return 'bg-red-900/30 text-red-400'
-      default:
-        return 'bg-gray-900/30 text-gray-400'
-    }
-  }
 
   const handleAgentClick = (agent: Agent) => {
     setSelectedAgent(agent)
@@ -70,32 +52,18 @@ export default function AgentsPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-white flex items-center gap-3">
-            <Bot className="text-primary-500" />
-            Agents
-          </h1>
-          <p className="text-gray-400 mt-1">
-            Manage your AI agents and their configuration
-          </p>
-        </div>
-        <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm ${
-          isConnected ? 'bg-green-900/30 text-green-400' : 'bg-red-900/30 text-red-400'
-        }`}>
-          <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-400' : 'bg-red-400'}`} />
-          {isConnected ? 'Connected' : 'Disconnected'}
-        </div>
-      </div>
+      <PageHeader
+        title="Agents"
+        description="Manage your AI agents and their configuration"
+        icon={Bot}
+        actions={<ConnectionStatus showLabel />}
+      />
 
-      {/* Agents Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {agents.map((agent) => (
-          <div
+          <Card
             key={agent.id}
-            className="card cursor-pointer hover:border-primary-500 transition-colors group"
-            onClick={() => handleAgentClick(agent)}
+            className="cursor-pointer hover:border-primary-500 transition-colors group"
           >
             <div className="flex items-start justify-between mb-4">
               <div className="flex items-center gap-3">
@@ -104,23 +72,21 @@ export default function AgentsPage() {
                 </div>
                 <div>
                   <h3 className="text-lg font-bold text-white">{agent.name}</h3>
-                  <div className={`text-xs px-2 py-0.5 rounded-full ${getStatusColor(agent.status)}`}>
-                    {agent.status.toUpperCase()}
-                  </div>
+                  <StatusBadge status={agent.status} icon={false} />
                 </div>
               </div>
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={Trash2}
                 onClick={(e) => {
                   e.stopPropagation()
                   handleDeleteAgent(agent.id)
                 }}
-                className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-400 transition-opacity"
-              >
-                <Trash2 size={18} />
-              </button>
+                className="opacity-0 group-hover:opacity-100 hover:text-red-400"
+              />
             </div>
 
-            {/* Stats */}
             <div className="space-y-2">
               <div className="flex justify-between text-sm">
                 <span className="text-gray-400">Model:</span>
@@ -136,22 +102,24 @@ export default function AgentsPage() {
               </div>
             </div>
 
-            {/* Quick Actions */}
             <div className="flex gap-2 mt-4">
-              <button className="flex-1 btn btn-primary text-sm flex items-center justify-center gap-2">
-                <Play size={16} />
+              <Button variant="primary" size="sm" icon={Play} className="flex-1">
                 Start
-              </button>
-              <button className="flex-1 btn btn-secondary text-sm flex items-center justify-center gap-2">
-                <Pause size={16} />
+              </Button>
+              <Button variant="secondary" size="sm" icon={Pause} className="flex-1">
                 Pause
-              </button>
+              </Button>
             </div>
-          </div>
+
+            {/* Invisible click area for opening modal */}
+            <div
+              className="absolute inset-0 cursor-pointer"
+              onClick={() => handleAgentClick(agent)}
+            />
+          </Card>
         ))}
       </div>
 
-      {/* Agent Modal */}
       {showModal && selectedAgent && (
         <AgentModal
           agent={selectedAgent}

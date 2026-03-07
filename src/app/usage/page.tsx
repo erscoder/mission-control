@@ -1,12 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import {
-  DollarSign,
-  TrendingUp,
-  BarChart3,
-  PieChart,
-} from 'lucide-react'
+import { BarChart3, DollarSign, TrendingUp, PieChart } from 'lucide-react'
+import { Metric, Card } from '@/components/ui'
+import { PageHeader } from '@/components/layout'
 
 interface UsageData {
   model: string
@@ -16,7 +12,7 @@ interface UsageData {
 }
 
 export default function UsagePage() {
-  const [usageData, setUsageData] = useState<UsageData[]>([
+  const [usageData] = useState<UsageData[]>([
     { model: 'asi1/asi1', tokens: 145000, cost: 4.35, percentage: 65 },
     { model: 'kimi-coding', tokens: 58000, cost: 2.90, percentage: 26 },
     { model: 'claude-sonnet-4', tokens: 12000, cost: 0.72, percentage: 5 },
@@ -29,50 +25,39 @@ export default function UsagePage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold text-white flex items-center gap-3">
-          <BarChart3 className="text-primary-500" />
-          Usage Dashboard
-        </h1>
-        <p className="text-gray-400 mt-1">
-          Track token usage and costs across all agents
-        </p>
-      </div>
+      <PageHeader
+        title="Usage Dashboard"
+        description="Track token usage and costs across all agents"
+        icon={BarChart3}
+      />
 
       {/* Metric Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="card">
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-gray-400 text-sm">Total Tokens</div>
-            <DollarSign className="w-5 h-5 text-gray-500" />
-          </div>
-          <div className="text-3xl font-bold text-white">{totalTokens.toLocaleString()}</div>
-          <div className="text-sm text-gray-500 mt-1">This month</div>
-        </div>
-
-        <div className="card">
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-gray-400 text-sm">Total Cost</div>
-            <TrendingUp className="w-5 h-5 text-gray-500" />
-          </div>
-          <div className="text-3xl font-bold text-white">${totalCost.toFixed(2)}</div>
-          <div className="text-sm text-gray-500 mt-1">This month</div>
-        </div>
-
-        <div className="card">
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-gray-400 text-sm">Avg Cost/1K Tokens</div>
-            <PieChart className="w-5 h-5 text-gray-500" />
-          </div>
-          <div className="text-3xl font-bold text-white">${avgCostPer1K.toFixed(3)}</div>
-          <div className="text-sm text-gray-500 mt-1">Efficiency</div>
-        </div>
+        <Metric
+          title="Total Tokens"
+          value={totalTokens.toLocaleString()}
+          change="This month"
+          icon={DollarSign}
+          trend="neutral"
+        />
+        <Metric
+          title="Total Cost"
+          value={`$${totalCost.toFixed(2)}`}
+          change="This month"
+          icon={TrendingUp}
+          trend="neutral"
+        />
+        <Metric
+          title="Avg Cost/1K Tokens"
+          value={`$${avgCostPer1K.toFixed(3)}`}
+          change="Efficiency"
+          icon={PieChart}
+          trend="neutral"
+        />
       </div>
 
       {/* Usage by Model */}
-      <div className="card">
-        <h2 className="text-xl font-bold text-white mb-4">Usage by Model</h2>
+      <Card title="Usage by Model">
         <div className="space-y-4">
           {usageData.map((item) => (
             <div key={item.model} className="space-y-2">
@@ -92,28 +77,25 @@ export default function UsagePage() {
             </div>
           ))}
         </div>
-      </div>
+      </Card>
 
       {/* Usage Timeline */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="card">
-          <h2 className="text-xl font-bold text-white mb-4">Daily Usage</h2>
+        <Card title="Daily Usage">
           <div className="h-64 flex items-center justify-center text-gray-500">
             <p>Daily usage chart - Recharts component</p>
           </div>
-        </div>
+        </Card>
 
-        <div className="card">
-          <h2 className="text-xl font-bold text-white mb-4">Cost Distribution</h2>
+        <Card title="Cost Distribution">
           <div className="h-64 flex items-center justify-center text-gray-500">
             <p>Cost pie chart - Recharts component</p>
           </div>
-        </div>
+        </Card>
       </div>
 
       {/* Agent Breakdown */}
-      <div className="card">
-        <h2 className="text-xl font-bold text-white mb-4">Usage by Agent</h2>
+      <Card title="Usage by Agent">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -157,7 +139,7 @@ export default function UsagePage() {
             </tbody>
           </table>
         </div>
-      </div>
+      </Card>
     </div>
   )
 }
