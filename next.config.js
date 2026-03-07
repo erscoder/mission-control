@@ -2,16 +2,26 @@
 const nextConfig = {
   reactStrictMode: true,
   transpilePackages: ['lucide-react'],
-  rewrites: async () => [
-    {
-      source: '/api/ws',
-      destination: 'http://localhost:18789/ws',
-    },
-    {
-      source: '/api/gateway/:path*',
-      destination: 'http://localhost:18789/:path*',
-    },
-  ],
-}
 
-module.exports = nextConfig
+  env: {
+    NEXT_PUBLIC_GATEWAY_TOKEN: '0a89ee11390e477248cf3db7774279d89d4df35fcae28ccd714921d80c2af1ae',
+    NEXT_PUBLIC_GATEWAY_HOST: '127.0.0.1',
+    NEXT_PUBLIC_GATEWAY_PORT: '18789',
+  },
+
+  // Serve static MkDocs site
+  async rewrites() {
+    return [
+      {
+        source: '/api/ws',
+        destination: 'http://localhost:18789/ws',
+      },
+      {
+        source: '/docs-site/:path*',
+        destination: '/docs-site/:path*',
+      },
+    ];
+  },
+};
+
+export default nextConfig;
