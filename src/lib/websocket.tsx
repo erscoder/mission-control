@@ -1,6 +1,6 @@
-'use client'
+"use client"
 
-import { useState, useEffect, createContext, useContext, ReactNode } from 'react'
+import { useState, useEffect, createContext, useContext, ReactNode } from "react"
 
 interface WebSocketContextType {
   isConnected: boolean
@@ -24,43 +24,43 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
 
     const connect = () => {
       try {
-        wsInstance = new WebSocket('ws://localhost:18789/ws?token=0a89ee11390e477248cf3db7774279d89d4df35fcae28ccd714921d80c2af1ae')
+        wsInstance = new WebSocket("ws://localhost:18789/ws?token=0a89ee11390e477248cf3db7774279d89d4df35fcae28ccd714921d80c2af1ae")
 
         wsInstance.onopen = () => {
-          console.log('WebSocket connected')
+          console.log("WebSocket connected")
           setIsConnected(true)
           setRetryCount(0)
         }
 
         wsInstance.onclose = () => {
-          console.log('WebSocket disconnected')
+          console.log("WebSocket disconnected")
           setIsConnected(false)
 
           if (retryCount < MAX_RETRIES) {
             console.log(`Retrying connection... (${retryCount + 1}/${MAX_RETRIES})`)
             retryTimeout = setTimeout(() => {
-              setRetryCount(prev => prev + 1)
+              setRetryCount((prev) => prev + 1)
               connect()
             }, RETRY_DELAY)
           }
         }
 
         wsInstance.onerror = (error) => {
-          console.error('WebSocket error:', error)
+          console.error("WebSocket error:", error)
         }
 
         wsInstance.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data)
-            setMessages(prev => [...prev.slice(-49), data])
+            setMessages((prev) => [...prev.slice(-49), data])
           } catch (e) {
-            console.error('Failed to parse WebSocket message:', e)
+            console.error("Failed to parse WebSocket message:", e)
           }
         }
 
         setWs(wsInstance)
       } catch (error) {
-        console.error('Failed to create WebSocket:', error)
+        console.error("Failed to create WebSocket:", error)
       }
     }
 
@@ -80,7 +80,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(message))
     } else {
-      console.warn('WebSocket is not connected')
+      console.warn("WebSocket is not connected")
     }
   }
 
@@ -94,7 +94,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
 export function useWebSocket() {
   const context = useContext(WebSocketContext)
   if (context === undefined) {
-    throw new Error('useWebSocket must be used within a WebSocketProvider')
+    throw new Error("useWebSocket must be used within a WebSocketProvider")
   }
   return context
 }
