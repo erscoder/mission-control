@@ -1,6 +1,6 @@
 # MEMORY.md - Harvis Long-Term Memory
 
-*Last updated: 2026-04-04*
+*Last updated: 2026-04-05*
 
 ## About Kike
 
@@ -32,7 +32,7 @@
 | Agente | Rol |
 |--------|-----|
 | **Harvis** (yo) | Orchestrator, planifico, coordino, propongo |
-| **Sentinel** | Genera aplicaciones automáticamente — lee `memory/roadmap.md` |
+| **Sentinel/Henry** | HIM — personal swarm AI agents, crea valor económico 24/7 (pre-seed funded) |
 | **Codex** | Backend / Python / API |
 | **Luna** | Frontend / React / UI |
 | **Vector** | QA / Validación |
@@ -80,39 +80,51 @@
 
 ---
 
-## Sentinel — Arquitectura (2026-04-05)
+## Sentinel = Henry / HIM (2026-04-07)
 
-**Stack:** `LangGraph + LangChain + SQLite + ChromaDB`
+**Product:** HIM — Henry Intelligent Machines. Pre-seed funded by 021T, @alexwg, @devontriplett21.
+**Mission:** Personal swarm of AI agents autonomously creating economic value 24/7.
+**One-liner:** The antidote to AI that only benefits a small group.
 
-**Patrones agentic:** `memory/topics/agentic-design-patterns.md`
+**Henry Loop:** RESEARCH → MATCH → BUILD → APPROVE → DEPLOY (always running)
+- RESEARCH: scout thousands of websites 24/7, hunt for market gaps
+- MATCH: deeply research user, map to opportunities
+- BUILD: create micro-business drafts autonomously
+- APPROVE: user reviews and approves ALL work
+- DEPLOY: execute with user budget, create real economic value
 
-**Karpathy Knowledge Loop** (implementado 2026-04-05):
-```
-Observer (terminal, git, files, chat)
-    ↓
-raw/ (snapshots JSONL)
-    ↓
-compiler.py (LLM summaries) → wiki/
-    ↓
-qa_agent.py (Q&A con memoria de lo que Kike trabaja)
-    ↓
-lint.py (detecta gaps)
+**Stack:** LangGraph + LangChain + MemPalace (AAAK memory) + ChromaDB
+
+**Docs:**
+- `~/clawd/projects/sentinel/SOUL.md` — Henry's identity
+- `~/clawd/projects/sentinel/docs/HIM.md` — full product vision
+- `~/clawd/projects/sentinel/memory/roadmap.md` — technical + product roadmap
+- `memory/topics/agentic-design-patterns.md` — patrones agentic
+
+**Skill Router:**
+```python
+from skill_router import SkillRouter
+router = SkillRouter()
+skills = router.route("build a landing page")  # → [ui-ux-pro-max]
+skill = router.load_skill("ui-ux-pro-max")   # → content
 ```
 
 **Archivos clave:**
-- `observer_knowledge.py` — recoge actividad con sanitización
-- `sync_observer.py` — loop completo (cron cada 6h)
-- `llm.py` — backend Ollama/Kimi/OpenAI
-- `compiler.py`, `qa_agent.py`, `lint.py`
+- `agent/channels/telegram_bot.py` — bot principal
+- `agent/research/qa_agent.py` — QA con MemPalace
+- `agent/research/llm_http.py` — LLM streaming (MiniMax/Ollama)
+- `agent/tools/hyperliquid_tool.py` — precios crypto
+- `agent/tools/ta_tool.py` — análisis técnico
+- `agent/mempalace_bridge.py` — bridge MemPalace
+- `agent/session_memory.py` — memoria de sesión
+- `agent/skill_router.py` — router de skills
 
-**Arranque manual:**
+**Arranque:**
 ```bash
-cd ~/clawd/projects/sentinel && python3 sync_observer.py
+cd ~/clawd/projects/sentinel && make run
 ```
 
-**Arranque agente (legacy):**
-```bash
-cd ~/clawd/projects/sentinel/agent
+**Old Karpathy system (wiki + compiler + lint) — ELIMINADO (2026-04-07). Reemplazado por MemPalace.**
 .venv/bin/python main.py --mode full
 ```
 
