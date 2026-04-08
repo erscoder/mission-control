@@ -32,7 +32,7 @@
 | Agente | Rol |
 |--------|-----|
 | **Harvis** (yo) | Orchestrator, planifico, coordino, propongo |
-| **Sentinel/Henry** | HIM — personal swarm AI agents, crea valor económico 24/7 (pre-seed funded) |
+| **Sentinel** | HIM — personal swarm AI agents, crea valor económico 24/7 (pre-seed funded) |
 | **Codex** | Backend / Python / API |
 | **Luna** | Frontend / React / UI |
 | **Vector** | QA / Validación |
@@ -80,13 +80,13 @@
 
 ---
 
-## Sentinel = Henry / HIM (2026-04-07)
+## Sentinel = HIM (2026-04-07)
 
-**Product:** HIM — Henry Intelligent Machines. Pre-seed funded by 021T, @alexwg, @devontriplett21.
+**Product:** HIM — Human Intelligence Machines. Pre-seed funded by 021T, @alexwg, @devontriplett21.
 **Mission:** Personal swarm of AI agents autonomously creating economic value 24/7.
 **One-liner:** The antidote to AI that only benefits a small group.
 
-**Henry Loop:** RESEARCH → MATCH → BUILD → APPROVE → DEPLOY (always running)
+**Sentinel Loop:** RESEARCH → MATCH → BUILD → APPROVE → DEPLOY (always running)
 - RESEARCH: scout thousands of websites 24/7, hunt for market gaps
 - MATCH: deeply research user, map to opportunities
 - BUILD: create micro-business drafts autonomously
@@ -96,7 +96,7 @@
 **Stack:** LangGraph + LangChain + MemPalace (AAAK memory) + ChromaDB
 
 **Docs:**
-- `~/clawd/projects/sentinel/SOUL.md` — Henry's identity
+- `~/clawd/projects/sentinel/SOUL.md` — Sentinel's identity
 - `~/clawd/projects/sentinel/docs/HIM.md` — full product vision
 - `~/clawd/projects/sentinel/memory/roadmap.md` — technical + product roadmap
 - `memory/topics/agentic-design-patterns.md` — patrones agentic
