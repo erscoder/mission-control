@@ -1,6 +1,6 @@
 # MEMORY.md - Harvis Long-Term Memory
 
-*Last updated: 2026-04-05*
+*Last updated: 2026-04-11*
 
 ## About Kike
 
@@ -22,7 +22,7 @@
 6. **Tests + Build** después de cada cambio de código
 7. **Usar Write/Edit** para ficheros, nunca exec + heredoc
 8. **Docker**: `docker compose up -d` siempre, nunca `docker run`
-9. **CHANGELOG.md** en cada proyecto después de cambios
+9. **CHANGELOG.md** en cada proyecto — update after EVERY commit with description + reason in English ([YYYY-MM-DD] type: description)
 10. **Lucide React** para iconos, nunca emojis
 
 ---
@@ -141,6 +141,36 @@ cd ~/clawd/projects/sentinel && make run
 ## Nexus Project
 
 **S10:** Paper Trading Live — 30-day validation con Alpaca. Status: pausado.
+
+## 🤖 claude-session-tools — Viewer Claude Code CLI (2026-04-11)
+
+**Ubicación:** `~/clawd/projects/claude-session-tools/`
+
+**CLI:** `claude-session list|cat|watch|tail|resume`
+**Telegram bot:** `python3 telegram_bot.py list|events|watch|poll|stop`
+
+### Uso Telegram
+1. Escribe `/sessions` → mando lista con botones inline
+2. Click en botón → callback_data `cs:events:<sid>` → mando eventos recientes
+3. Botón Watch → `cs:watch:<sid>:<count>` → guardo watch en `watch_state.json`
+4. Cron job cada 30s → `poll_watches()` → mando updates a Telegram si hay cambios
+
+### Callback patterns
+- `cs:list` → lista de sessions
+- `cs:events:<sid>` → eventos recientes
+- `cs:watch:<sid>:<last_count>` → iniciar watch
+- `cs:stop:<sid>` → parar watch
+
+### Archivos clave
+- `cli.py` — CLI tool standalone
+- `telegram_bot.py` — Telegram handler
+- `parser.py` / `renderer.py` — JSONL parser y rich renderer
+- `watch_state.json` — watches activos
+
+### Dependencias
+`pip install click rich watchfiles`
+
+---
 
 ## Synapseia Network
 
