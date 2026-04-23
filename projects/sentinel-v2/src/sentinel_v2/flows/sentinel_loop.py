@@ -14,7 +14,7 @@ import threading
 from typing import Optional
 
 from crewai.flow.flow import Flow, listen, start, router
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 log = logging.getLogger("sentinel_v2.flow")
 
@@ -116,13 +116,28 @@ class SentinelLoopFlow(Flow[SentinelState]):
         print("Phase 1: RESEARCH — scouting web...")
 
         from sentinel_v2.crews.research_crew.research_crew import research_crew
+        from sentinel_v2.dashboard_state import write_state, write_flow_breakdown
 
         # Emit state update
-        from sentinel_v2.dashboard_state import write_state
         write_state(
             cycle=self.state.cycle_count,
             phase="research",
             opportunity=self.state.top_opportunity if self.state.top_opportunity else None,
+        )
+
+        write_flow_breakdown(
+            cycle=self.state.cycle_count,
+            phase="research",
+            sub_phase="scouting-opportunities",
+            status="running",
+            progress=0.3,
+            current_task="Scouting web for opportunities",
+            pending_tasks=["Analyze opportunities", "Select top opportunity"],
+            activity={
+                "type": "phase_start",
+                "agent": "web-scout",
+                "message": "Starting web research for opportunities",
+            },
         )
 
         crew = research_crew()
@@ -139,10 +154,27 @@ class SentinelLoopFlow(Flow[SentinelState]):
         )
 
         # Update state after research
+        opp_title = self.state.top_opportunity.get("title", "?") if self.state.top_opportunity else None
         write_state(
             cycle=self.state.cycle_count,
             phase="research_completed",
             opportunity=self.state.top_opportunity,
+        )
+
+        write_flow_breakdown(
+            cycle=self.state.cycle_count,
+            phase="research",
+            sub_phase="scouting-opportunities",
+            status="completed",
+            progress=1.0,
+            completed_tasks=["Scout web for opportunities", "Fetch top opportunity"],
+            pending_tasks=[],
+            opportunity_title=opp_title,
+            activity={
+                "type": "phase_complete",
+                "agent": "sentinel",
+                "message": f"Research complete — {len(self.state.opportunities)} opportunities found",
+            },
         )
 
         # Store in CrewAI memory
@@ -171,13 +203,28 @@ class SentinelLoopFlow(Flow[SentinelState]):
         print("Phase 2: MATCH — profiling Kike and matching...")
 
         from sentinel_v2.crews.match_crew.match_crew import match_crew
+        from sentinel_v2.dashboard_state import write_state, write_flow_breakdown
 
         # Emit state update
-        from sentinel_v2.dashboard_state import write_state
         write_state(
             cycle=self.state.cycle_count,
             phase="match",
             opportunity=self.state.top_opportunity,
+        )
+
+        write_flow_breakdown(
+            cycle=self.state.cycle_count,
+            phase="match",
+            sub_phase="profile-matching",
+            status="running",
+            progress=0.3,
+            current_task="Fetching Kike profile and matching",
+            pending_tasks=["Calculate match score"],
+            activity={
+                "type": "phase_start",
+                "agent": "matcher",
+                "message": "Starting profile matching",
+            },
         )
 
         crew = match_crew()
@@ -208,6 +255,22 @@ class SentinelLoopFlow(Flow[SentinelState]):
             opportunity=self.state.top_opportunity,
         )
 
+        write_flow_breakdown(
+            cycle=self.state.cycle_count,
+            phase="match",
+            sub_phase="profile-matching",
+            status="completed",
+            progress=1.0,
+            completed_tasks=["Fetch Kike profile", "Match opportunity to profile"],
+            pending_tasks=[],
+            match_score=self.state.match_score,
+            activity={
+                "type": "phase_complete",
+                "agent": "matcher",
+                "message": f"Match complete — score: {self.state.match_score}",
+            },
+        )
+
         self._touch()
 
     # ─── Phase 3: BUILD ───────────────────────────────────────────────────
@@ -224,13 +287,28 @@ class SentinelLoopFlow(Flow[SentinelState]):
         print("Phase 3: BUILD — building micro-business draft...")
 
         from sentinel_v2.crews.build_crew.build_crew import build_crew
+        from sentinel_v2.dashboard_state import write_state, write_flow_breakdown
 
         # Emit state update
-        from sentinel_v2.dashboard_state import write_state
         write_state(
             cycle=self.state.cycle_count,
             phase="build",
             opportunity=self.state.top_opportunity,
+        )
+
+        write_flow_breakdown(
+            cycle=self.state.cycle_count,
+            phase="build",
+            sub_phase="draft-generation",
+            status="running",
+            progress=0.3,
+            current_task="Generating micro-business draft",
+            pending_tasks=["Validate draft", "Write output files"],
+            activity={
+                "type": "phase_start",
+                "agent": "manager",
+                "message": "Starting build phase",
+            },
         )
 
         crew = build_crew()
@@ -242,7 +320,7 @@ class SentinelLoopFlow(Flow[SentinelState]):
         )
 
         self.state.build_output = str(result.raw) if hasattr(result, "raw") else str(result)
-        
+
         # Update state after build
         write_state(
             cycle=self.state.cycle_count,
@@ -250,7 +328,22 @@ class SentinelLoopFlow(Flow[SentinelState]):
             opportunity=self.state.top_opportunity,
             build_output=self.state.build_output[:1000] if self.state.build_output else "",  # Truncate
         )
-        
+
+        write_flow_breakdown(
+            cycle=self.state.cycle_count,
+            phase="build",
+            sub_phase="draft-generation",
+            status="completed",
+            progress=1.0,
+            completed_tasks=["Generate draft", "Write output files"],
+            pending_tasks=[],
+            activity={
+                "type": "phase_complete",
+                "agent": "builder",
+                "message": "Build draft complete",
+            },
+        )
+
         # Store in CrewAI memory
         try:
             self.remember(
@@ -277,7 +370,7 @@ class SentinelLoopFlow(Flow[SentinelState]):
         print("Phase 4: APPROVE — sending to Kike for review...")
 
         summary = self._build_approval_summary()
-        
+
         # Send Telegram poll
         from sentinel_v2.tools.telegram_tool import TelegramTool
         tool = TelegramTool()
@@ -301,6 +394,7 @@ class SentinelLoopFlow(Flow[SentinelState]):
         Blocks until Kike approves/requests revision/times out (1h default).
         """
         from sentinel_v2.tools.approval_state import ApprovalState
+        from sentinel_v2.dashboard_state import write_state, write_flow_breakdown
 
         approval = ApprovalState()
         cycle = self.state.cycle_count
@@ -313,12 +407,26 @@ class SentinelLoopFlow(Flow[SentinelState]):
         )
 
         # Emit state update for approval waiting
-        from sentinel_v2.dashboard_state import write_state
         write_state(
             cycle=self.state.cycle_count,
             phase="approve",
             opportunity=self.state.top_opportunity,
             build_output=self.state.build_output[:1000] if self.state.build_output else "",
+        )
+
+        write_flow_breakdown(
+            cycle=self.state.cycle_count,
+            phase="approve",
+            sub_phase="human-review",
+            status="running",
+            progress=0.5,
+            current_task="Waiting for Kike approval",
+            pending_tasks=["Kike approval", "Deploy to production"],
+            activity={
+                "type": "awaiting_approval",
+                "agent": "sentinel",
+                "message": "Awaiting Kike approval on draft",
+            },
         )
 
         import time
@@ -367,8 +475,10 @@ class SentinelLoopFlow(Flow[SentinelState]):
         log.info("Phase 5: DEPLOY")
         print("Phase 5: DEPLOY — deploying to production...")
 
+        from sentinel_v2.crews.deploy_crew.deploy_crew import deploy_crew
+        from sentinel_v2.dashboard_state import write_state, write_flow_breakdown
+
         # Emit state update for deploy phase
-        from sentinel_v2.dashboard_state import write_state
         write_state(
             cycle=self.state.cycle_count,
             phase="deploy",
@@ -376,7 +486,20 @@ class SentinelLoopFlow(Flow[SentinelState]):
             build_output=self.state.build_output[:1000] if self.state.build_output else "",
         )
 
-        from sentinel_v2.crews.deploy_crew.deploy_crew import deploy_crew
+        write_flow_breakdown(
+            cycle=self.state.cycle_count,
+            phase="deploy",
+            sub_phase="deployment",
+            status="running",
+            progress=0.5,
+            current_task="Deploying to production",
+            pending_tasks=["Deploy", "Verify deployment"],
+            activity={
+                "type": "phase_start",
+                "agent": "deployer",
+                "message": "Starting deployment to production",
+            },
+        )
 
         crew = deploy_crew()
         result = crew.kickoff(
