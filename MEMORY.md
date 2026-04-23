@@ -213,23 +213,33 @@ Memory: CrewAI Memory (LanceDB storage)
 - `src/sentinel_v2/main.py` — CLI: `--mode once|daemon|plot`
 
 ### Estado tests (2026-04-23)
-- **61 tests passing**: 28 unit + 33 integration
+- **67 tests passing** (61 + 6 e2e skipped Ollama): 28 unit + 33 integration + 6 e2e
 - Unit: `test_approval_state.py` (10), `test_sentinel_loop.py` (18)
 - Integration: `test_crews_integration.py` (33)
-- Coverage: crew structure, process types, agent counts, state transitions
+- E2E: `test_sentinel_loop_e2e.py` (6 mocked, 3 require TEST_OLLAMA=1)
+- **Coverage: 72%** (sentinel_loop 69%, approval_state 94%, telegram_tool 22%)
 
 ### Issues known
 - `--mode once` necesita OpenAI API key con quota (no funciona con $0 quota)
 - `--mode plot` requiere graphviz (no instalado)
 - Approval: file-based (`/tmp/sentinel_v2_approval.json`) — funciona bien
+- telegram_tool coverage baja (22%) — tests de integración con bot real pendientes
 
-### run once test (bloqueado por quota)
+### Run con Ollama (sin OpenAI quota)
 ```bash
 cd ~/clawd/projects/sentinel-v2
-cp .env.example .env  # añadir OPENAI_API_KEY
+TEST_OLLAMA=1 uv run pytest tests/e2e/ -v
+```
+
+### Run completo con OpenAI
+```bash
+cd ~/clawd/projects/sentinel-v2
+cp .env.example .env  # añadir OPENAI_API_KEY + TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID
 uv run python -m sentinel_v2.main --mode once
 ```
 
 ### Commits sentinel-v2 (en clawd repo)
-- `f4cb647` — fix: approval_state get_action returns None; kickoff tests use _methods patch
-- `4d123ef` — test: crew integration tests (33 tests, 61 total passing)
+- `d01bb5e` — chore: pytest-cov + Ollama .env.example
+- `fc761dc` — test: e2e smoke tests (6 mocked, 3 Ollama)
+- `4d123ef` — test: crew integration tests (33 tests)
+- `f4cb647` — fix: approval_state + kickoff tests
