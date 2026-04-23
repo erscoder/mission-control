@@ -36,6 +36,7 @@ def get_minimax_llm(model: str = "MiniMax-M2.7") -> LLM:
     llm = LLM(
         model=model,
         base_url=base_url,
+        api_key=api_key,
     )
     _llm_cache[model] = llm
     return llm
