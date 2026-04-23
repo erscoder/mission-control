@@ -5,6 +5,7 @@ Tracks flow state and agent messages for the real-time dashboard.
 Now includes granular FlowBreakdown for detailed phase tracking.
 """
 import json
+import re
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any
@@ -13,6 +14,66 @@ from pydantic import BaseModel, Field
 
 STATE_FILE = Path("/tmp/sentinel_v2_state.json")
 AGENT_MESSAGES_FILE = Path("/tmp/sentinel_v2_agent_messages.json")
+
+# ── Path Validation ──────────────────────────────────────────────────────────
+
+ALLOWED_TMP_PREFIX = "/tmp/sentinel_v2_"
+
+
+def _safe_path(path: Path | str) -> Path:
+    """
+    Validate and sanitize a path to prevent path traversal attacks.
+    
+    Rules:
+    - Only allows paths under /tmp/sentinel_v2_*
+    - Rejects paths containing ".." (parent directory traversal)
+    - Rejects paths with suspicious characters like parentheses
+    - Agent IDs are sanitized before use in paths
+    
+    Args:
+        path: Path to validate
+        
+    Returns:
+        Validated Path object
+        
+    Raises:
+        ValueError: If path is unsafe or outside allowed directory
+    """
+    path_str = str(path)
+    
+    # Check for path traversal attempts
+    if ".." in path_str:
+        raise ValueError(f"Path traversal attempt detected: {path_str}")
+    
+    # Must start with allowed prefix
+    if not path_str.startswith(ALLOWED_TMP_PREFIX):
+        raise ValueError(f"Path must start with {ALLOWED_TMP_PREFIX}: {path_str}")
+    
+    # Reject suspicious characters (parentheses, newlines in paths)
+    # Allow alphanumeric, dash, underscore, dot, slash
+    if not re.match(r"^[\w\-./]+$", path_str):
+        raise ValueError(f"Path contains invalid characters: {path_str}")
+    
+    return Path(path_str)
+
+
+def _sanitize_agent_id(agent_id: str) -> str:
+    """
+    Sanitize an agent_id for safe use in file paths.
+    
+    Replaces spaces with dashes, removes any path-separator-like
+    characters, and ensures alphanumerics/dash/underscore only.
+    """
+    # Replace spaces with dashes, lower-case
+    sanitized = agent_id.lower().replace(" ", "-")
+    # Remove any characters that could be used for path traversal
+    sanitized = re.sub(r"[^a-z0-9_\-]", "", sanitized)
+    # Collapse multiple dashes
+    sanitized = re.sub(r"-+", "-", sanitized)
+    # Strip leading/trailing dashes
+    sanitized = sanitized.strip("-")
+    return sanitized or "unknown"
+
 
 # ── Flow Breakdown Schema ─────────────────────────────────────────────────────
 
@@ -114,6 +175,8 @@ def write_state(
     }
     
     try:
+        # Validate path before writing
+        _safe_path(STATE_FILE)
         with open(STATE_FILE, "w") as f:
             json.dump(state, f, indent=2)
     except Exception as e:
@@ -144,6 +207,13 @@ def write_flow_breakdown(
     Each call with `activity` adds to the activity feed.
     """
     BREAKDOWN_FILE = Path("/tmp/sentinel_v2_flow_breakdown.json")
+    
+    # Validate path before using
+    try:
+        _safe_path(BREAKDOWN_FILE)
+    except ValueError as e:
+        print(f"Path validation failed: {e}")
+        return
     
     # Load existing or create new
     breakdown = {}
@@ -208,6 +278,13 @@ def add_blocker(
     """Add a blocker to the current flow breakdown."""
     BREAKDOWN_FILE = Path("/tmp/sentinel_v2_flow_breakdown.json")
     
+    # Validate path
+    try:
+        _safe_path(BREAKDOWN_FILE)
+    except ValueError as e:
+        print(f"Path validation failed: {e}")
+        return
+    
     if not BREAKDOWN_FILE.exists():
         return
     
@@ -240,6 +317,13 @@ def resolve_blocker(blocker_id: str) -> None:
     """Mark a blocker as resolved."""
     BREAKDOWN_FILE = Path("/tmp/sentinel_v2_flow_breakdown.json")
     
+    # Validate path
+    try:
+        _safe_path(BREAKDOWN_FILE)
+    except ValueError as e:
+        print(f"Path validation failed: {e}")
+        return
+    
     if not BREAKDOWN_FILE.exists():
         return
     
@@ -264,6 +348,16 @@ def add_agent_message(
     cycle: int | None = None,
 ) -> None:
     """Add a message from an agent to the chat."""
+    # Sanitize agent_id
+    agent_id = _sanitize_agent_id(agent_id)
+    
+    # Validate agent messages file path
+    try:
+        _safe_path(AGENT_MESSAGES_FILE)
+    except ValueError as e:
+        print(f"Path validation failed: {e}")
+        return
+    
     messages = []
     
     # Load existing messages
@@ -295,6 +389,11 @@ def add_agent_message(
 
 def get_agent_messages() -> list[dict]:
     """Get all agent messages."""
+    try:
+        _safe_path(AGENT_MESSAGES_FILE)
+    except ValueError:
+        return []
+    
     if not AGENT_MESSAGES_FILE.exists():
         return []
     try:
@@ -307,6 +406,30 @@ def get_agent_messages() -> list[dict]:
 def read_flow_breakdown() -> dict:
     """Read the current flow breakdown."""
     BREAKDOWN_FILE = Path("/tmp/sentinel_v2_flow_breakdown.json")
+    
+    try:
+        _safe_path(BREAKDOWN_FILE)
+    except ValueError:
+        # Return empty default if path validation fails
+        return {
+            "cycle": 0,
+            "phase": "idle",
+            "sub_phase": None,
+            "status": "idle",
+            "progress": 0.0,
+            "current_task": None,
+            "next_task": None,
+            "completed_tasks": [],
+            "pending_tasks": [],
+            "blockers": [],
+            "metrics": {},
+            "activities": [],
+            "opportunity_title": None,
+            "match_score": 0.0,
+            "deployed": False,
+            "updated_at": "",
+        }
+    
     if not BREAKDOWN_FILE.exists():
         return {
             "cycle": 0,

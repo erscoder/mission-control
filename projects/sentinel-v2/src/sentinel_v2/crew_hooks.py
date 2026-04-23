@@ -6,6 +6,8 @@ to /tmp/sentinel_v2_agent_messages.json in real-time.
 from __future__ import annotations
 
 import json
+import logging
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -19,6 +21,7 @@ from enum import Enum
 AGENT_MESSAGES_FILE = Path("/tmp/sentinel_v2_agent_messages.json")
 # Lock for thread-safe file writing
 _messages_lock = threading.Lock()
+log = logging.getLogger("sentinel_v2.crew_hooks")
 
 
 class AgentHookType(Enum):
@@ -29,6 +32,66 @@ class AgentHookType(Enum):
     AGENT_ACTION = "agent_action"
     AGENT_OUTPUT = "agent_output"
     TOOL_EXECUTION = "tool_execution"
+
+
+# ── Path Validation ──────────────────────────────────────────────────────────
+
+ALLOWED_TMP_PREFIX = "/tmp/sentinel_v2_"
+
+
+def _safe_path(path: Path | str) -> Path:
+    """
+    Validate and sanitize a path to prevent path traversal attacks.
+    
+    Rules:
+    - Only allows paths under /tmp/sentinel_v2_*
+    - Rejects paths containing ".." (parent directory traversal)
+    - Rejects paths with suspicious characters like parentheses
+    - Agent IDs are sanitized before use in paths
+    
+    Args:
+        path: Path to validate
+        
+    Returns:
+        Validated Path object
+        
+    Raises:
+        ValueError: If path is unsafe or outside allowed directory
+    """
+    path_str = str(path)
+    
+    # Check for path traversal attempts
+    if ".." in path_str:
+        raise ValueError(f"Path traversal attempt detected: {path_str}")
+    
+    # Must start with allowed prefix
+    if not path_str.startswith(ALLOWED_TMP_PREFIX):
+        raise ValueError(f"Path must start with {ALLOWED_TMP_PREFIX}: {path_str}")
+    
+    # Reject suspicious characters (parentheses, newlines in paths)
+    # Allow alphanumeric, dash, underscore, dot, slash
+    if not re.match(r"^[\w\-./]+$", path_str):
+        raise ValueError(f"Path contains invalid characters: {path_str}")
+    
+    return Path(path_str)
+
+
+def _sanitize_agent_id(agent_id: str) -> str:
+    """
+    Sanitize an agent_id for safe use in file paths.
+    
+    Replaces spaces with dashes, removes any path-separator-like
+    characters, and ensures alphanumerics/dash/underscore only.
+    """
+    # Replace spaces with dashes, lower-case
+    sanitized = agent_id.lower().replace(" ", "-")
+    # Remove any characters that could be used for path traversal
+    sanitized = re.sub(r"[^a-z0-9_\-]", "", sanitized)
+    # Collapse multiple dashes
+    sanitized = re.sub(r"-+", "-", sanitized)
+    # Strip leading/trailing dashes
+    sanitized = sanitized.strip("-")
+    return sanitized or "unknown"
 
 
 def add_agent_message(
@@ -49,6 +112,9 @@ def add_agent_message(
         cycle: Cycle number
         metadata: Additional data (files reviewed, issues found, etc.)
     """
+    # Sanitize agent_id before any use in paths/logs
+    agent_id = _sanitize_agent_id(agent_id)
+    
     msg_data = {
         "agent_id": agent_id,
         "message": message,
@@ -61,12 +127,12 @@ def add_agent_message(
     
     with _messages_lock:
         existing_messages = []
-        if AGENT_MESSAGES_FILE.exists():
-            try:
+        try:
+            if AGENT_MESSAGES_FILE.exists() and AGENT_MESSAGES_FILE.stat().st_size > 0:
                 with open(AGENT_MESSAGES_FILE, "r") as f:
-                    existing_messages = json.load(f) if AGENT_MESSAGES_FILE.stat().st_size > 0 else []
-            except Exception:
-                existing_messages = []
+                    existing_messages = json.load(f)
+        except (IOError, JSONDecodeError, ValueError):
+            existing_messages = []
         
         existing_messages.append(msg_data)
         
@@ -75,10 +141,12 @@ def add_agent_message(
             existing_messages = existing_messages[-500:]
         
         try:
+            # Validate path before writing
+            _safe_path(AGENT_MESSAGES_FILE)
             with open(AGENT_MESSAGES_FILE, "w") as f:
                 json.dump(existing_messages, f, indent=2)
-        except Exception:
-            # Silently fail if we can't write (e.g., disk full)
+        except (IOError, JSONDecodeError, ValueError):
+            log.warning("Could not write agent messages file: %s", exc)
             pass
 
 
@@ -99,68 +167,6 @@ def crew_with_hooks(
     Returns:
         Crew with hooks attached
     """
-    # Store original kickoff
-    original_kickoff = crew.kickoff
-    
-    @wraps(original_kickoff)
-    def kickoff_with_hooks(**kwargs) -> Any:
-        """Enhanced kickoff that streams agent messages."""
-        # Log phase start
-        add_agent_message(
-            agent_id="orchestrator",
-            message=f"Starting phase: {phase}",
-            hook_type="phase_started",
-            phase=phase,
-            cycle=cycle,
-            metadata={"task_count": len(crewy.tasks)}
-        )
-        
-        # Hook into each task's lifecycle
-        for task in crew.tasks:
-            _hook_task(task, phase, cycle)
-        
-        # Log each agent
-        for agent in crew.agents:
-            add_agent_message(
-                agent_id=_agent_id_from_agent(agent),
-                message=f"Agent initialized: {agent.role}",
-                hook_type="agent_initialized",
-                phase=phase,
-                cycle=cycle,
-                metadata={
-                    "role": agent.role,
-                    "goal": agent.goal[:100] + "..." if len(agent.goal) > 100 else agent.goal
-                }
-            )
-        
-        # Run original kickoff
-        try:
-            result = original_kickoff(**kwargs)
-            
-            # Log completion
-            add_agent_message(
-                agent_id="orchestrator",
-                message=f"Phase completed: {phase}",
-                hook_type="phase_completed",
-                phase=phase,
-                cycle=cycle,
-                metadata={"status": "success"}
-            )
-            
-            return result
-            
-        except Exception as e:
-            # Log error
-            add_agent_message(
-                agent_id="orchestrator",
-                message=f"Phase failed: {phase} - {str(e)}",
-                hook_type="phase_error",
-                phase=phase,
-                cycle=cycle,
-                metadata={"error": str(e)}
-            )
-            raise
-    
     # Store original kickoff
     original_kickoff = crew.kickoff
     
@@ -223,20 +229,12 @@ def crew_with_hooks(
             )
             raise
     
-    # Use object.__setattr__ to bypass Pydantic's __setattr__ override
     object.__setattr__(crew, 'kickoff', kickoff_with_hooks)
     return crew
 
 
 def _hook_task(task: Task, phase: str, cycle: int) -> None:
-    """Hook into task lifecycle to capture outputs.
-    
-    CrewAI doesn't expose direct task-level callbacks, so we wrap
-    the task execution. This works by hooking into the crew's
-    process flow.
-    """
-    # The task metadata will be captured during execution
-    # We track task start/stop via crew-with-wrappers pattern
+    """Hook into task lifecycle to capture outputs."""
     task_json = {
         "id": str(id(task)),
         "description": task.description[:150] + "..." if len(task.description) > 150 else task.description,
@@ -327,7 +325,6 @@ def hook_task_completed(
 def _agent_id_from_agent(agent: Agent) -> str:
     """Extract standardized agent_id from Agent instance."""
     role = agent.role.lower()
-    # Map role to standardized IDs
     role_id_map = {
         "web scout": "web-scout",
         "analyst": "analyst",
@@ -351,24 +348,11 @@ def _agent_id_from_task(task: Task) -> str:
     return "orchestrator"
 
 
-# Convenience function to hook a crew with full instrumentation
 def hook_crew_full(
     crew: Crew,
     phase: str,
     cycle: int
 ) -> Crew:
-    """Apply full instrumentation to a crew.
-    
-    This is the main entry point for adding dashboard streaming
-    to any CrewAI crew.
-    
-    Args:
-        crew: Crew instance
-        phase: Workflow phase
-        cycle: Cycle number
-        
-    Returns:
-        Crew with all hooks applied
-    """
+    """Apply full instrumentation to a crew."""
     crew = crew_with_hooks(crew, phase=phase, cycle=cycle)
     return crew

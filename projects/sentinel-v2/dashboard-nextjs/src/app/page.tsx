@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { io, Socket } from 'socket.io-client'
 import { BACKEND_URL, WEBSOCKET_NAMESPACE } from '@/lib/config'
 import FlowStatePanel from '@/components/FlowStatePanel'
+import PipelineProgressBar from '@/components/PipelineProgressBar'
 import {
   Globe,
   BarChart2,
@@ -21,6 +22,15 @@ import {
   XCircle,
   Lightbulb,
 } from 'lucide-react'
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+}
 
 type FlowState = {
   cycle: number
@@ -107,8 +117,6 @@ const agentNames: Record<string, string> = {
   'deployer': 'Deployment Engineer',
 }
 
-const phases = ['research', 'match', 'build', 'approve', 'deploy']
-
 export default function DashboardPage() {
   const [socket, setSocket] = useState<Socket | null>(null)
   const [flowState, setFlowState] = useState<FlowState | null>(null)
@@ -117,9 +125,12 @@ export default function DashboardPage() {
   const [isConnected, setIsConnected] = useState(false)
 
   useEffect(() => {
+    const SOCKET_AUTH_TOKEN = "sentinel-v2-dashboard-secret"
+
     const socketInstance = io(`${BACKEND_URL}${WEBSOCKET_NAMESPACE}`, {
       path: '/socket.io',
       transports: ['websocket', 'polling'],
+      auth: { token: SOCKET_AUTH_TOKEN },
     })
 
     socketInstance.on('connect', () => {
@@ -151,6 +162,12 @@ export default function DashboardPage() {
     setSocket(socketInstance)
 
     return () => {
+      socketInstance.off('connect')
+      socketInstance.off('disconnect')
+      socketInstance.off('state_update')
+      socketInstance.off('approval_update')
+      socketInstance.off('agent_messages')
+      socketInstance.off('action_response')
       socketInstance.disconnect()
     }
   }, [])
@@ -205,37 +222,14 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      <main className="container mx-auto px-4 py-6">
-        {/* Phase Tracker */}
-        <section className="mb-6">
-          <h2 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-            <span className="text-muted-foreground">§</span> Workflow Phase
-          </h2>
-          <div className="grid grid-cols-5 gap-2">
-            {phases.map((phase, index) => {
-              const isActive = flowState?.phase === phase
-              const isCompleted = phase ? index < phases.indexOf(flowState?.phase ?? '') : false
-
-              return (
-                <div
-                  key={phase}
-                  className={`rounded-lg border p-3 text-center transition-all ${
-                    isActive
-                      ? 'node-active'
-                      : isCompleted
-                      ? 'node-completed'
-                      : 'node-pending'
-                  }`}
-                >
-                  <div className="text-xs font-medium capitalize">{phase}</div>
-                </div>
-              )
-            })}
-          </div>
+      <main className="container mx-auto px-4 py-6 space-y-6">
+        {/* Pipeline Progress Bar */}
+        <section>
+          <PipelineProgressBar />
         </section>
 
-        {/* Flow State Panel — Full Width */}
-        <section className="mb-6">
+        {/* Flow State Panel */}
+        <section>
           <FlowStatePanel />
         </section>
 
@@ -291,7 +285,7 @@ export default function DashboardPage() {
                             </span>
                           )}
                         </div>
-                        <p className="text-sm text-muted-foreground leading-relaxed">{msg.message}</p>
+                        <p className="text-sm text-muted-foreground leading-relaxed">{escapeHtml(msg.message)}</p>
                         {msg.metadata && (
                           <div className="mt-2 flex flex-wrap items-center gap-2 rounded bg-muted/30 p-2 text-[10px] text-muted-foreground">
                             {msg.metadata.phase && (

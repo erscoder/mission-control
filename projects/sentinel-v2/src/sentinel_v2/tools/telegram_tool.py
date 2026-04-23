@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import logging
+import time
 from typing import Optional
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -27,9 +28,86 @@ from telegram.constants import ParseMode
 
 log = logging.getLogger("sentinel_v2.telegram")
 
+# ── Rate Limiter (Token Bucket) ──────────────────────────────────────────────
+
+
+class TokenBucketRateLimiter:
+    """
+    Token bucket rate limiter for Telegram messages.
+    Limits to N messages per minute, configurable via TELEGRAM_RATE_LIMIT env var.
+    """
+
+    def __init__(self, max_messages: int | None = None, window_seconds: float = 60.0):
+        # Default: 10 messages/min unless TELEGRAM_RATE_LIMIT is set
+        if max_messages is None:
+            env_limit = os.getenv("TELEGRAM_RATE_LIMIT")
+            max_messages = int(env_limit) if env_limit else 10
+        self._max_messages = max_messages
+        self._window = window_seconds
+        self._tokens: list[float] = []
+
+    def acquire(self) -> bool:
+        """
+        Try to acquire a token.
+        Returns True if allowed, False if rate limited.
+        """
+        now = time.monotonic()
+
+        # Remove tokens that have expired (older than window)
+        cutoff = now - self._window
+        self._tokens = [t for t in self._tokens if t > cutoff]
+
+        if len(self._tokens) >= self._max_messages:
+            log.warning(
+                "Telegram rate limit exceeded: %d messages in last %.0f seconds (max: %d)",
+                len(self._tokens),
+                self._window,
+                self._max_messages,
+            )
+            return False
+
+        self._tokens.append(now)
+        return True
+
+    @property
+    def remaining(self) -> int:
+        """Tokens remaining in current window."""
+        now = time.monotonic()
+        cutoff = now - self._window
+        active = [t for t in self._tokens if t > cutoff]
+        return max(0, self._max_messages - len(active))
+
+
 # ── Bot setup ────────────────────────────────────────────────────────────────
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+
+
+# ── Validate configuration ───────────────────────────────────────────────────
+
+def _validate_config() -> bool:
+    """Check BOT_TOKEN and TELEGRAM_CHAT_ID format. Log errors. Returns True if valid."""
+    valid = True
+    if not BOT_TOKEN or len(BOT_TOKEN) < 40:
+        log.error(
+            "TELEGRAM_BOT_TOKEN invalid format: expected >= 40 chars, got %d",
+            len(BOT_TOKEN),
+        )
+        valid = False
+    if TELEGRAM_CHAT_ID:
+        try:
+            int(TELEGRAM_CHAT_ID)
+        except ValueError:
+            log.error(
+                "TELEGRAM_CHAT_ID invalid format: cannot convert '%s' to int",
+                TELEGRAM_CHAT_ID,
+            )
+            valid = False
+    return valid
+
+
+_CONFIG_VALID = _validate_config()
 
 
 class TelegramTool:
@@ -38,10 +116,13 @@ class TelegramTool:
     Sends messages and handles approval callbacks.
     """
 
+
     def __init__(self):
-        self._token = BOT_TOKEN
+        self._token = BOT_TOKEN if _CONFIG_VALID else ""
+        self._chat_id = TELEGRAM_CHAT_ID if _CONFIG_VALID else ""
         self._app: Optional[Application] = None
         self._approval_callback: Optional[callable] = None
+        self._rate_limiter = TokenBucketRateLimiter()
 
     def set_approval_callback(self, fn: callable) -> None:
         """Register a callback for when Kike responds to an approval."""
@@ -53,10 +134,29 @@ class TelegramTool:
 
     # ── Outbound: send messages ─────────────────────────────────────────────
 
+    def _parse_chat_id(self, chat_id: str | None) -> int | None:
+        """Parse and validate chat_id, returning int or None."""
+        raw = chat_id or self._chat_id
+        if not raw:
+            log.error("No TELEGRAM_CHAT_ID set")
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            log.error("TELEGRAM_CHAT_ID '%s' cannot be converted to int", raw)
+            return None
+
     def send_message(self, text: str, chat_id: Optional[str] = None) -> bool:
         """Send a text message. Works sync via asyncio.run."""
+        if not self._rate_limiter.acquire():
+            return False
+
         if not self._token:
             log.warning("TELEGRAM_BOT_TOKEN not set — printing instead:\n%s", text)
+            return False
+
+        target = self._parse_chat_id(chat_id)
+        if target is None:
             return False
 
         import asyncio
@@ -64,12 +164,8 @@ class TelegramTool:
         async def _send():
             app = self._get_app()
             await app.initialize()
-            target = chat_id or os.getenv("TELEGRAM_CHAT_ID", "")
-            if not target:
-                log.error("No TELEGRAM_CHAT_ID set")
-                return
             await app.bot.send_message(
-                chat_id=int(target),
+                chat_id=target,
                 text=text,
                 parse_mode=ParseMode.MARKDOWN_V2,
             )
@@ -92,8 +188,15 @@ class TelegramTool:
         Send an approval message with inline buttons.
         Returns a tracking id.
         """
+        if not self._rate_limiter.acquire():
+            return f"cycle-{cycle}"
+
         if not self._token:
             log.info("APPROVAL POLL [cycle %d]:\n%s", cycle, summary)
+            return f"cycle-{cycle}"
+
+        target = self._parse_chat_id(chat_id)
+        if target is None:
             return f"cycle-{cycle}"
 
         keyboard = [
@@ -110,9 +213,8 @@ class TelegramTool:
         async def _send():
             app = self._get_app()
             await app.initialize()
-            target = chat_id or os.getenv("TELEGRAM_CHAT_ID", "")
             await app.bot.send_message(
-                chat_id=int(target),
+                chat_id=target,
                 text=summary,
                 parse_mode=ParseMode.MARKDOWN_V2,
                 reply_markup=reply_markup,
