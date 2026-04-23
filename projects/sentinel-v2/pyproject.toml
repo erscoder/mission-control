@@ -1,0 +1,30 @@
+[project]
+name = "sentinel-v2"
+version = "0.1.0"
+description = "Sentinel V2 — CrewAI-powered agent swarm for HIM"
+requires-python = ">=3.11"
+dependencies = [
+    "crewai>=0.80.0",
+    "crewai-tools",
+    "chromadb>=0.4.0",
+    "httpx",
+    "pydantic>=2.0",
+    "python-dotenv",
+    "telegram-send",
+    "python-telegram-bot>=20.0",
+    "lancedb",
+    "loguru",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+]
