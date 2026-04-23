@@ -24,6 +24,60 @@
     --input: 217 33% 17%;
     --ring: 224 76% 48%;
   }
+
+  .dark {
+    --background: 208 70% 8%;
+    --foreground: 208 70% 98%;
+    --card: 208 70% 10%;
+    --card-foreground: 208 70% 98%;
+    --popover: 208 70% 10%;
+    --popover-foreground: 208 70% 98%;
+    --primary: 208 70% 98%;
+    --primary-foreground: 208 70% 9%;
+    --secondary: 208 70% 10%;
+    --secondary-foreground: 208 70% 98%;
+    --muted: 208 70% 10%;
+    --muted-foreground: 208 60% 90%;
+    --accent: 208 70% 10%;
+    --accent-foreground: 208 70% 98%;
+    --destructive: 349 89% 98%;
+    --destructive-foreground: 208 70% 98%;
+    --border: 208 70% 10%;
+    --input: 208 70% 10%;
+    --ring: 213 31% 91%;
+
+    /* Custom Teal Theme */
+    --teal-1: #071315;
+    --teal-2: #0e1b1d;
+    --teal-3: #022d32;
+    --teal-4: #003a43;
+    --teal-5: #004751;
+    --teal-6: #005661;
+    --teal-7: #006a76;
+    --teal-8: #008493;
+    --teal-9: #3ccadd;
+    --teal-10: #2bbfd2;
+    --teal-11: #42cee1;
+    --teal-12: #b4edf6;
+
+    --teal-a1: #0078de05;
+    --teal-a2: #00d6fd0d;
+    --teal-a3: #00d8fb24;
+    --teal-a4: #00d3fe36;
+    --teal-a5: #00d9fe45;
+    --teal-a6: #00deff56;
+    --teal-a7: #00e1fd6d;
+    --teal-a8: #00e2fe8c;
+    --teal-a9: #44e9ffdb;
+    --teal-a10: #31e8ffcf;
+    --teal-a11: #49e9ffdf;
+    --teal-a12: #baf5fef6;
+
+    --teal-contrast: #03272c;
+    --teal-surface: #0c252980;
+    --teal-indicator: #3ccadd;
+    --teal-track: #3ccadd;
+  }
 }
 
 @layer base {
@@ -41,13 +95,13 @@
   .custom-scrollbar::-webkit-scrollbar {
     width: 6px;
   }
-  
+
   .custom-scrollbar::-webkit-scrollbar-track {
-    @apply bg-background/50;
+    background-color: var(--teal-surface);
   }
-  
+
   .custom-scrollbar::-webkit-scrollbar-thumb {
-    @apply bg-muted-foreground/30 rounded-full hover:bg-muted-foreground/50 transition-colors;
+    @apply bg-teal-9 rounded-full hover:bg-teal-10 transition-colors;
   }
 
   /* Phase node animations */
