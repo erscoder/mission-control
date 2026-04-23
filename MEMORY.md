@@ -180,3 +180,56 @@ cd ~/clawd/projects/sentinel && make run
 - Rewards via Solana SPL transfers
 
 **CHANGELOG:** `CHANGELOG.md` en root — diario de cambios.
+
+---
+
+## 🚀 Sentinel V2 — CrewAI Rewrite (2026-04-23)
+
+**Path:** `/Users/kike/clawd/projects/sentinel-v2/`
+**Stack:** CrewAI Flow + CrewAI Memory + CrewAI Agents (Python) + python-telegram-bot
+**Difference from V1:** LangGraph→CrewAI Flow, MemPalace→CrewAI Memory, YAML→Python agents
+
+### Arquitectura
+```
+SentinelLoopFlow (CrewAI Flow)
+├── @start start_cycle()
+├── @listen run_research() → research_crew (sequential: Scout + Analyst)
+├── @listen run_match() → match_crew (sequential: Profile Researcher + Matcher)
+├── @listen run_build() → build_crew (hierarchical: Manager delegates → Frontend + Backend + QA)
+├── @listen request_approval() → TelegramTool.send_approval_poll()
+├── @listen check_approval() → ApprovalState (file-based, polls JSON)
+├── @listen run_deploy() → deploy_crew (sequential: Deployment Engineer + QA Verifier)
+└── @router route_after_approval()
+
+Tools: TelegramTool (python-telegram-bot v20+)
+Memory: CrewAI Memory (LanceDB storage)
+```
+
+### Archivos clave
+- `src/sentinel_v2/flows/sentinel_loop.py` — SentinelLoopFlow con state machine
+- `src/sentinel_v2/crews/*/` — 4 crews (research, match, build, deploy)
+- `src/sentinel_v2/tools/telegram_tool.py` — Telegram bot integration
+- `src/sentinel_v2/tools/approval_state.py` — File-based approval state
+- `src/sentinel_v2/main.py` — CLI: `--mode once|daemon|plot`
+
+### Estado tests (2026-04-23)
+- **61 tests passing**: 28 unit + 33 integration
+- Unit: `test_approval_state.py` (10), `test_sentinel_loop.py` (18)
+- Integration: `test_crews_integration.py` (33)
+- Coverage: crew structure, process types, agent counts, state transitions
+
+### Issues known
+- `--mode once` necesita OpenAI API key con quota (no funciona con $0 quota)
+- `--mode plot` requiere graphviz (no instalado)
+- Approval: file-based (`/tmp/sentinel_v2_approval.json`) — funciona bien
+
+### run once test (bloqueado por quota)
+```bash
+cd ~/clawd/projects/sentinel-v2
+cp .env.example .env  # añadir OPENAI_API_KEY
+uv run python -m sentinel_v2.main --mode once
+```
+
+### Commits sentinel-v2 (en clawd repo)
+- `f4cb647` — fix: approval_state get_action returns None; kickoff tests use _methods patch
+- `4d123ef` — test: crew integration tests (33 tests, 61 total passing)
