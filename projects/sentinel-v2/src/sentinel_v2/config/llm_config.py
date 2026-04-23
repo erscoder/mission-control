@@ -14,7 +14,7 @@ def get_minimax_llm(model: str = "MiniMax-M2.7") -> LLM:
 
     Reads from environment:
     - MINIMAX_API_KEY (required)
-    - MINIMAX_BASE_URL (default: https://api.minimax.io/anthropic)
+    - MINIMAX_BASE_URL (default: https://api.minimax.io/v1)
 
     Usage:
         llm = get_minimax_llm()
@@ -30,7 +30,7 @@ def get_minimax_llm(model: str = "MiniMax-M2.7") -> LLM:
         )
 
     base_url = os.environ.get(
-        "MINIMAX_BASE_URL", "https://api.minimax.io/anthropic"
+        "MINIMAX_BASE_URL", "https://api.minimax.io/v1"
     )
 
     llm = LLM(
@@ -40,3 +40,9 @@ def get_minimax_llm(model: str = "MiniMax-M2.7") -> LLM:
     )
     _llm_cache[model] = llm
     return llm
+
+
+def get_ollama_embedder_config() -> dict:
+    """Return Ollama embedder config dict for CrewAI memory."""
+    from sentinel_v2.config.embedder_config import get_ollama_embedder_config as _get
+    return _get()

@@ -37,9 +37,11 @@ class TestResearchCrew:
     def test_research_crew_has_memory(self):
         """Crew has memory enabled."""
         from sentinel_v2.crews.research_crew.research_crew import research_crew
+        from crewai.memory.unified_memory import Memory
 
         crew = research_crew()
-        assert crew.memory is True
+        assert crew.memory is not None
+        assert isinstance(crew.memory, Memory)
 
     def test_research_crew_agents_have_roles(self):
         """Both agents have defined roles."""
@@ -104,12 +106,12 @@ class TestBuildCrew:
         crew = build_crew()
         assert crew is not None
 
-    def test_build_crew_has_four_agents(self):
-        """Crew has Manager + Frontend + Backend + QA agents."""
+    def test_build_crew_has_six_agents(self):
+        """Crew has Manager + Frontend + Backend + Code Reviewer + Security + QA agents."""
         from sentinel_v2.crews.build_crew.build_crew import build_crew
 
         crew = build_crew()
-        assert len(crew.agents) == 4
+        assert len(crew.agents) == 6
 
     def test_build_crew_hierarchical_process(self):
         """Crew uses hierarchical process."""

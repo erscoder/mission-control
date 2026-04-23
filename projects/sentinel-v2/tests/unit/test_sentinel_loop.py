@@ -268,3 +268,383 @@ class TestFlowLifecycle:
             flow._methods.update(orig_methods)
 
         assert flow.state.last_update != ""
+
+
+class TestRequestApproval:
+    """Tests for request_approval() phase."""
+
+    def test_request_approval_sets_phase_and_pending_since(self, flow):
+        """request_approval() sets current_phase and pending_since."""
+        flow.state.cycle_count = 3
+        flow.state.top_opportunity = {"title": "Test Opportunity",
+                                     "problem_statement": "Test problem"}
+        flow.state.build_output = "Test build output"
+
+        with patch.object(flow, "remember"):
+            with patch("sentinel_v2.tools.telegram_tool.TelegramTool") as mock_tg_cls:
+                mock_tool = MagicMock()
+                mock_tool.send_approval_poll = MagicMock()
+                mock_tg_cls.return_value = mock_tool
+
+                result = flow.request_approval()
+
+        assert result == "pending"
+        assert flow.state.current_phase == "approve"
+        assert flow.state.pending_since != ""
+        mock_tool.send_approval_poll.assert_called_once()
+
+    def test_request_approval_calls_remember(self, flow):
+        """request_approval() stores approval pending in memory."""
+        flow.state.cycle_count = 7
+        flow.state.top_opportunity = {"title": "Op"}
+        flow.state.build_output = "output"
+        flow.state.pending_since = "2026-04-23T10:00:00Z"
+
+        with patch.object(flow, "remember") as mock_remember:
+            with patch("sentinel_v2.tools.telegram_tool.TelegramTool"):
+                flow.request_approval()
+
+        mock_remember.assert_called()
+        call_args = str(mock_remember.call_args)
+        assert "pending approval" in call_args
+
+
+class TestCheckApproval:
+    """Tests for check_approval() polling logic."""
+
+    def test_check_approval_sets_pending(self, flow):
+        """check_approval() writes pending state to ApprovalState."""
+        flow.state.cycle_count = 4
+        flow.state.top_opportunity = {"title": "Op"}
+        flow.state.build_output = "draft"
+
+        mock_approval = MagicMock()
+        mock_approval.is_stop_requested.return_value = False
+        mock_approval.is_revison_requested.return_value = False
+        mock_approval.is_approved.side_effect = [False, False, True]
+        mock_approval.get_action.return_value = "approved"
+        mock_approval.set_pending = MagicMock()
+        mock_approval.clear_pending = MagicMock()
+
+        with patch(
+            "sentinel_v2.tools.approval_state.ApprovalState",
+            return_value=mock_approval,
+        ):
+            with patch("sentinel_v2.dashboard_state.write_state"):
+                with patch("time.sleep"):
+                    result = flow.check_approval()
+
+        assert result == "approved"
+        assert flow.state.approved is True
+        mock_approval.set_pending.assert_called_once()
+        mock_approval.clear_pending.assert_called_once_with(4)
+
+    def test_check_approval_returns_stop_when_stop_requested(self, flow):
+        """check_approval() returns 'stop' when stop is requested."""
+        flow.state.cycle_count = 5
+
+        mock_approval = MagicMock()
+        mock_approval.is_stop_requested.return_value = True
+        mock_approval.set_pending = MagicMock()
+
+        with patch(
+            "sentinel_v2.tools.approval_state.ApprovalState",
+            return_value=mock_approval,
+        ):
+            with patch("sentinel_v2.dashboard_state.write_state"):
+                result = flow.check_approval()
+
+        assert result == "stop"
+        # _shutdown_requested is on the Flow object, not the State
+        assert flow._shutdown_requested is True
+
+    def test_check_approval_returns_revision_when_revision_requested(self, flow):
+        """check_approval() returns 'revision' when revision is requested."""
+        flow.state.cycle_count = 6
+        flow.state.top_opportunity = {"title": "Op"}
+
+        mock_approval = MagicMock()
+        mock_approval.is_stop_requested.return_value = False
+        # First check returns False, second returns True (revision requested)
+        # But we need to mock is_approved to return False always
+        mock_approval.is_revison_requested.side_effect = [True]
+        mock_approval.is_approved.return_value = False
+        mock_approval.set_pending = MagicMock()
+
+        with patch(
+            "sentinel_v2.tools.approval_state.ApprovalState",
+            return_value=mock_approval,
+        ):
+            with patch("sentinel_v2.dashboard_state.write_state"):
+                with patch("time.sleep"):
+                    result = flow.check_approval()
+
+        assert result == "revision"
+        assert flow.state.approved is False
+        assert flow.state.revision_notes == "revision requested"
+        assert flow.state.current_phase == "build"
+
+    def test_check_approval_shutdown_while_waiting_returns_stop(self, flow):
+        """check_approval() returns 'stop' when shutdown during polling."""
+        flow.state.cycle_count = 7
+        flow._shutdown_requested = True
+
+        with patch("sentinel_v2.dashboard_state.write_state"):
+            with patch("time.sleep"):
+                result = flow.check_approval()
+
+        assert result == "stop"
+
+
+class TestRouter:
+    """Tests for route_after_approval() router."""
+
+    def test_router_returns_deploy_when_approved(self, flow):
+        """Router returns 'deploy' when approved."""
+        flow.state.approved = True
+        flow._shutdown_requested = False
+        result = flow.route_after_approval()
+        assert result == "deploy"
+
+    def test_router_returns_stop_when_not_approved(self, flow):
+        """Router returns 'stop' when not approved."""
+        flow.state.approved = False
+        flow._shutdown_requested = False
+        result = flow.route_after_approval()
+        assert result == "stop"
+
+    def test_router_returns_stop_when_shutdown_requested(self, flow):
+        """Router returns 'stop' when shutdown requested."""
+        flow.state.approved = True
+        flow._shutdown_requested = True
+        result = flow.route_after_approval()
+        assert result == "stop"
+
+
+class TestWriteState:
+    """Tests for write_state calls in each phase."""
+
+    def test_run_research_calls_write_state(self, flow):
+        """run_research() calls write_state (research and research_completed)."""
+        mock_result = Mock()
+        mock_result.raw = [{"title": "Op A", "problem_statement": "A"}]
+
+        with patch(
+            "sentinel_v2.crews.research_crew.research_crew.research_crew"
+        ) as mock_crew_cls:
+            mock_crew = MagicMock()
+            mock_crew.kickoff.return_value = mock_result
+            mock_crew_cls.return_value = mock_crew
+
+            with patch.object(flow, "remember"):
+                with patch(
+                    "sentinel_v2.dashboard_state.write_state"
+                ) as mock_ws:
+                    flow.run_research()
+
+        # write_state is called twice: once at start of research, once after
+        assert mock_ws.call_count == 2
+        phases = [c.kwargs["phase"] for c in mock_ws.call_args_list]
+        assert "research" in phases
+        assert "research_completed" in phases
+
+    def test_run_match_calls_write_state(self, flow):
+        """run_match() calls write_state (match and match_completed)."""
+        flow.state.top_opportunity = {"title": "Op"}
+        mock_result = Mock()
+        mock_result.raw = {"profile": {}, "score": 0.8}
+
+        with patch(
+            "sentinel_v2.crews.match_crew.match_crew.match_crew"
+        ) as mock_crew_cls:
+            mock_crew = MagicMock()
+            mock_crew.kickoff.return_value = mock_result
+            mock_crew_cls.return_value = mock_crew
+
+            with patch.object(flow, "remember"):
+                with patch(
+                    "sentinel_v2.dashboard_state.write_state"
+                ) as mock_ws:
+                    flow.run_match()
+
+        phases = [c.kwargs["phase"] for c in mock_ws.call_args_list]
+        assert "match" in phases
+        assert "match_completed" in phases
+
+    def test_run_build_calls_write_state(self, flow):
+        """run_build() calls write_state (build and build_completed)."""
+        flow.state.top_opportunity = {"title": "Op"}
+        flow.state.user_profile = {}
+        mock_result = Mock()
+        mock_result.raw = "Built: SaaS app"
+
+        with patch(
+            "sentinel_v2.crews.build_crew.build_crew.build_crew"
+        ) as mock_crew_cls:
+            mock_crew = MagicMock()
+            mock_crew.kickoff.return_value = mock_result
+            mock_crew_cls.return_value = mock_crew
+
+            with patch.object(flow, "remember"):
+                with patch(
+                    "sentinel_v2.dashboard_state.write_state"
+                ) as mock_ws:
+                    flow.run_build()
+
+        phases = [c.kwargs["phase"] for c in mock_ws.call_args_list]
+        assert "build" in phases
+        assert "build_completed" in phases
+
+    def test_run_deploy_calls_write_state(self, flow):
+        """run_deploy() calls write_state for deploy phase."""
+        flow.state.approved = True
+        flow.state.build_output = "Built: app"
+        flow.state.top_opportunity = {"title": "Op"}
+        mock_result = Mock()
+        mock_result.raw = {"url": "https://example.com", "deployment_id": "abc"}
+
+        with patch(
+            "sentinel_v2.crews.deploy_crew.deploy_crew.deploy_crew"
+        ) as mock_crew_cls:
+            mock_crew = MagicMock()
+            mock_crew.kickoff.return_value = mock_result
+            mock_crew_cls.return_value = mock_crew
+
+            with patch.object(flow, "remember"):
+                with patch(
+                    "sentinel_v2.dashboard_state.write_state"
+                ) as mock_ws:
+                    flow.run_deploy()
+
+        phases = [c.kwargs["phase"] for c in mock_ws.call_args_list]
+        assert "deploy" in phases
+
+
+class TestRememberCalls:
+    """Tests for self.remember() calls in each phase."""
+
+    def test_run_match_calls_remember(self, flow):
+        """run_match() stores match result in CrewAI memory."""
+        flow.state.top_opportunity = {"title": "Op"}
+        mock_result = Mock()
+        mock_result.raw = {"profile": {}, "score": 0.8}
+
+        with patch(
+            "sentinel_v2.crews.match_crew.match_crew.match_crew"
+        ) as mock_crew_cls:
+            mock_crew = MagicMock()
+            mock_crew.kickoff.return_value = mock_result
+            mock_crew_cls.return_value = mock_crew
+
+            with patch.object(flow, "remember") as mock_remember:
+                flow.run_match()
+
+        mock_remember.assert_called()
+
+    def test_run_build_calls_remember(self, flow):
+        """run_build() stores build result in CrewAI memory."""
+        flow.state.top_opportunity = {"title": "Op"}
+        flow.state.user_profile = {}
+        mock_result = Mock()
+        mock_result.raw = "Built: SaaS"
+
+        with patch(
+            "sentinel_v2.crews.build_crew.build_crew.build_crew"
+        ) as mock_crew_cls:
+            mock_crew = MagicMock()
+            mock_crew.kickoff.return_value = mock_result
+            mock_crew_cls.return_value = mock_crew
+
+            with patch.object(flow, "remember") as mock_remember:
+                flow.run_build()
+
+        mock_remember.assert_called()
+
+    def test_run_deploy_calls_remember(self, flow):
+        """run_deploy() stores deployment result in CrewAI memory."""
+        flow.state.approved = True
+        flow.state.build_output = "Built: app"
+        flow.state.top_opportunity = {"title": "Op"}
+        mock_result = Mock()
+        mock_result.raw = {"url": "https://example.com", "deployment_id": "abc"}
+
+        with patch(
+            "sentinel_v2.crews.deploy_crew.deploy_crew.deploy_crew"
+        ) as mock_crew_cls:
+            mock_crew = MagicMock()
+            mock_crew.kickoff.return_value = mock_result
+            mock_crew_cls.return_value = mock_crew
+
+            with patch.object(flow, "remember") as mock_remember:
+                flow.run_deploy()
+
+        mock_remember.assert_called()
+
+
+class TestParseExceptions:
+    """Tests for exception handling in parse methods."""
+
+    def test_parse_opportunities_exception(self, flow):
+        """_parse_opportunities returns [] on exception."""
+        mock_result = Mock()
+        del mock_result.raw  # accessing raises AttributeError
+        # When raw attribute access raises an exception
+        def raise_on_raw():
+            raise RuntimeError("crew result error")
+        type(mock_result).raw = property(raise_on_raw)
+
+        result = flow._parse_opportunities(mock_result)
+        assert result == []
+
+    def test_parse_match_result_exception(self, flow):
+        """_parse_match_result returns {} on exception."""
+        mock_result = Mock()
+        del mock_result.raw
+        def raise_on_raw():
+            raise RuntimeError("crew result error")
+        type(mock_result).raw = property(raise_on_raw)
+
+        result = flow._parse_match_result(mock_result)
+        assert result == {}
+
+    def test_parse_deploy_result_exception(self, flow):
+        """_parse_deploy_result returns {} on exception."""
+        mock_result = Mock()
+        del mock_result.raw
+        def raise_on_raw():
+            raise RuntimeError("crew result error")
+        type(mock_result).raw = property(raise_on_raw)
+
+        result = flow._parse_deploy_result(mock_result)
+        assert result == {}
+
+
+class TestModuleLevelKickoff:
+    """Tests for module-level kickoff() and plot() in sentinel_loop.py."""
+
+    def test_module_kickoff_calls_flow_kickoff(self):
+        """Module-level kickoff() creates flow and kicks it off."""
+        with patch(
+            "sentinel_v2.flows.sentinel_loop.SentinelLoopFlow"
+        ) as mock_flow_cls:
+            mock_flow = MagicMock()
+            mock_flow_cls.return_value = mock_flow
+
+            from sentinel_v2.flows.sentinel_loop import kickoff
+            kickoff()
+
+            mock_flow_cls.assert_called_once()
+            mock_flow.kickoff.assert_called_once()
+
+    def test_module_plot_calls_flow_plot(self):
+        """Module-level plot() creates flow and plots it."""
+        with patch(
+            "sentinel_v2.flows.sentinel_loop.SentinelLoopFlow"
+        ) as mock_flow_cls:
+            mock_flow = MagicMock()
+            mock_flow_cls.return_value = mock_flow
+
+            from sentinel_v2.flows.sentinel_loop import plot
+            plot()
+
+            mock_flow.plot.assert_called_once()

@@ -1,18 +1,21 @@
-"""Research Crew — Scout the web for opportunities."""
-from crewai import Agent, Crew, Process, Task
+"""Research Crew — Scout the web for opportunities (with dashboard hooks)."""
+from crewai import Agent, Crew, Task, Process
 
 from sentinel_v2.config.llm_config import get_minimax_llm
+from sentinel_v2.config.embedder_config import get_memory_for_crew_full
+from sentinel_v2.crew_hooks import hook_crew_full
 
 
 def research_crew() -> Crew:
-    """Create the research crew for finding opportunities."""
-
+    """Create the research crew with dashboard streaming hooks."""
+    
     minimax = get_minimax_llm()
+    memory = get_memory_for_crew_full(minimax)
 
     scout = Agent(
         role="Web Scout",
         goal="Scout the web continuously for market gaps, unmet needs, and high-potential micro-business opportunities",
-        backstory="You have a sixth sense for spotting opportunities where others see problems. You're constantly scanning: Twitter trends, Product Hunt launches, Hacker News discussions, Reddit threads, and emerging communities.",
+        backstory="You have a sixth sense for spotting opportunities where others see problems. You're constantly scanning: Twitter trends, Product Hunt launches, Hacker News discussions, Reddit threads. You filter out noise and surface only high-quality opportunities.",
         tools=[],
         llm=minimax,
         verbose=True,
@@ -20,9 +23,9 @@ def research_crew() -> Crew:
     )
 
     analyst = Agent(
-        role="Opportunity Analyst",
-        goal="Analyze and prioritize opportunities based on market fit, feasibility, and potential value for Kike",
-        backstory="You're an expert at evaluating micro-business ideas. You assess market demand, technical feasibility, required resources, and potential ROI. You know Kike's strengths.",
+        role="Market Analyst",
+        goal="Analyze opportunities for market validity, technical feasibility, and business potential",
+        backstory="You're a market researcher who's evaluated 200+ SaaS ideas. You can spot fake trends from mile away. You assess: market size, competition gaps, technical complexity, monetization potential, and time-to-market.",
         tools=[],
         llm=minimax,
         verbose=True,
@@ -30,21 +33,26 @@ def research_crew() -> Crew:
     )
 
     scout_task = Task(
-        description="Scout the web for 5 high-potential micro-business opportunities suitable for a solo AI agent entrepreneur. Focus on: SaaS micro-tools, AI agents, developer tools, crypto trading tools. Consider recent trends in: Hacker News, Product Hunt, and developer communities.",
-        expected_output="A list of 5 opportunities with: title, problem statement, target market, estimated complexity (1-5), potential revenue model.",
+        description="Scout the web for 5 high-potential micro-business opportunities suitable for a solo AI agent entrepreneur. Focus on: SaaS micro-tools (under $10k/mo revenue), AI agents that can run autonomous, developer tooling, crypto trading tools. Consider recent trends in: Hacker News, Product Hunt, Twitter dev community, Reddit r/SaaS and r/IndieHackers. Return concise opportunity entries.",
+        expected_output="5 opportunity entries, each with: title, problem statement (1-2 sentences), solution outline (1-2 sentences), tech stack needed, market fit score (0-1), complexity (1-5), estimated revenue potential (seed).",
         agent=scout,
     )
 
     analyze_task = Task(
-        description="Analyze the 5 opportunities identified by the scout. Filter for Kike's strengths (Next.js, TypeScript, NestJS, Prisma, Postgres, Hyperliquid, AI agents). Score each on: fit, feasibility, potential value. Keep the top opportunity.",
-        expected_output="The best opportunity with: title, problem statement, solution outline, tech fit score (0-1), business fit score (0-1), complexity score (1-5), estimated time to build.",
+        description="Analyze the 5 opportunities found by Web Scout. For each, assess: market size (TAM/SAM), competitive landscape (number of competitors, differentiation potential), technical feasibility (can 1-2 developers build in 3 months?), monetization strategy (SaaS pricing, transaction fee, freemium?), time-to-market (MVP timeline). Keep the top 3 opportunities.",
+        expected_output="3 top opportunities ranked by overall score. For each: refined problem statement, target customer segment, market size estimate, competitive analysis (top 3 competitors), revenue model, MVP milestone list (first 3 months), final recommendation score (1-10).",
         agent=analyst,
     )
 
-    return Crew(
+    crew = Crew(
         agents=[scout, analyst],
         tasks=[scout_task, analyze_task],
         process=Process.sequential,
         verbose=True,
-        memory=True,
+        memory=memory,
     )
+    
+    # Apply dashboard streaming hooks
+    crew = hook_crew_full(crew, phase="research", cycle=1)
+    
+    return crew

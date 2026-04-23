@@ -1,0 +1,374 @@
+"""CrewAI Crew hooks for streaming agent messages to dashboard.
+
+This module adds callbacks to CrewAI agents/tasks to emit messages
+to /tmp/sentinel_v2_agent_messages.json in real-time.
+"""
+from __future__ import annotations
+
+import json
+import threading
+import time
+from datetime import datetime, timezone
+from functools import wraps
+from pathlib import Path
+from typing import Callable, Any
+from crewai import Agent, Task, Crew, LLM
+from enum import Enum
+
+# File to store agent messages
+AGENT_MESSAGES_FILE = Path("/tmp/sentinel_v2_agent_messages.json")
+# Lock for thread-safe file writing
+_messages_lock = threading.Lock()
+
+
+class AgentHookType(Enum):
+    """Types of agent lifecycle hooks."""
+    TASK_STARTED = "task_started"
+    TASK_COMPLETED = "task_completed"
+    AGENT_THOUGHT = "agent_thought"
+    AGENT_ACTION = "agent_action"
+    AGENT_OUTPUT = "agent_output"
+    TOOL_EXECUTION = "tool_execution"
+
+
+def add_agent_message(
+    agent_id: str,
+    message: str,
+    hook_type: str = AgentHookType.AGENT_OUTPUT.value,
+    phase: str | None = None,
+    cycle: int | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """Thread-safe agent message writer to shared file.
+    
+    Args:
+        agent_id: Agent identifier (e.g., 'web-scout', 'code-reviewer')
+        message: The text output from the agent
+        hook_type: Type of event (task_started, task_completed, agent_output, etc.)
+        phase: Current workflow phase (research, match, build, approve, deploy)
+        cycle: Cycle number
+        metadata: Additional data (files reviewed, issues found, etc.)
+    """
+    msg_data = {
+        "agent_id": agent_id,
+        "message": message,
+        "hook_type": hook_type,
+        "phase": phase or "unknown",
+        "metadata": metadata or {},
+        "cycle": cycle or 0,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    
+    with _messages_lock:
+        existing_messages = []
+        if AGENT_MESSAGES_FILE.exists():
+            try:
+                with open(AGENT_MESSAGES_FILE, "r") as f:
+                    existing_messages = json.load(f) if AGENT_MESSAGES_FILE.stat().st_size > 0 else []
+            except Exception:
+                existing_messages = []
+        
+        existing_messages.append(msg_data)
+        
+        # Keep only last 500 messages
+        if len(existing_messages) > 500:
+            existing_messages = existing_messages[-500:]
+        
+        try:
+            with open(AGENT_MESSAGES_FILE, "w") as f:
+                json.dump(existing_messages, f, indent=2)
+        except Exception:
+            # Silently fail if we can't write (e.g., disk full)
+            pass
+
+
+def crew_with_hooks(
+    crew: Crew,
+    phase: str = "unknown", 
+    cycle: int = 1
+) -> Crew:
+    """Add streaming hooks to a Crew instance.
+    
+    Attaches lifecycle callbacks to capture agent outputs and emit to dashboard.
+    
+    Args:
+        crew: CrewAI Crew instance
+        phase: Workflow phase this crew belongs to
+        cycle: Cycle number
+        
+    Returns:
+        Crew with hooks attached
+    """
+    # Store original kickoff
+    original_kickoff = crew.kickoff
+    
+    @wraps(original_kickoff)
+    def kickoff_with_hooks(**kwargs) -> Any:
+        """Enhanced kickoff that streams agent messages."""
+        # Log phase start
+        add_agent_message(
+            agent_id="orchestrator",
+            message=f"Starting phase: {phase}",
+            hook_type="phase_started",
+            phase=phase,
+            cycle=cycle,
+            metadata={"task_count": len(crewy.tasks)}
+        )
+        
+        # Hook into each task's lifecycle
+        for task in crew.tasks:
+            _hook_task(task, phase, cycle)
+        
+        # Log each agent
+        for agent in crew.agents:
+            add_agent_message(
+                agent_id=_agent_id_from_agent(agent),
+                message=f"Agent initialized: {agent.role}",
+                hook_type="agent_initialized",
+                phase=phase,
+                cycle=cycle,
+                metadata={
+                    "role": agent.role,
+                    "goal": agent.goal[:100] + "..." if len(agent.goal) > 100 else agent.goal
+                }
+            )
+        
+        # Run original kickoff
+        try:
+            result = original_kickoff(**kwargs)
+            
+            # Log completion
+            add_agent_message(
+                agent_id="orchestrator",
+                message=f"Phase completed: {phase}",
+                hook_type="phase_completed",
+                phase=phase,
+                cycle=cycle,
+                metadata={"status": "success"}
+            )
+            
+            return result
+            
+        except Exception as e:
+            # Log error
+            add_agent_message(
+                agent_id="orchestrator",
+                message=f"Phase failed: {phase} - {str(e)}",
+                hook_type="phase_error",
+                phase=phase,
+                cycle=cycle,
+                metadata={"error": str(e)}
+            )
+            raise
+    
+    # Store original kickoff
+    original_kickoff = crew.kickoff
+    
+    @wraps(original_kickoff)
+    def kickoff_with_hooks(**kwargs) -> Any:
+        """Enhanced kickoff that streams agent messages."""
+        # Log phase start
+        add_agent_message(
+            agent_id="orchestrator",
+            message=f"Starting phase: {phase}",
+            hook_type="phase_started",
+            phase=phase,
+            cycle=cycle,
+            metadata={"task_count": len(crew.tasks)}
+        )
+        
+        # Hook into each task's lifecycle
+        for task in crew.tasks:
+            _hook_task(task, phase, cycle)
+        
+        # Log each agent
+        for agent in crew.agents:
+            add_agent_message(
+                agent_id=_agent_id_from_agent(agent),
+                message=f"Agent initialized: {agent.role}",
+                hook_type="agent_initialized",
+                phase=phase,
+                cycle=cycle,
+                metadata={
+                    "role": agent.role,
+                    "goal": agent.goal[:100] + "..." if len(agent.goal) > 100 else agent.goal
+                }
+            )
+        
+        # Run original kickoff
+        try:
+            result = original_kickoff(**kwargs)
+            
+            # Log completion
+            add_agent_message(
+                agent_id="orchestrator",
+                message=f"Phase completed: {phase}",
+                hook_type="phase_completed",
+                phase=phase,
+                cycle=cycle,
+                metadata={"status": "success"}
+            )
+            
+            return result
+            
+        except Exception as e:
+            # Log error
+            add_agent_message(
+                agent_id="orchestrator",
+                message=f"Phase failed: {phase} - {str(e)}",
+                hook_type="phase_error",
+                phase=phase,
+                cycle=cycle,
+                metadata={"error": str(e)}
+            )
+            raise
+    
+    # Use object.__setattr__ to bypass Pydantic's __setattr__ override
+    object.__setattr__(crew, 'kickoff', kickoff_with_hooks)
+    return crew
+
+
+def _hook_task(task: Task, phase: str, cycle: int) -> None:
+    """Hook into task lifecycle to capture outputs.
+    
+    CrewAI doesn't expose direct task-level callbacks, so we wrap
+    the task execution. This works by hooking into the crew's
+    process flow.
+    """
+    # The task metadata will be captured during execution
+    # We track task start/stop via crew-with-wrappers pattern
+    task_json = {
+        "id": str(id(task)),
+        "description": task.description[:150] + "..." if len(task.description) > 150 else task.description,
+        "expected_output": task.expected_output[:100] + "..." if len(task.expected_output) > 100 else task.expected_output,
+    }
+    
+    add_agent_message(
+        agent_id=_agent_id_from_task(task),
+        message=f"Task started: {task.description[:80]}",
+        hook_type=AgentHookType.TASK_STARTED.value,
+        phase=phase,
+        cycle=cycle,
+        metadata={"task": task_json}
+    )
+
+
+def hook_agent_thought(
+    agent_id: str,
+    thought: str,
+    phase: str,
+    cycle: int
+) -> None:
+    """Hook agent thought (reasoning) output."""
+    add_agent_message(
+        agent_id=agent_id,
+        message=f"Thinking: {thought[:200]}",
+        hook_type=AgentHookType.AGENT_THOUGHT.value,
+        phase=phase,
+        cycle=cycle
+    )
+
+
+def hook_agent_action(
+    agent_id: str,
+    action: str,
+    phase: str,
+    cycle: int
+) -> None:
+    """Hook agent action output."""
+    add_agent_message(
+        agent_id=agent_id,
+        message=f"Action: {action[:200]}",
+        hook_type=AgentHookType.AGENT_ACTION.value,
+        phase=phase,
+        cycle=cycle
+    )
+
+
+def hook_agent_output(
+    agent_id: str,
+    output: str,
+    phase: str,
+    cycle: int,
+    metadata: dict[str, Any] | None = None
+) -> None:
+    """Hook final agent output."""
+    add_agent_message(
+        agent_id=agent_id,
+        message=output[:500],
+        hook_type=AgentHookType.AGENT_OUTPUT.value,
+        phase=phase,
+        cycle=cycle,
+        metadata=metadata or {}
+    )
+
+
+def hook_task_completed(
+    task: Task,
+    agent_id: str,
+    result: str | None,
+    phase: str,
+    cycle: int
+) -> None:
+    """Hook task completion."""
+    add_agent_message(
+        agent_id=agent_id,
+        message=f"Task completed: {task.description[:80]}",
+        hook_type=AgentHookType.TASK_COMPLETED.value,
+        phase=phase,
+        cycle=cycle,
+        metadata={
+            "task_id": str(id(task)),
+            "result_preview": result[:200] if result else "No output"
+        }
+    )
+
+
+def _agent_id_from_agent(agent: Agent) -> str:
+    """Extract standardized agent_id from Agent instance."""
+    role = agent.role.lower()
+    # Map role to standardized IDs
+    role_id_map = {
+        "web scout": "web-scout",
+        "analyst": "analyst",
+        "profile researcher": "profile-researcher",
+        "matcher": "matcher",
+        "strategic product manager": "manager",
+        "frontend lead": "frontend-dev",
+        "backend lead": "backend-dev",
+        "senior code reviewer": "code-reviewer",
+        "security engineer": "security-auditor",
+        "qa engineering lead": "qa-verifier",
+        "deployment engineer": "deployer",
+    }
+    return role_id_map.get(role, role.replace(" ", "-"))
+
+
+def _agent_id_from_task(task: Task) -> str:
+    """Extract agent_id from task by matching agent."""
+    if hasattr(task, 'agent') and task.agent:
+        return _agent_id_from_agent(task.agent)
+    return "orchestrator"
+
+
+# Convenience function to hook a crew with full instrumentation
+def hook_crew_full(
+    crew: Crew,
+    phase: str,
+    cycle: int
+) -> Crew:
+    """Apply full instrumentation to a crew.
+    
+    This is the main entry point for adding dashboard streaming
+    to any CrewAI crew.
+    
+    Args:
+        crew: Crew instance
+        phase: Workflow phase
+        cycle: Cycle number
+        
+    Returns:
+        Crew with all hooks applied
+    """
+    crew = crew_with_hooks(crew, phase=phase, cycle=cycle)
+    return crew

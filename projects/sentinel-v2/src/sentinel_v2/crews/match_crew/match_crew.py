@@ -2,12 +2,14 @@
 from crewai import Agent, Crew, Process, Task
 
 from sentinel_v2.config.llm_config import get_minimax_llm
+from sentinel_v2.config.embedder_config import get_memory_for_crew_full
 
 
 def match_crew() -> Crew:
     """Create the match crew for opportunity-user matching."""
 
     minimax = get_minimax_llm()
+    memory = get_memory_for_crew_full(minimax)
 
     profile_researcher = Agent(
         role="Profile Researcher",
@@ -46,5 +48,5 @@ def match_crew() -> Crew:
         tasks=[profile_task, match_task],
         process=Process.sequential,
         verbose=True,
-        memory=True,
+        memory=memory,
     )
