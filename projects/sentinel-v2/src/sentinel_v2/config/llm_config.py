@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 from crewai import LLM
 
 # Cached LLM instances per model name
@@ -39,6 +40,26 @@ def get_minimax_llm(model: str = "MiniMax-M2.7") -> LLM:
         api_key=api_key,
     )
     _llm_cache[model] = llm
+    return llm
+
+
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+
+
+def make_clean_llm(llm: LLM) -> LLM:
+    """Wrap an LLM so its call() strips <think>...</think> from string responses.
+
+    Needed for MiniMax reasoning models used in memory layers that expect clean JSON.
+    """
+    original_call = llm.call
+
+    def _clean_call(*args, **kwargs):
+        result = original_call(*args, **kwargs)
+        if isinstance(result, str):
+            result = _THINK_RE.sub("", result).strip()
+        return result
+
+    llm.call = _clean_call  # type: ignore[method-assign]
     return llm
 
 

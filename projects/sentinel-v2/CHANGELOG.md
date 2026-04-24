@@ -5,6 +5,16 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-24 · TBD — Strip <think> tags from memory LLM; delete orphan draft
+
+**What changed:**
+- `llm_config.py`: added `make_clean_llm()` wrapper that strips `<think>…</think>` blocks
+  from reasoning-model responses so CrewAI memory `QueryAnalysis` / `MemoryAnalysis`
+  receive clean JSON instead of crashing.
+- `embedder_config.py`: `get_memory_for_crew(llm=None)` now wraps the default MiniMax
+  LLM with `make_clean_llm()` automatically.
+- `sentinel.db`: deleted orphan draft `draft_c0_op-a` ("Op A") left from a test cycle.
+
 ## 2026-04-24 · 5439c17 — Drop purple tile, per-agent colored avatars, leaner command bar
 
 **Commit:** `5439c17`
