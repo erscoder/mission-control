@@ -5,6 +5,15 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-24 · TBD — Daemon checkpoint/resume: survive restarts mid-cycle
+
+**What changed:**
+- `db.py`: nueva tabla `flow_checkpoints` + `save_flow_checkpoint`, `load_active_flow_checkpoint`, `clear_flow_checkpoint`
+- `sentinel_loop.py`: helpers `_save_checkpoint`/`_clear_checkpoint`; guards en cada fase para skip si el output ya está en estado; checkpoints escritos tras research, match y build; checkpoint limpiado al terminar deploy
+- `main.py`: `_load_resumable_state()` detecta checkpoint activo al arrancar; `run_once` y `run_daemon` restauran estado antes del kickoff; `_recover_orphaned_drafts` preserva drafts con checkpoint activo en vez de marcarlos failed
+
+**Comportamiento**: si el daemon se cae (kill -9, crash, SIGTERM) durante BUILD, al rearrancar detecta el checkpoint de BUILD, restaura todo el `SentinelState` y retoma desde ahí sin repetir RESEARCH ni MATCH.
+
 ## 2026-04-24 · TBD — Fix all <think>-tag memory failures + LanceDB dim mismatch + orphan draft
 
 **What changed:**

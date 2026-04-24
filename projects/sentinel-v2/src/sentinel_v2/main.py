@@ -40,19 +40,52 @@ def setup_logging():
     )
 
 
+def _load_resumable_state():
+    """Return a SentinelState from the latest checkpoint, or None."""
+    try:
+        from sentinel_v2 import db
+        from sentinel_v2.flows.sentinel_loop import SentinelState
+        state_json = db.load_active_flow_checkpoint()
+        if state_json is None:
+            return None
+        state = SentinelState.model_validate_json(state_json)
+        if state.deployed or not state.draft_id:
+            return None
+        log.info(
+            "Found resumable checkpoint: cycle=%d phase=%s draft=%s",
+            state.cycle_count, state.current_phase, state.draft_id,
+        )
+        return state
+    except Exception as e:
+        log.warning("Could not load checkpoint: %s", e)
+        return None
+
+
 def _recover_orphaned_drafts() -> None:
     """Mark in-flight drafts as failed on daemon start.
 
-    A draft in queued/building/review/built is half-processed by a prior daemon
-    that's no longer running. Without this, the dashboard shows them as live
-    forever. Marking them failed lets the user see what happened and re-approve
-    from scratch.
+    Skips drafts that have an active checkpoint — those will be resumed.
     """
+    import json as _json
     from sentinel_v2.dashboard_state import list_drafts_by_status, update_draft
+    from sentinel_v2 import db
+
+    checkpointed: set[str] = set()
+    try:
+        state_json = db.load_active_flow_checkpoint()
+        if state_json:
+            data = _json.loads(state_json)
+            if data.get("draft_id"):
+                checkpointed.add(data["draft_id"])
+    except Exception:
+        pass
 
     orphaned_statuses = {"queued", "building", "review", "built"}
     orphans = list_drafts_by_status(orphaned_statuses)
     for draft in orphans:
+        if draft["id"] in checkpointed:
+            log.info("Skipping orphan recovery for %s — has active checkpoint (will resume)", draft["id"])
+            continue
         update_draft(
             draft["id"],
             status="failed",
@@ -71,6 +104,9 @@ def run_once():
 
     _recover_orphaned_drafts()
     flow = SentinelLoopFlow()
+    resumable = _load_resumable_state()
+    if resumable:
+        object.__setattr__(flow, "_state", resumable)
     flow.kickoff()
     log.info("Cycle complete")
 
@@ -111,6 +147,10 @@ def run_daemon():
             cycle += 1
             log.info("=== Cycle #%d ===", cycle)
             print(f"\n{'='*50}\nCycle #{cycle}\n{'='*50}")
+
+            resumable = _load_resumable_state()
+            if resumable:
+                object.__setattr__(flow, "_state", resumable)
 
             try:
                 kickoff_result = flow.kickoff()

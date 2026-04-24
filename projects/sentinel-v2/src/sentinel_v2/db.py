@@ -47,6 +47,13 @@ CREATE TABLE IF NOT EXISTS drafts (
 
 CREATE INDEX IF NOT EXISTS idx_drafts_status ON drafts(status);
 CREATE INDEX IF NOT EXISTS idx_drafts_cycle  ON drafts(cycle);
+
+CREATE TABLE IF NOT EXISTS flow_checkpoints (
+    draft_id   TEXT PRIMARY KEY,
+    phase      TEXT NOT NULL,
+    state_json TEXT NOT NULL,
+    saved_at   TEXT NOT NULL
+);
 """
 
 _init_lock = threading.Lock()
@@ -201,6 +208,37 @@ def list_all() -> list[dict]:
             "SELECT * FROM drafts ORDER BY created_at ASC"
         ).fetchall()
         return [_row_to_draft(r) for r in rows]
+
+
+def save_flow_checkpoint(draft_id: str, phase: str, state_json: str) -> None:
+    """Upsert the in-progress flow state so the daemon can resume on restart."""
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO flow_checkpoints (draft_id, phase, state_json, saved_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(draft_id) DO UPDATE SET
+                phase      = excluded.phase,
+                state_json = excluded.state_json,
+                saved_at   = excluded.saved_at
+            """,
+            (draft_id, phase, state_json, now_iso()),
+        )
+
+
+def load_active_flow_checkpoint() -> str | None:
+    """Return the state_json of the most recent checkpoint, or None."""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT state_json FROM flow_checkpoints ORDER BY saved_at DESC LIMIT 1"
+        ).fetchone()
+        return row["state_json"] if row else None
+
+
+def clear_flow_checkpoint(draft_id: str) -> None:
+    """Remove checkpoint when cycle completes or is abandoned."""
+    with connect() as conn:
+        conn.execute("DELETE FROM flow_checkpoints WHERE draft_id = ?", (draft_id,))
 
 
 def list_by_status(statuses: set[str]) -> list[dict]:

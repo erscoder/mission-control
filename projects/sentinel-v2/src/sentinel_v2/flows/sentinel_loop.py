@@ -92,6 +92,28 @@ class SentinelLoopFlow(Flow[SentinelState]):
     def _touch(self):
         self.state.last_update = datetime.now(timezone.utc).isoformat()
 
+    def _save_checkpoint(self) -> None:
+        if not self.state.draft_id:
+            return
+        try:
+            from sentinel_v2 import db
+            db.save_flow_checkpoint(
+                self.state.draft_id,
+                self.state.current_phase,
+                self.state.model_dump_json(),
+            )
+        except Exception as e:
+            log.warning("Checkpoint save failed: %s", e)
+
+    def _clear_checkpoint(self) -> None:
+        if not self.state.draft_id:
+            return
+        try:
+            from sentinel_v2 import db
+            db.clear_flow_checkpoint(self.state.draft_id)
+        except Exception as e:
+            log.warning("Checkpoint clear failed: %s", e)
+
     # ─── Phase 1: RESEARCH ───────────────────────────────────────────────
 
     @start()
@@ -99,6 +121,11 @@ class SentinelLoopFlow(Flow[SentinelState]):
         """Begin a new cycle."""
         if self._shutdown_requested:
             log.info("Shutdown requested — skipping start_cycle")
+            return
+
+        if self.state.cycle_count > 0:
+            log.info("Resuming cycle #%d from phase %s", self.state.cycle_count, self.state.current_phase)
+            print(f"\n{'='*50}\nResuming Cycle #{self.state.cycle_count} (phase: {self.state.current_phase})\n{'='*50}")
             return
 
         self.state.cycle_count += 1
@@ -111,6 +138,9 @@ class SentinelLoopFlow(Flow[SentinelState]):
     def run_research(self):
         """Phase 1: Run research crew to scout opportunities."""
         if self._shutdown_requested:
+            return
+        if self.state.top_opportunity is not None:
+            log.info("Resume: research already done, skipping")
             return
 
         self.state.current_phase = "research"
@@ -212,6 +242,7 @@ class SentinelLoopFlow(Flow[SentinelState]):
                 log.warning("Memory save failed: %s", e)
 
         self._touch()
+        self._save_checkpoint()
 
     # ─── Gate 1: DRAFT APPROVAL (dashboard) ──────────────────────────────
 
@@ -220,6 +251,9 @@ class SentinelLoopFlow(Flow[SentinelState]):
         """Block until Kike approves the draft from the dashboard (or rejects it)."""
         if self._shutdown_requested or not self.state.draft_id:
             return "stop"
+        if self.state.current_phase not in ("research",):
+            log.info("Resume: draft approval gate already resolved, skipping")
+            return "approved"
 
         from sentinel_v2.dashboard_state import wait_for_draft_status, get_draft, update_draft
 
@@ -247,6 +281,9 @@ class SentinelLoopFlow(Flow[SentinelState]):
     def run_match(self):
         """Phase 2: Match top opportunity to Kike's profile."""
         if self._shutdown_requested or not self.state.top_opportunity:
+            return
+        if self.state.match_score > 0 and self.state.user_profile:
+            log.info("Resume: match already done, skipping")
             return
 
         self.state.current_phase = "match"
@@ -331,6 +368,7 @@ class SentinelLoopFlow(Flow[SentinelState]):
         )
 
         self._touch()
+        self._save_checkpoint()
 
     # ─── Phase 3: BUILD ───────────────────────────────────────────────────
 
@@ -338,6 +376,9 @@ class SentinelLoopFlow(Flow[SentinelState]):
     def run_build(self):
         """Phase 3: Build micro-business draft with hierarchical crew."""
         if self._shutdown_requested or not self.state.top_opportunity:
+            return
+        if self.state.build_output is not None:
+            log.info("Resume: build already done, skipping")
             return
 
         self.state.current_phase = "build"
@@ -431,12 +472,17 @@ class SentinelLoopFlow(Flow[SentinelState]):
             log.warning("Memory save failed: %s", e)
 
         self._touch()
+        self._save_checkpoint()
 
     # ─── Phase 4: APPROVE (human feedback) ───────────────────────────────
 
     @listen(run_build)
     def request_approval(self) -> str:
         """Phase 4: Present draft to Kike for approval via the dashboard."""
+        if self.state.approved:
+            log.info("Resume: already approved, skipping request_approval gate")
+            return "pending"
+
         self.state.current_phase = "approve"
         self.state.pending_since = datetime.now(timezone.utc).isoformat()
         self._touch()
@@ -457,6 +503,10 @@ class SentinelLoopFlow(Flow[SentinelState]):
     @listen(request_approval)
     def check_approval(self) -> str:
         """Block until the Deploy/Reject gate is resolved via the dashboard."""
+        if self.state.approved:
+            log.info("Resume: deploy gate already approved")
+            return "approved"
+
         from sentinel_v2.dashboard_state import (
             wait_for_draft_status,
             write_state,
@@ -514,6 +564,10 @@ class SentinelLoopFlow(Flow[SentinelState]):
         """Phase 5: Deploy approved build."""
         if not self.state.approved or self._shutdown_requested:
             log.info("Not approved or shutdown — skipping deploy")
+            return
+        if self.state.deployed:
+            log.info("Resume: already deployed, skipping")
+            self._clear_checkpoint()
             return
 
         self.state.current_phase = "deploy"
@@ -578,6 +632,7 @@ class SentinelLoopFlow(Flow[SentinelState]):
             log.warning("Memory save failed: %s", e)
 
         self._touch()
+        self._clear_checkpoint()
 
     # ─── Loop Router ─────────────────────────────────────────────────────
 
