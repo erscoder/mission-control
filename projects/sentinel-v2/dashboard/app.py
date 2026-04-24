@@ -278,6 +278,36 @@ def handle_reject_draft(data):
     emit("action_response", {"success": ok, "action": action, "id": draft_id}, namespace="/dashboard")
 
 
+@socketio.on("retry_draft", namespace="/dashboard")
+def handle_retry_draft(data):
+    """Retry a failed draft. If a flow checkpoint exists for this draft_id, reset
+    status to 'queued' so the daemon resumes from where it left off. Otherwise
+    reset to 'pending' so the user can re-approve it from scratch."""
+    draft_id = (data or {}).get("id", "")
+    if not draft_id:
+        emit("action_response", {"success": False, "action": "retry_draft", "error": "missing id"}, namespace="/dashboard")
+        return
+
+    # Check for active checkpoint tied to this draft
+    has_checkpoint = False
+    try:
+        from sentinel_v2 import db as _db
+        checkpoint = _db.load_active_flow_checkpoint()
+        if checkpoint and f'"draft_id": "{draft_id}"' in checkpoint:
+            has_checkpoint = True
+    except Exception as e:
+        log.warning("Could not check checkpoint for %s: %s", draft_id, e)
+
+    new_status = "queued" if has_checkpoint else "pending"
+    notes = f"retry requested ({'resume from checkpoint' if has_checkpoint else 'from scratch — no checkpoint'})"
+    ok = update_draft_status(draft_id, new_status, revision_notes=notes)
+    emit(
+        "action_response",
+        {"success": ok, "action": "retry_draft", "id": draft_id, "new_status": new_status, "resume": has_checkpoint},
+        namespace="/dashboard",
+    )
+
+
 @socketio.on("approve_deploy", namespace="/dashboard")
 def handle_approve_deploy(data):
     """Second approval gate: after a draft is built, human approves deployment."""
@@ -345,7 +375,7 @@ def api_drafts_action():
     draft_id = payload.get("id", "")
     action = payload.get("action", "")
     notes = payload.get("notes", "")
-    valid = {"approve", "reject", "revise", "approve_deploy", "reject_deploy"}
+    valid = {"approve", "reject", "revise", "approve_deploy", "reject_deploy", "retry"}
     if not draft_id or action not in valid:
         return jsonify({"success": False, "error": "invalid payload"}), 400
     if action == "approve":
@@ -356,6 +386,21 @@ def api_drafts_action():
         ok = update_draft_status(draft_id, "deployed")
     elif action == "reject_deploy":
         ok = update_draft_status(draft_id, "failed")
+    elif action == "retry":
+        has_checkpoint = False
+        try:
+            from sentinel_v2 import db as _db
+            checkpoint = _db.load_active_flow_checkpoint()
+            if checkpoint and f'"draft_id": "{draft_id}"' in checkpoint:
+                has_checkpoint = True
+        except Exception:
+            pass
+        new_status = "queued" if has_checkpoint else "pending"
+        ok = update_draft_status(
+            draft_id,
+            new_status,
+            revision_notes=f"retry ({'resume' if has_checkpoint else 'from scratch'})",
+        )
     else:
         ok = update_draft_status(draft_id, "rejected")
     return jsonify({"success": ok, "action": action, "id": draft_id})

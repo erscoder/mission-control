@@ -26,6 +26,7 @@ export interface SentinelData {
   approveDraft: (id: string) => void
   rejectDraft: (id: string) => void
   reviseDraft: (id: string, notes: string) => void
+  retryDraft: (id: string) => void
   approveDeploy: (id: string) => void
   rejectDeploy: (id: string) => void
 }
@@ -116,6 +117,8 @@ export function useSentinelSocket(): SentinelData {
         socketRef.current?.emit('reject_draft', { id, revision: false }),
       reviseDraft: (id: string, notes: string) =>
         socketRef.current?.emit('reject_draft', { id, revision: true, notes }),
+      retryDraft: (id: string) =>
+        socketRef.current?.emit('retry_draft', { id }),
       approveDeploy: (id: string) =>
         socketRef.current?.emit('approve_deploy', { id }),
       rejectDeploy: (id: string) =>

@@ -5,6 +5,16 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-24 · TBD — Retry button for failed drafts
+
+**What changed:**
+- `dashboard/app.py`: new `retry_draft` Socket.IO event + `"retry"` action on the `/api/drafts/action` REST endpoint. Logic: if there's an active flow checkpoint matching this `draft_id`, reset status to `queued` so the daemon resumes from the last saved phase; otherwise reset to `pending` (restart from scratch on the next cycle). Revision notes record which path was taken.
+- `dashboard-nextjs/src/hooks/useSentinelSocket.ts`: added `retryDraft(id)` action emitting `retry_draft`.
+- `dashboard-nextjs/src/components/BuildQueue.tsx`: added a **Retry** button (indigo, with spinner icon) on rows with `status === "failed"`, next to any existing deploy/open actions.
+- `dashboard-nextjs/src/app/page.tsx`: pipes `retryDraft` through to `BuildQueue`.
+
+**How it works:** click Retry on a failed row → daemon-side the draft flips back to `pending`/`queued`. On the next daemon tick (or immediately if the flow is idle waiting in the approval gate), it resumes via `_load_resumable_state()` if a checkpoint is still active, otherwise the user can re-approve it from scratch.
+
 ## 2026-04-24 · TBD — OSV-scan + remediation loop between build and approval
 
 **What changed:**

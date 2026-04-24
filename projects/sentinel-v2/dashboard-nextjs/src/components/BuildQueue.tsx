@@ -35,6 +35,7 @@ interface BuildQueueProps {
   onApproveDraft?: (id: string) => void
   onRejectDraft?: (id: string) => void
   onReviseDraft?: (id: string, notes: string) => void
+  onRetryDraft?: (id: string) => void
   onApproveDeploy?: (id: string) => void
   onRejectDeploy?: (id: string) => void
 }
@@ -124,6 +125,7 @@ export default function BuildQueue({
   onApproveDraft,
   onRejectDraft,
   onReviseDraft,
+  onRetryDraft,
   onApproveDeploy,
   onRejectDeploy,
 }: BuildQueueProps) {
@@ -192,6 +194,7 @@ export default function BuildQueue({
               onApproveDraft={onApproveDraft}
               onRejectDraft={onRejectDraft}
               onReviseDraft={onReviseDraft}
+              onRetryDraft={onRetryDraft}
               onApproveDeploy={onApproveDeploy}
               onRejectDeploy={onRejectDeploy}
             />
@@ -209,6 +212,7 @@ function PipelineRow({
   onApproveDraft,
   onRejectDraft,
   onReviseDraft,
+  onRetryDraft,
   onApproveDeploy,
   onRejectDeploy,
 }: {
@@ -216,6 +220,7 @@ function PipelineRow({
   onApproveDraft?: (id: string) => void
   onRejectDraft?: (id: string) => void
   onReviseDraft?: (id: string, notes: string) => void
+  onRetryDraft?: (id: string) => void
   onApproveDeploy?: (id: string) => void
   onRejectDeploy?: (id: string) => void
 }) {
@@ -435,6 +440,17 @@ function PipelineRow({
               Open
               <ArrowRight className="h-3 w-3" />
             </a>
+          )}
+          {failed && onRetryDraft && (
+            <button
+              type="button"
+              onClick={() => onRetryDraft(draft.id)}
+              className="flex items-center gap-1 rounded-md border border-indigo-500/40 bg-indigo-500/10 px-2 py-1 text-[10px] font-semibold text-indigo-300 transition-colors hover:bg-indigo-500 hover:text-white"
+              title="Retry: resume from the last checkpoint if available, otherwise restart from pending"
+            >
+              <Loader2 className="h-3 w-3" />
+              Retry
+            </button>
           )}
         </div>
       </div>

@@ -18,6 +18,7 @@ export default function HomePage() {
     approveDraft,
     rejectDraft,
     reviseDraft,
+    retryDraft,
     approveDeploy,
     rejectDeploy,
   } = useSentinelSocket()
@@ -42,6 +43,7 @@ export default function HomePage() {
             onApproveDraft={approveDraft}
             onRejectDraft={rejectDraft}
             onReviseDraft={reviseDraft}
+            onRetryDraft={retryDraft}
             onApproveDeploy={approveDeploy}
             onRejectDeploy={rejectDeploy}
           />
