@@ -5,7 +5,7 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
-## 2026-04-24 · TBD — Strip <think> tags from memory LLM; delete orphan draft
+## 2026-04-24 · TBD — Fix LanceDB dim mismatch + strip <think> tags + delete orphan draft
 
 **What changed:**
 - `llm_config.py`: added `make_clean_llm()` wrapper that strips `<think>…</think>` blocks
@@ -14,6 +14,9 @@ the commit hash so every change is traceable and auditable.
 - `embedder_config.py`: `get_memory_for_crew(llm=None)` now wraps the default MiniMax
   LLM with `make_clean_llm()` automatically.
 - `sentinel.db`: deleted orphan draft `draft_c0_op-a` ("Op A") left from a test cycle.
+- LanceDB: deleted stale `memories.lance` table (384-dim Ollama vectors) so it
+  auto-recreates with 1024-dim Jina embeddings on next run. Root cause of
+  `query dim(1024) doesn't match the column vector vector dim(384)` error.
 
 ## 2026-04-24 · 5439c17 — Drop purple tile, per-agent colored avatars, leaner command bar
 
