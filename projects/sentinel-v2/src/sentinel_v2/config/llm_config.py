@@ -49,8 +49,12 @@ _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 def make_clean_llm(llm: LLM) -> LLM:
     """Wrap an LLM so its call() strips <think>...</think> from string responses.
 
+    Idempotent — safe to call multiple times on the same instance.
     Needed for MiniMax reasoning models used in memory layers that expect clean JSON.
     """
+    if getattr(llm, "_think_stripped", False):
+        return llm
+
     original_call = llm.call
 
     def _clean_call(*args, **kwargs):
@@ -60,6 +64,7 @@ def make_clean_llm(llm: LLM) -> LLM:
         return result
 
     llm.call = _clean_call  # type: ignore[method-assign]
+    llm._think_stripped = True  # type: ignore[attr-defined]
     return llm
 
 

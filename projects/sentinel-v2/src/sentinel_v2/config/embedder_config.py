@@ -81,9 +81,10 @@ def get_memory_for_crew(llm=None):
     """
     from crewai.memory.unified_memory import Memory
 
+    from sentinel_v2.config.llm_config import get_minimax_llm, make_clean_llm
     if llm is None:
-        from sentinel_v2.config.llm_config import get_minimax_llm, make_clean_llm
-        llm = make_clean_llm(get_minimax_llm())
+        llm = get_minimax_llm()
+    make_clean_llm(llm)  # idempotent — wraps whether caller passed one or not
 
     return Memory(
         llm=llm,
