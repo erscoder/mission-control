@@ -5,29 +5,28 @@ import { SentinelMark } from './SentinelMark'
 interface SentinelLogoProps {
   size?: number
   className?: string
+  /**
+   * Force monochrome (currentColor) strokes instead of the brand gradient.
+   */
+  mono?: boolean
 }
 
 /**
  * SentinelLogo
  *
- * Wraps SentinelMark in the Linear-style gradient tile used across the
- * dashboard chrome (indigo → violet → fuchsia, rounded-lg, indigo glow).
- * The mark renders in white and is sized at ~44% of the tile so it sits
- * comfortably inside the tile without crowding the corners.
+ * Standalone mark on transparent background — no tile, no rounded square,
+ * no drop-shadow "glow". The brand gradient lives on the arc strokes
+ * themselves. This is what goes in nav chrome, app icons, and anywhere
+ * the mark needs to read as a precision instrument rather than a SaaS
+ * favicon tile.
  */
-export function SentinelLogo({ size = 36, className }: SentinelLogoProps) {
-  const markSize = Math.round(size * 0.5)
+export function SentinelLogo({ size = 36, className, mono = false }: SentinelLogoProps) {
   return (
-    <div
-      className={cn(
-        'relative flex items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500 shadow-glow-indigo',
-        className,
-      )}
-      style={{ width: size, height: size }}
-      aria-hidden="true"
-    >
-      <SentinelMark size={markSize} className="text-white" />
-    </div>
+    <SentinelMark
+      size={size}
+      gradient={!mono}
+      className={cn('shrink-0', mono && 'text-foreground', className)}
+    />
   )
 }
 

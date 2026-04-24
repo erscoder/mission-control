@@ -3,10 +3,8 @@
 import {
   Activity,
   Crosshair,
-  Cpu,
   Wifi,
   WifiOff,
-  Gauge,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { FlowBreakdown, FlowState } from '@/types/sentinel'
@@ -23,7 +21,6 @@ export default function CommandBar({ status, flowState, breakdown }: CommandBarP
   const cycle = breakdown?.cycle ?? flowState?.cycle ?? 0
   const phase = breakdown?.phase ?? flowState?.phase ?? 'idle'
   const progress = Math.round((breakdown?.progress ?? 0) * 100)
-  const metrics = breakdown?.metrics ?? {}
   const updated = breakdown?.updated_at || flowState?.updated_at
 
   return (
@@ -55,29 +52,8 @@ export default function CommandBar({ status, flowState, breakdown }: CommandBarP
           )}
         </div>
 
-        {/* Metrics inline */}
-        <div className="hidden flex-1 items-center gap-4 lg:flex">
-          <MetricPill
-            icon={Gauge}
-            label="Coverage"
-            value={metrics.coverage_percent != null ? `${metrics.coverage_percent}%` : '—'}
-          />
-          <MetricPill
-            icon={Cpu}
-            label="Tests"
-            value={
-              metrics.tests_total
-                ? `${metrics.tests_passed ?? 0}/${metrics.tests_total}`
-                : '—'
-            }
-          />
-          <MetricPill
-            icon={Activity}
-            label="Issues"
-            value={metrics.issues_count != null ? String(metrics.issues_count) : '—'}
-            tone={metrics.issues_count ? 'warn' : 'neutral'}
-          />
-        </div>
+        {/* Spacer — metrics now live inline on each pipeline row card */}
+        <div className="hidden flex-1 lg:block" />
 
         {/* Updated-at */}
         {updated && (
@@ -109,27 +85,3 @@ export default function CommandBar({ status, flowState, breakdown }: CommandBarP
   )
 }
 
-function MetricPill({
-  icon: Icon,
-  label,
-  value,
-  tone = 'neutral',
-}: {
-  icon: React.ComponentType<{ className?: string }>
-  label: string
-  value: string
-  tone?: 'neutral' | 'warn'
-}) {
-  return (
-    <div className="flex items-center gap-2 text-[11px]">
-      <Icon
-        className={cn(
-          'h-3 w-3',
-          tone === 'warn' ? 'text-amber-400' : 'text-muted-foreground',
-        )}
-      />
-      <span className="uppercase tracking-wider text-muted-foreground/70">{label}</span>
-      <span className="font-mono font-semibold tabular-nums text-foreground">{value}</span>
-    </div>
-  )
-}
