@@ -9,6 +9,11 @@ RUN apt-get update \
 RUN curl -L https://fly.io/install.sh | sh
 ENV PATH="/root/.fly/bin:$PATH"
 
+# osv-scanner — required by osv_scanner_tool.py for dependency vulnerability scanning
+RUN curl -fsSL -o /usr/local/bin/osv-scanner \
+      https://github.com/google/osv-scanner/releases/latest/download/osv-scanner_linux_amd64 \
+ && chmod +x /usr/local/bin/osv-scanner
+
 RUN pip install uv
 
 WORKDIR /app

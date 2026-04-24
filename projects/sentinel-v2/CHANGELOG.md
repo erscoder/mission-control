@@ -5,6 +5,21 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-24 · TBD — OSV-scan + remediation loop between build and approval
+
+**What changed:**
+- `src/sentinel_v2/tools/osv_scanner_tool.py` (new): `OsvScannerTool` wraps the `osv-scanner` binary, summarizes OSV's verbose JSON to `{total, counts: {CRITICAL/HIGH/MEDIUM/LOW/UNKNOWN}, findings: [...]}` with per-finding `fix_versions`, severity, and aliases (CVE/GHSA).
+- `src/sentinel_v2/crews/security_remediation_crew/security_remediation_crew.py` (new): sequential crew with three agents — Vulnerability Scanner (runs osv-scanner on backend+frontend), Remediation Planner (4-rule playbook: upgrade / downgrade / replace / accept_risk; uses MiniMax-M2.7), Refactor Developer (applies the plan, fixes breaking changes and tests, reruns build).
+- `src/sentinel_v2/flows/sentinel_loop.py`: new `run_security_remediation` phase between `run_build` and `request_approval`. Loops the crew up to `SENTINEL_MAX_REMEDIATION_ITERATIONS` (default 5) until `total_vulns_after == 0` and `build_ok`. If the ceiling is hit, flags `vulnerability_scan_error` so the human sees it at the approval gate but doesn't block the flow forever. `request_approval` now listens to the new phase instead of `run_build`. New `SentinelState` fields: `security_remediated`, `vulnerability_count`, `vulnerability_scan_error`, `vulnerability_findings`.
+- `Dockerfile`: installs `osv-scanner` binary from GitHub releases.
+- `src/sentinel_v2/tools/file_tool.py`: `osv-scanner` added to shell whitelist for manual invocations.
+- `src/sentinel_v2/tools/__init__.py`: exports `OsvScannerTool`.
+- `tests/unit/test_osv_scanner_tool.py` (new): 12 tests covering the summary parser (severity mapping, fix_versions extraction, MODERATE→MEDIUM normalization, severity sort) and the tool's subprocess error paths (missing binary, non-JSON output, timeout, bad rc).
+
+**Env var:** `SENTINEL_MAX_REMEDIATION_ITERATIONS` (optional, defaults to 5).
+
+**Checkpoint safety:** `security_remediated: bool` persists in the checkpoint. A daemon crash mid-loop resumes by re-running the remediation (idempotent — `npm install` is safe to re-run).
+
 ## 2026-04-24 · TBD — Stripe + fly.io + Cloudflare Pages automation
 
 **What changed:**

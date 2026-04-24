@@ -23,6 +23,7 @@ from sentinel_v2.tools.fly_tool import (
     FlySecretsSetTool,
     FlyStatusTool,
 )
+from sentinel_v2.tools.osv_scanner_tool import OsvScannerTool
 
 __all__ = [
     # file
@@ -45,4 +46,6 @@ __all__ = [
     "FlySecretsSetTool",
     "FlyDeployTool",
     "FlyStatusTool",
+    # osv
+    "OsvScannerTool",
 ]

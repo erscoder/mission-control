@@ -32,6 +32,7 @@ _SHELL_WHITELIST = {
     "git",
     "prisma",
     "flyctl",
+    "osv-scanner",
     "curl",
     "ls",
     "cat",

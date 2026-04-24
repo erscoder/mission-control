@@ -53,6 +53,12 @@ class SentinelState(BaseModel):
     workspace_dir: Optional[str] = None          # /tmp/sentinel_workspaces/<draft_id>
     stripe_product_ids: list[str] = []
 
+    # Security remediation (between build and approval)
+    security_remediated: bool = False
+    vulnerability_count: int = 0
+    vulnerability_scan_error: Optional[str] = None
+    vulnerability_findings: list[dict] = []
+
     # Approve
     approved: bool = False
     revision_notes: Optional[str] = None
@@ -500,9 +506,123 @@ class SentinelLoopFlow(Flow[SentinelState]):
         self._touch()
         self._save_checkpoint()
 
-    # ─── Phase 4: APPROVE (human feedback) ───────────────────────────────
+    # ─── Phase 3b: SECURITY REMEDIATION ──────────────────────────────────
 
     @listen(run_build)
+    def run_security_remediation(self):
+        """Phase 3b: scan deps with osv-scanner and apply fixes in a loop until 0 vulns."""
+        if self._shutdown_requested or not self.state.workspace_dir:
+            return
+        if self.state.security_remediated:
+            log.info("Resume: security remediation already completed")
+            return
+
+        self.state.current_phase = "security"
+        self._touch()
+        log.info("Phase 3b: SECURITY REMEDIATION")
+        print("Phase 3b: SECURITY — scanning + remediating dependency vulnerabilities...")
+
+        from sentinel_v2.crews.security_remediation_crew.security_remediation_crew import (
+            security_remediation_crew,
+        )
+        from sentinel_v2.dashboard_state import update_draft, write_flow_breakdown
+
+        write_flow_breakdown(
+            cycle=self.state.cycle_count,
+            phase="security",
+            sub_phase="vulnerability-scan",
+            status="running",
+            progress=0.0,
+            current_task="osv-scanner + remediation loop",
+            activity={
+                "type": "phase_start",
+                "agent": "security-scanner",
+                "message": "Starting dependency vulnerability remediation",
+            },
+        )
+
+        max_iter = int(os.environ.get("SENTINEL_MAX_REMEDIATION_ITERATIONS", "5"))
+        remaining = 0
+        build_ok = False
+        for i in range(1, max_iter + 1):
+            log.info("Security remediation iteration %d/%d", i, max_iter)
+            crew = security_remediation_crew()
+            try:
+                result = crew.kickoff(inputs={
+                    "workspace_dir": self.state.workspace_dir,
+                    "iteration": i,
+                    "max_iterations": max_iter,
+                    "draft_id": self.state.draft_id or "",
+                })
+            except Exception as e:
+                log.warning("Security iteration %d failed: %s", i, e)
+                self.state.vulnerability_scan_error = f"iter {i}: {e}"
+                break
+
+            parsed = self._parse_deploy_result(result) or {}
+            try:
+                remaining = int(parsed.get("total_vulns_after", 0) or 0)
+            except (TypeError, ValueError):
+                remaining = 0
+            build_ok = bool(parsed.get("build_ok", False))
+            tests_ok = bool(parsed.get("tests_ok", False))
+            self.state.vulnerability_count = remaining
+            if isinstance(parsed.get("findings"), list):
+                self.state.vulnerability_findings = parsed["findings"][:50]
+
+            if self.state.draft_id:
+                update_draft(
+                    self.state.draft_id,
+                    revision_notes=(
+                        f"Security iter {i}/{max_iter}: {remaining} vulns remaining, "
+                        f"build={'ok' if build_ok else 'fail'}, "
+                        f"tests={'ok' if tests_ok else 'fail'}"
+                    ),
+                )
+
+            if remaining == 0 and build_ok:
+                log.info("Security: 0 vulns and build green after %d iterations", i)
+                break
+            log.info(
+                "Security iter %d/%d: remaining=%d build=%s tests=%s",
+                i, max_iter, remaining, build_ok, tests_ok,
+            )
+        else:
+            self.state.vulnerability_scan_error = (
+                f"Could not reach 0 vulns / green build after {max_iter} iterations "
+                f"(remaining={remaining}, build_ok={build_ok})"
+            )
+            log.warning(self.state.vulnerability_scan_error)
+            if self.state.draft_id:
+                update_draft(
+                    self.state.draft_id,
+                    revision_notes=self.state.vulnerability_scan_error,
+                )
+
+        write_flow_breakdown(
+            cycle=self.state.cycle_count,
+            phase="security",
+            sub_phase="vulnerability-scan",
+            status="completed" if self.state.vulnerability_scan_error is None else "blocked",
+            progress=1.0,
+            completed_tasks=["Remediation loop"],
+            pending_tasks=[],
+            activity={
+                "type": "phase_complete",
+                "agent": "security-scanner",
+                "message": (
+                    f"Remediation finished: {self.state.vulnerability_count} vulns remaining"
+                ),
+            },
+        )
+
+        self.state.security_remediated = True
+        self._touch()
+        self._save_checkpoint()
+
+    # ─── Phase 4: APPROVE (human feedback) ───────────────────────────────
+
+    @listen(run_security_remediation)
     def request_approval(self) -> str:
         """Phase 4: Present draft to Kike for approval via the dashboard."""
         if self.state.approved:
