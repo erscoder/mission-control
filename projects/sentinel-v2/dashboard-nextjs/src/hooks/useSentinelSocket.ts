@@ -39,6 +39,10 @@ export function useSentinelSocket(): SentinelData {
   const [buildQueue, setBuildQueue] = useState<Draft[]>([])
   const socketRef = useRef<Socket | null>(null)
 
+  // REST fallback refs so the interval can read current state without stale closures
+  const draftsRef = useRef<Draft[]>([])
+  const statusRef = useRef<ConnectionStatus>('connecting')
+
   useEffect(() => {
     const s = io(`${BACKEND_URL}${WEBSOCKET_NAMESPACE}`, {
       transports: ['websocket', 'polling'],
@@ -47,9 +51,18 @@ export function useSentinelSocket(): SentinelData {
     })
     socketRef.current = s
 
-    s.on('connect', () => setStatus('connected'))
-    s.on('disconnect', () => setStatus('disconnected'))
-    s.on('connect_error', () => setStatus('disconnected'))
+    s.on('connect', () => {
+      setStatus('connected')
+      statusRef.current = 'connected'
+    })
+    s.on('disconnect', () => {
+      setStatus('disconnected')
+      statusRef.current = 'disconnected'
+    })
+    s.on('connect_error', () => {
+      setStatus('disconnected')
+      statusRef.current = 'disconnected'
+    })
 
     s.on('state_update', (data: FlowState) => setFlowState(data))
     s.on('flow_breakdown_update', (data: FlowBreakdown) => setBreakdown(data))
@@ -57,11 +70,33 @@ export function useSentinelSocket(): SentinelData {
       setMessages(Array.isArray(data) ? data : []),
     )
     s.on('drafts_update', (data: DraftsState) => {
-      setDrafts(Array.isArray(data?.drafts) ? data.drafts : [])
-      setBuildQueue(Array.isArray(data?.build_queue) ? data.build_queue : [])
+      const d = Array.isArray(data?.drafts) ? data.drafts : []
+      const q = Array.isArray(data?.build_queue) ? data.build_queue : []
+      setDrafts(d)
+      setBuildQueue(q)
+      draftsRef.current = d
     })
 
+    // Poll /api/drafts every 3s as a fallback for when the socket misses the
+    // initial push or Flask hasn't emitted drafts_update yet.
+    const poll = setInterval(async () => {
+      if (statusRef.current === 'connected' && draftsRef.current.length > 0) return
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/drafts`)
+        if (!res.ok) return
+        const json: DraftsState & { build_queue?: Draft[] } = await res.json()
+        const d = Array.isArray(json?.drafts) ? json.drafts : []
+        const q = Array.isArray(json?.build_queue) ? json.build_queue : []
+        setDrafts(d)
+        setBuildQueue(q)
+        draftsRef.current = d
+      } catch {
+        // Flask not running — silent; socket will deliver when it reconnects
+      }
+    }, 3000)
+
     return () => {
+      clearInterval(poll)
       s.off('connect')
       s.off('disconnect')
       s.off('connect_error')

@@ -143,26 +143,51 @@ def add_agent_message(
             log.warning("Could not write agent messages file: %s", exc)
 
 
+def _make_task_callback(phase: str, cycle: int) -> Callable:
+    """Return a task_callback compatible with CrewAI Crew.task_callback.
+
+    Fires after each task with a TaskOutput object that contains the actual
+    agent result (.raw), the agent role (.agent), and the task description.
+    """
+    def _on_task_done(task_output: Any) -> None:
+        agent_role = getattr(task_output, "agent", None) or "orchestrator"
+        agent_id = _sanitize_agent_id(str(agent_role))
+        raw = getattr(task_output, "raw", "") or ""
+        summary = raw[:400].strip() if raw else "Task completed"
+        add_agent_message(
+            agent_id=agent_id,
+            message=summary,
+            hook_type=AgentHookType.TASK_COMPLETED.value,
+            phase=phase,
+            cycle=cycle,
+            metadata={"preview": raw[:200]},
+        )
+    return _on_task_done
+
+
 def crew_with_hooks(
     crew: Crew,
-    phase: str = "unknown", 
+    phase: str = "unknown",
     cycle: int = 1
 ) -> Crew:
     """Add streaming hooks to a Crew instance.
-    
+
     Attaches lifecycle callbacks to capture agent outputs and emit to dashboard.
-    
+
     Args:
         crew: CrewAI Crew instance
         phase: Workflow phase this crew belongs to
         cycle: Cycle number
-        
+
     Returns:
         Crew with hooks attached
     """
+    # Wire task_callback so every completed task emits its real output
+    crew.task_callback = _make_task_callback(phase, cycle)
+
     # Store original kickoff
     original_kickoff = crew.kickoff
-    
+
     @wraps(original_kickoff)
     def kickoff_with_hooks(**kwargs) -> Any:
         """Enhanced kickoff that streams agent messages."""
@@ -175,11 +200,11 @@ def crew_with_hooks(
             cycle=cycle,
             metadata={"task_count": len(crew.tasks)}
         )
-        
+
         # Hook into each task's lifecycle
         for task in crew.tasks:
             _hook_task(task, phase, cycle)
-        
+
         # Log each agent
         for agent in crew.agents:
             add_agent_message(
@@ -193,23 +218,24 @@ def crew_with_hooks(
                     "goal": agent.goal[:100] + "..." if len(agent.goal) > 100 else agent.goal
                 }
             )
-        
+
         # Run original kickoff
         try:
             result = original_kickoff(**kwargs)
-            
-            # Log completion
+
+            # Emit phase summary with the crew's actual output
+            raw_output = str(result.raw) if hasattr(result, "raw") else str(result)
             add_agent_message(
                 agent_id="orchestrator",
-                message=f"Phase completed: {phase}",
+                message=raw_output[:500],
                 hook_type="phase_completed",
                 phase=phase,
                 cycle=cycle,
-                metadata={"status": "success"}
+                metadata={"status": "success", "result_preview": raw_output[:300]},
             )
-            
+
             return result
-            
+
         except Exception as e:
             # Log error
             add_agent_message(
@@ -221,7 +247,7 @@ def crew_with_hooks(
                 metadata={"error": str(e)}
             )
             raise
-    
+
     object.__setattr__(crew, 'kickoff', kickoff_with_hooks)
     return crew
 

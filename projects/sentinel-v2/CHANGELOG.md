@@ -5,6 +5,12 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-24 · TBD — Rich Agent Feed + REST fallback for draft approval
+
+**What changed:**
+- `crew_hooks.py`: added `_make_task_callback(phase, cycle)` — wired as `crew.task_callback` so every completed task emits its actual `.raw` output (up to 400 chars) to the Agent Feed instead of lifecycle-only strings. Phase summary now includes the crew's final `result.raw` output.
+- `dashboard-nextjs/src/hooks/useSentinelSocket.ts`: added REST polling fallback that calls `GET /api/drafts` every 3s when the socket is disconnected or when no drafts have arrived yet. Fixes the case where the daemon writes a pending draft but the frontend shows nothing because Flask hadn't pushed `drafts_update` before the socket connected.
+
 ## 2026-04-24 · TBD — Daemon checkpoint/resume: survive restarts mid-cycle
 
 **What changed:**
