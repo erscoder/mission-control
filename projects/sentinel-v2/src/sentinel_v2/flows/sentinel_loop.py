@@ -155,6 +155,36 @@ class SentinelLoopFlow(Flow[SentinelState]):
         log.info("=== Sentinel Loop Cycle #%d ===", self.state.cycle_count)
         print(f"\n{'='*50}\nCycle #{self.state.cycle_count}\n{'='*50}")
 
+        # Before spawning new research, pick up any draft that was already approved
+        # for build (status="queued") in a previous cycle — typically from the retry
+        # button or from a rejected approval gate leaving an orphan behind.
+        try:
+            from sentinel_v2.dashboard_state import list_drafts_by_status
+            queued = list_drafts_by_status({"queued"})
+            if queued:
+                draft = queued[0]
+                log.info(
+                    "Found queued draft %s from previous cycle — skipping research",
+                    draft["id"],
+                )
+                print(f"Found queued draft {draft['id']} — skipping research")
+                self.state.draft_id = draft["id"]
+                self.state.top_opportunity = {
+                    "title": draft.get("title", "retry"),
+                    "tagline": draft.get("tagline") or "",
+                    "description": draft.get("description") or "",
+                    "problem": draft.get("problem") or "",
+                    "solution": draft.get("solution") or "",
+                    "tags": draft.get("tags") or [],
+                    "tech_fit": draft.get("tech_fit", 0.0),
+                    "complexity": draft.get("complexity", 0),
+                }
+                self.state.opportunities = [self.state.top_opportunity]
+                self.state.approved = True  # user already approved via retry
+                self._save_checkpoint()
+        except Exception as e:
+            log.warning("Could not check for queued drafts at cycle start: %s", e)
+
     @listen(start_cycle)
     def run_research(self):
         """Phase 1: Run research crew to scout opportunities."""

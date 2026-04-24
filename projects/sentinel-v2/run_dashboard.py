@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 """Start Sentinel V2 dashboard (WebSocket + state poller)."""
+import warnings
+# Eventlet emits an EventletDeprecationWarning at import. We still need it for
+# Flask-SocketIO's async mode; migrating to asgi/uvicorn is a separate piece of
+# work. Silence the warning so logs stay readable.
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="eventlet.*")
+warnings.filterwarnings("ignore", message=".*[Ee]ventlet.*[Dd]eprecat.*")
+
 import eventlet  # must monkey-patch before importing anything else
 eventlet.monkey_patch()
 

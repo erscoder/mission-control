@@ -5,6 +5,19 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-24 · TBD — Retry actually works: cycle picks up queued drafts, daemon gets unblocked
+
+**What changed:**
+- `src/sentinel_v2/flows/sentinel_loop.py`: `start_cycle` now checks for drafts with `status="queued"` BEFORE spawning research. If one exists, it hydrates the flow state from that draft (sets `top_opportunity`, `draft_id`, `approved=True`), saves a checkpoint, and lets the flow skip directly into match/build/security/deploy. This closes the loop for retried drafts.
+- `src/sentinel_v2/db.py`: new `clear_active_flow_checkpoint()` that deletes ALL rows in `flow_checkpoints` (the per-draft `clear_flow_checkpoint(draft_id)` is kept for the normal deploy-completed path).
+- `dashboard/app.py`: `retry_draft` socket handler + REST `"retry"` action now do three things instead of one:
+  1. Clear the active flow checkpoint so the daemon doesn't keep running the previous flow's state.
+  2. Reject any OTHER currently-pending drafts so `wait_for_draft_status` unblocks and the daemon's current cycle ends cleanly.
+  3. Flip the target draft to `"queued"`.
+- `run_dashboard.py`: silence the eventlet `DeprecationWarning` so Flask container logs stay readable.
+
+**Why the old retry didn't work:** the daemon was blocked inside `wait_for_draft_status` polling `self.state.draft_id` (the active draft). Flipping a DIFFERENT draft's status did nothing to unblock it. And when the cycle did eventually end, `start_cycle` always spawned fresh research — there was no path by which a "retried" draft could re-enter the flow. Both holes are now plugged.
+
 ## 2026-04-24 · TBD — Retry button for failed drafts
 
 **What changed:**

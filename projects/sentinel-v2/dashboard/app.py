@@ -280,30 +280,51 @@ def handle_reject_draft(data):
 
 @socketio.on("retry_draft", namespace="/dashboard")
 def handle_retry_draft(data):
-    """Retry a failed draft. If a flow checkpoint exists for this draft_id, reset
-    status to 'queued' so the daemon resumes from where it left off. Otherwise
-    reset to 'pending' so the user can re-approve it from scratch."""
+    """Retry a failed draft.
+
+    Semantics:
+      - The failed draft is flipped to "queued" (approved for build).
+      - Any active flow checkpoint is cleared so the daemon doesn't get confused
+        about which draft it was working on.
+      - Any OTHER currently-pending drafts are rejected — this unblocks the
+        daemon if it's sitting inside `wait_for_draft_status` polling on one
+        of them, so the current cycle ends and the next one picks up the
+        retried draft via `start_cycle`'s queued-draft lookup.
+    """
     draft_id = (data or {}).get("id", "")
     if not draft_id:
         emit("action_response", {"success": False, "action": "retry_draft", "error": "missing id"}, namespace="/dashboard")
         return
 
-    # Check for active checkpoint tied to this draft
-    has_checkpoint = False
+    # 1. Clear any active checkpoint (its draft_id might not match this one)
     try:
         from sentinel_v2 import db as _db
-        checkpoint = _db.load_active_flow_checkpoint()
-        if checkpoint and f'"draft_id": "{draft_id}"' in checkpoint:
-            has_checkpoint = True
+        _db.clear_active_flow_checkpoint()
     except Exception as e:
-        log.warning("Could not check checkpoint for %s: %s", draft_id, e)
+        log.warning("Could not clear checkpoint for retry: %s", e)
 
-    new_status = "queued" if has_checkpoint else "pending"
-    notes = f"retry requested ({'resume from checkpoint' if has_checkpoint else 'from scratch — no checkpoint'})"
-    ok = update_draft_status(draft_id, new_status, revision_notes=notes)
+    # 2. Reject other pending drafts so the daemon unblocks.
+    other_rejected: list[str] = []
+    try:
+        from sentinel_v2 import dashboard_state as _ds
+        for d in _ds.list_drafts_by_status({"pending"}):
+            if d["id"] != draft_id:
+                _ds.update_draft(d["id"], status="rejected", revision_notes="auto-rejected to unblock daemon on retry")
+                other_rejected.append(d["id"])
+    except Exception as e:
+        log.warning("Could not reject other pending drafts: %s", e)
+
+    # 3. Flip the target draft back to queued (approved for build)
+    ok = update_draft_status(draft_id, "queued", revision_notes="retry requested")
     emit(
         "action_response",
-        {"success": ok, "action": "retry_draft", "id": draft_id, "new_status": new_status, "resume": has_checkpoint},
+        {
+            "success": ok,
+            "action": "retry_draft",
+            "id": draft_id,
+            "new_status": "queued",
+            "unblocked": other_rejected,
+        },
         namespace="/dashboard",
     )
 
@@ -387,20 +408,19 @@ def api_drafts_action():
     elif action == "reject_deploy":
         ok = update_draft_status(draft_id, "failed")
     elif action == "retry":
-        has_checkpoint = False
         try:
             from sentinel_v2 import db as _db
-            checkpoint = _db.load_active_flow_checkpoint()
-            if checkpoint and f'"draft_id": "{draft_id}"' in checkpoint:
-                has_checkpoint = True
+            _db.clear_active_flow_checkpoint()
         except Exception:
             pass
-        new_status = "queued" if has_checkpoint else "pending"
-        ok = update_draft_status(
-            draft_id,
-            new_status,
-            revision_notes=f"retry ({'resume' if has_checkpoint else 'from scratch'})",
-        )
+        try:
+            from sentinel_v2 import dashboard_state as _ds
+            for d in _ds.list_drafts_by_status({"pending"}):
+                if d["id"] != draft_id:
+                    _ds.update_draft(d["id"], status="rejected", revision_notes="auto-rejected to unblock daemon on retry")
+        except Exception:
+            pass
+        ok = update_draft_status(draft_id, "queued", revision_notes="retry requested")
     else:
         ok = update_draft_status(draft_id, "rejected")
     return jsonify({"success": ok, "action": action, "id": draft_id})

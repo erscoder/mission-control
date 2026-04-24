@@ -241,6 +241,14 @@ def clear_flow_checkpoint(draft_id: str) -> None:
         conn.execute("DELETE FROM flow_checkpoints WHERE draft_id = ?", (draft_id,))
 
 
+def clear_active_flow_checkpoint() -> int:
+    """Delete ALL flow checkpoints (used when forcing a fresh cycle on retry).
+    Returns the number of rows deleted."""
+    with connect() as conn:
+        cur = conn.execute("DELETE FROM flow_checkpoints")
+        return cur.rowcount or 0
+
+
 def list_by_status(statuses: set[str]) -> list[dict]:
     if not statuses:
         return []
