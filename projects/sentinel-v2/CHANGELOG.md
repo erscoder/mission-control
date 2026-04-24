@@ -5,6 +5,63 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-24 · 5439c17 — Drop purple tile, per-agent colored avatars, leaner command bar
+
+**Commit:** `5439c17`
+
+**What changed:**
+- Logo redesigned: gradient-stroke concentric arcs on transparent
+  background (no chunky gradient tile). `SentinelMark`, `SentinelLogo`,
+  `SentinelBrand` and `public/icon.svg` all updated consistently.
+- `AgentAvatar` gains a 17-color vibrant palette + DJB2 hash for
+  unknown agent IDs, plus an explicit hex-per-role map for the 13 named
+  crew roles. DiceBear bottts-neutral robots now sit on distinct
+  backgrounds — previously most agents fell through to a gray default.
+- Command bar: removed inline Coverage/Tests/Issues pills; those
+  metrics live as per-stage tags inside each Build Pipeline row card
+  (Issues on Review, Cov+Tests on Built) where they are bound to a
+  specific app instead of averaged across the queue.
+
+**Why:** the prior "gradient square tile" logo looked like a generic
+SaaS favicon and competed with the wordmark; moving the gradient to the
+stroke makes it a precision detail like Linear/Vercel/Warp. The avatars
+fix was mechanical — only a handful of agent IDs had known gradients,
+so the hash + palette guarantees every agent is visually distinct at a
+glance. Finally, header metrics were duplicative (same numbers shown on
+the active row) and contextless (whose coverage? which app?) — moving
+them onto the row card preserves the information at the right grain.
+
+## 2026-04-24 · 86aac68 — Demand-driven agent swarm + command-center dashboard + startup hardening
+
+**Commit:** `86aac68`
+
+**What changed:** single-landing refactor that (a) rebuilds the dashboard as a
+Linear-inspired command-center with a unified draft/build pipeline and two
+human gates, (b) rewrites the four CrewAI crews to be demand-driven and
+commercial-quality (no operator identity, WTP evidence required, 5-test
+commercial filter, Stripe + PostHog from day 1), (c) hardens daemon startup
+(dotenv override, TMPDIR pinning, lazy Telegram config, PTB stop_signals,
+_shutdown nonlocal), and (d) wires the dashboard as the source of truth for
+approval gates via `drafts.json` polling.
+
+**Why:** three compounding problems motivated this change.
+(1) The system was starting from the operator's personal profile, so the
+agents were producing "ideas that match Kike" instead of "things people will
+pay for". Moving the seed to internet demand signals and adding a strict
+commercial filter is the precondition for the swarm producing anything a user
+would actually buy.
+(2) The daemon kept crashing on startup with spurious Telegram validation
+errors, an eventlet/threading conflict, a CrewAI lock file pointed at an
+ephemeral sandbox dir, and an `UnboundLocalError` — none of which were
+caught because the failures masked each other. Each now has a surgical fix
+plus diagnostic so the next failure mode is obvious.
+(3) The dashboard was showing mock data and single-opportunity state, which
+didn't reflect the multi-draft reality the user wanted. The unified pipeline
+model with lifecycle statuses (`pending → queued → building → review →
+built → deployed | failed | rejected`) is the minimum abstraction needed for
+multiple concurrent apps. History modal separates shipped/rejected from the
+active pipeline view.
+
 ### Added
 
 - **Dashboard (Next.js + Flask)** — Linear-inspired dark theme, agent-swarm command
