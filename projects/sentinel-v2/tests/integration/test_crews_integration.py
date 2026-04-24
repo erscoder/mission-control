@@ -181,43 +181,6 @@ class TestDeployCrew:
             assert len(task.expected_output) > 10
 
 
-# ─── Telegram Tool ───────────────────────────────────────────────────────────
-
-class TestTelegramTool:
-    """Integration tests for TelegramTool interface."""
-
-    def test_telegram_tool_instantiates(self):
-        """TelegramTool can be instantiated."""
-        from sentinel_v2.tools.telegram_tool import TelegramTool
-        tool = TelegramTool()
-        assert tool is not None
-
-    def test_has_send_message(self):
-        """TelegramTool has send_message method."""
-        from sentinel_v2.tools.telegram_tool import TelegramTool
-        assert hasattr(TelegramTool, "send_message")
-
-    def test_has_send_approval_poll(self):
-        """TelegramTool has send_approval_poll method."""
-        from sentinel_v2.tools.telegram_tool import TelegramTool
-        assert hasattr(TelegramTool, "send_approval_poll")
-
-    def test_has_approval_callback_setter(self):
-        """TelegramTool has _set_approval_callback method."""
-        from sentinel_v2.tools.telegram_tool import TelegramTool
-        assert hasattr(TelegramTool, "_set_approval_callback")
-
-    def test_send_message_is_callable(self):
-        """send_message is callable."""
-        from sentinel_v2.tools.telegram_tool import TelegramTool
-        assert callable(TelegramTool.send_message)
-
-    def test_send_approval_poll_is_callable(self):
-        """send_approval_poll is callable."""
-        from sentinel_v2.tools.telegram_tool import TelegramTool
-        assert callable(TelegramTool.send_approval_poll)
-
-
 # ─── Flow Smoke Tests ────────────────────────────────────────────────────────
 
 class TestFlowSmoke:

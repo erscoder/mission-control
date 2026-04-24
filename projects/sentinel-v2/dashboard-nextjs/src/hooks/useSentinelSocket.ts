@@ -5,7 +5,6 @@ import { io, type Socket } from 'socket.io-client'
 import { BACKEND_URL, WEBSOCKET_NAMESPACE } from '@/lib/config'
 import type {
   AgentMessage,
-  ApprovalState,
   Draft,
   DraftsState,
   FlowBreakdown,
@@ -20,14 +19,10 @@ export interface SentinelData {
   socket: Socket | null
   status: ConnectionStatus
   flowState: FlowState | null
-  approvalState: ApprovalState | null
   breakdown: FlowBreakdown | null
   messages: AgentMessage[]
   drafts: Draft[]
   buildQueue: Draft[]
-  approve: () => void
-  reject: () => void
-  revise: (notes: string) => void
   approveDraft: (id: string) => void
   rejectDraft: (id: string) => void
   reviseDraft: (id: string, notes: string) => void
@@ -38,7 +33,6 @@ export interface SentinelData {
 export function useSentinelSocket(): SentinelData {
   const [status, setStatus] = useState<ConnectionStatus>('connecting')
   const [flowState, setFlowState] = useState<FlowState | null>(null)
-  const [approvalState, setApprovalState] = useState<ApprovalState | null>(null)
   const [breakdown, setBreakdown] = useState<FlowBreakdown | null>(null)
   const [messages, setMessages] = useState<AgentMessage[]>([])
   const [drafts, setDrafts] = useState<Draft[]>([])
@@ -58,7 +52,6 @@ export function useSentinelSocket(): SentinelData {
     s.on('connect_error', () => setStatus('disconnected'))
 
     s.on('state_update', (data: FlowState) => setFlowState(data))
-    s.on('approval_update', (data: ApprovalState) => setApprovalState(data))
     s.on('flow_breakdown_update', (data: FlowBreakdown) => setBreakdown(data))
     s.on('agent_messages', (data: AgentMessage[]) =>
       setMessages(Array.isArray(data) ? data : []),
@@ -73,7 +66,6 @@ export function useSentinelSocket(): SentinelData {
       s.off('disconnect')
       s.off('connect_error')
       s.off('state_update')
-      s.off('approval_update')
       s.off('flow_breakdown_update')
       s.off('agent_messages')
       s.off('drafts_update')
@@ -83,10 +75,6 @@ export function useSentinelSocket(): SentinelData {
 
   const actions = useMemo(
     () => ({
-      approve: () => socketRef.current?.emit('approve'),
-      reject: () => socketRef.current?.emit('reject', { revision: false }),
-      revise: (notes: string) =>
-        socketRef.current?.emit('reject', { revision: true, notes }),
       approveDraft: (id: string) =>
         socketRef.current?.emit('approve_draft', { id }),
       rejectDraft: (id: string) =>
@@ -105,7 +93,6 @@ export function useSentinelSocket(): SentinelData {
     socket: socketRef.current,
     status,
     flowState,
-    approvalState,
     breakdown,
     messages,
     drafts,

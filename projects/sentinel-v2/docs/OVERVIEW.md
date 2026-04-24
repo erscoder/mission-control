@@ -25,7 +25,7 @@ RESEARCH → MATCH → BUILD → APPROVE → DEPLOY
 1. **RESEARCH** — Scout thousands of websites 24/7, build opportunity database
 2. **MATCH** — Research Kike's profile, map opportunities to goals
 3. **BUILD** — Create micro-business drafts with hierarchical crew
-4. **APPROVE** — Kike reviews and approves everything via Telegram
+4. **APPROVE** — Kike reviews and approves everything via the dashboard
 5. **DEPLOY** — Execute with approved budget
 
 ---
@@ -67,7 +67,6 @@ RESEARCH → MATCH → BUILD → APPROVE → DEPLOY
 | Memory | CrewAI Memory (LanceDB-backed) |
 | Crew Process | Sequential + Hierarchical (Manager-led) |
 | State | Pydantic BaseModel (`SentinelState`) |
-| Telegram | python-telegram-bot v20+ |
 | Dashboard comms | Socket.IO (namespace: `/dashboard`) |
 | File-based state | `/tmp/sentinel_v2_*.json` |
 
@@ -102,9 +101,7 @@ sentinel-v2/
 │   │   ├── match_crew/           # Profile Researcher → Matcher (sequential)
 │   │   ├── build_crew/           # Manager → Frontend → Backend → QA (hierarchical)
 │   │   └── deploy_crew/         # Deployer → Verifier (sequential)
-│   └── tools/
-│       ├── telegram_tool.py      # Telegram bot (python-telegram-bot)
-│       └── approval_state.py     # File-based approval polling
+│   └── dashboard_state.py       # Writes state files consumed by the dashboard
 ├── dashboard-nextjs/            # Frontend Next.js app
 │   ├── src/app/
 │   │   ├── layout.tsx           # Theme provider (Radix)
@@ -191,8 +188,6 @@ CrewAI Memory provides:
 
 ```bash
 OPENAI_API_KEY=           # GPT-4o access required
-TELEGRAM_BOT_TOKEN=      # From @BotFather
-TELEGRAM_CHAT_ID=        # Your personal chat ID
 SENTINEL_LOG_LEVEL=DEBUG # Optional
 BACKEND_URL=http://localhost:5173
 ```
@@ -218,8 +213,8 @@ BACKEND_URL=http://localhost:5173
 2. Replace Tailwind components with Radix components (`<Button>`, `<Flex>`, etc.)
 3. Use Radix Themes tokens exclusively and remove Tailwind color tokens
 
-### 🟡 Approval Polling
-Approval uses file-based polling (`/tmp/sentinel_v2_approval.json`) with a 10s sleep simulation, not real Telegram callback polling.
+### 🟡 Approval Flow
+Approval is dashboard-driven: the Flask backend flips draft status (`queued` → `deployed`/`failed`) in `/tmp/sentinel_v2_drafts.json`, and the Sentinel flow polls that file via `wait_for_draft_status`.
 
 ### 🟡 Build Crew Manager
 The hierarchical build crew may need the Manager LLM to be `gpt-4o` to handle delegation properly (not `gpt-4o-mini`).
@@ -255,5 +250,5 @@ uv run python -m sentinel_v2.main --mode once
 | Memory | MemPalace | CrewAI Memory (LanceDB) |
 | Agent config | YAML | Python |
 | Crew process | Sequential only | Sequential + Hierarchical |
-| Telegram | Custom impl | python-telegram-bot v20+ |
+| Approval | Telegram poll | Dashboard (Next.js) |
 | Dashboard | Flask | Next.js + Tailwind |

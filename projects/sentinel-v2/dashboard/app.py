@@ -1,20 +1,11 @@
 """
 Sentinel V2 Dashboard — Flask + SocketIO backend with WebSocket bi-directional communication.
 
-Provides:
-- /                   → dashboard UI
-- SocketIO events:
-  - connect/ disconnect
-  - subscribe_state → dashboard receives state updates
-  - state_update     → app pushes state updates
-  - approve          → client approves proposal
-  - reject           → client rejects proposal
-
 Endpoints:
 - /api/state          → current flow state
-- /api/approval       → current approval state
-- /api/approval/action → approve/reject/revision action
 - /api/log            → tail latest log
+- /api/drafts         → draft list + build queue
+- /api/drafts/action  → approve/reject/revise draft actions
 """
 from __future__ import annotations
 
@@ -43,7 +34,6 @@ socketio = SocketIO(
 
 BASE_DIR = Path(__file__).parent.parent
 LOGS_DIR = BASE_DIR / "logs"
-APPROVAL_FILE = Path("/tmp/sentinel_v2_approval.json")
 STATE_FILE = Path("/tmp/sentinel_v2_state.json")
 BREAKDOWN_FILE = Path("/tmp/sentinel_v2_flow_breakdown.json")
 AGENT_MESSAGES_FILE = Path("/tmp/sentinel_v2_agent_messages.json")
@@ -51,17 +41,6 @@ DRAFTS_FILE = Path("/tmp/sentinel_v2_drafts.json")
 SOCKET_AUTH_TOKEN = "sentinel-v2-dashboard-secret"
 
 # ── State reader ──────────────────────────────────────────────────────────────
-
-
-def read_approval_state() -> dict:
-    """Read current approval state."""
-    if not APPROVAL_FILE.exists():
-        return {"status": "no_cycle", "pending": {}, "approved": [], "rejected": []}
-    try:
-        with open(APPROVAL_FILE) as f:
-            return json.load(f)
-    except (IOError, json.JSONDecodeError):
-        return {"status": "error", "pending": {}, "approved": [], "rejected": []}
 
 
 def get_agent_messages() -> list:
@@ -88,80 +67,18 @@ def read_flow_state() -> dict:
 
 
 def read_drafts() -> dict:
-    """Read drafts list from file. Each draft has rich metadata + lifecycle status.
-
-    If the drafts file does not exist yet, synthesize one from the legacy approval
-    state so older Sentinel runs still populate the dashboard's draft queue.
-    """
+    """Read drafts list from file."""
     default = {"drafts": [], "updated_at": ""}
-    if DRAFTS_FILE.exists():
-        try:
-            with open(DRAFTS_FILE) as f:
-                data = json.load(f)
-                if isinstance(data, dict) and isinstance(data.get("drafts"), list):
-                    return {**default, **data}
-        except (IOError, json.JSONDecodeError):
-            pass
-
-    # Fallback: synthesize drafts from legacy approval state
-    legacy = read_approval_state()
-    drafts: list[dict] = []
-
-    def _normalize(item: dict, default_status: str) -> dict:
-        if not isinstance(item, dict) or not item.get("title"):
-            return {}
-        cycle = item.get("cycle", 0)
-        status = item.get("status") or default_status
-        # Map legacy status values to new lifecycle
-        status = {
-            "approve": "approved",
-            "reject": "rejected",
-        }.get(status, status)
-        return {
-            "id": item.get("id") or f"legacy_c{cycle}_{abs(hash(item.get('title',''))) % 10_000}",
-            "cycle": cycle,
-            "title": item.get("title", ""),
-            "tagline": item.get("tagline")
-            or (item.get("solution", "")[:80] if item.get("solution") else ""),
-            "description": item.get("description")
-            or item.get("problem", "")
-            or "",
-            "problem": item.get("problem", ""),
-            "solution": item.get("solution", ""),
-            "tech_fit": float(item.get("tech_fit", 0.0) or 0.0),
-            "complexity": int(item.get("complexity", 0) or 0),
-            "estimated_hours": item.get("estimated_hours"),
-            "tags": item.get("tags", []) or [],
-            "status": status,
-            "created_at": item.get("created_at", ""),
-            "updated_at": item.get("resolved_at") or item.get("updated_at", ""),
-            "build_progress": float(item.get("build_progress", 0.0) or 0.0),
-            "queue_position": item.get("queue_position"),
-            "revision_notes": item.get("revision_notes"),
-            "deployment_url": item.get("deployment_url"),
-        }
-
-    pending_raw = legacy.get("pending")
-    if isinstance(pending_raw, dict) and pending_raw.get("title"):
-        d = _normalize(pending_raw, "pending")
-        if d:
-            drafts.append(d)
-    elif isinstance(pending_raw, list):
-        for item in pending_raw:
-            d = _normalize(item, "pending")
-            if d:
-                drafts.append(d)
-
-    for item in legacy.get("approved", []) or []:
-        d = _normalize(item, "approved")
-        if d:
-            drafts.append(d)
-    for item in legacy.get("rejected", []) or []:
-        d = _normalize(item, "rejected")
-        if d:
-            drafts.append(d)
-
-    return {"drafts": drafts, "updated_at": ""}
+    if not DRAFTS_FILE.exists():
+        return default
+    try:
+        with open(DRAFTS_FILE) as f:
+            data = json.load(f)
+            if isinstance(data, dict) and isinstance(data.get("drafts"), list):
+                return {**default, **data}
+    except (IOError, json.JSONDecodeError):
+        pass
+    return default
 
 
 def write_drafts(data: dict) -> bool:
@@ -260,67 +177,12 @@ def get_latest_log() -> tuple[str, str]:
         return "", log_path.name
 
 
-def write_approval_action(action: str, revision_notes: str | None = None) -> bool:
-    """Write an approval/rejection/revision action. Returns True on success."""
-    state = read_approval_state()
-    now = datetime.now().isoformat()
-
-    if action not in ("approve", "reject"):
-        return False
-
-    # Support both pending as list and pending as dict
-    pending_raw = state.get("pending")
-    pending_item = None
-
-    if isinstance(pending_raw, dict):
-        # A single dict item — treat null/missing status as pending
-        item_status = pending_raw.get("status")
-        if item_status is None or item_status == "pending":
-            pending_item = pending_raw
-    elif isinstance(pending_raw, list):
-        for item in pending_raw:
-            if item.get("status") == "pending":
-                pending_item = item
-                break
-
-    if not pending_item:
-        return False
-
-    # Update the item
-    pending_item["status"] = action
-    pending_item["resolved_at"] = now
-    if revision_notes:
-        pending_item["revision_notes"] = revision_notes
-
-    # Map action to the correct array key (approve→approved, reject→rejected)
-    array_key = "approved" if action == "approve" else "rejected"
-
-    # Clear pending, add to correct resolved array
-    if isinstance(pending_raw, dict):
-        state["pending"] = {}
-    else:
-        state["pending"] = [i for i in state.get("pending", []) if i.get("status") != "pending"]
-
-    state.setdefault(array_key, []).append(pending_item)
-
-    # Also update the action
-    state["last_action"] = action
-    state["last_action_at"] = now
-
-    try:
-        with open(APPROVAL_FILE, "w") as f:
-            json.dump(state, f, indent=2)
-        return True
-    except (IOError, json.JSONDecodeError):
-        return False
-
 
 # ── Background state poller ────────────────────────────────────────────────────
 
 def state_poller():
     """Background thread that polls state files and pushes updates via SocketIO."""
     last_state = ""
-    last_approval = ""
     last_log = ""
     last_agent_messages = ""
     last_breakdown = ""
@@ -329,7 +191,6 @@ def state_poller():
     while True:
         try:
             flow_state = read_flow_state()
-            approval_state = read_approval_state()
             log_content, log_name = get_latest_log()
             agent_messages = get_agent_messages()
             breakdown = read_flow_breakdown()
@@ -337,7 +198,6 @@ def state_poller():
             build_queue = compute_build_queue(drafts_data.get("drafts", []))
 
             current_state = json.dumps(flow_state)
-            current_approval = json.dumps(approval_state)
             current_messages = json.dumps(agent_messages)
             current_breakdown = json.dumps(breakdown)
             current_drafts = json.dumps({"drafts": drafts_data.get("drafts", []), "build_queue": build_queue})
@@ -345,10 +205,6 @@ def state_poller():
             if current_state != last_state:
                 socketio.emit("state_update", flow_state, namespace="/dashboard")
                 last_state = current_state
-
-            if current_approval != last_approval:
-                socketio.emit("approval_update", approval_state, namespace="/dashboard")
-                last_approval = current_approval
 
             if current_messages != last_agent_messages:
                 socketio.emit("agent_messages", agent_messages, namespace="/dashboard")
@@ -399,7 +255,6 @@ def handle_connect(auth=None):
 
     # Send current state immediately
     emit("state_update", read_flow_state(), namespace="/dashboard")
-    emit("approval_update", read_approval_state(), namespace="/dashboard")
     emit("flow_breakdown_update", read_flow_breakdown(), namespace="/dashboard")
     emit("agent_messages", get_agent_messages(), namespace="/dashboard")
     _drafts = read_drafts()
@@ -414,30 +269,6 @@ def handle_connect(auth=None):
 def handle_disconnect():
     """Client disconnected."""
     print(f"Client disconnected: {request.sid}")
-
-
-@socketio.on("approve", namespace="/dashboard")
-def handle_approve():
-    """Approve the current proposal."""
-    success = write_approval_action("approve")
-    emit("action_response", {"success": success, "action": "approve"}, namespace="/dashboard")
-
-
-@socketio.on("reject", namespace="/dashboard")
-def handle_reject(data):
-    """Reject the current proposal (or request revision)."""
-    revision = data.get("revision", False)
-    notes = data.get("notes", "")
-
-    # revision means approve to continue with feedback
-    if revision:
-        success = write_approval_action("approve", revision_notes=notes)
-        action_name = "revision"
-    else:
-        success = write_approval_action("reject")
-        action_name = "reject"
-
-    emit("action_response", {"success": success, "action": action_name}, namespace="/dashboard")
 
 
 @socketio.on("approve_draft", namespace="/dashboard")
@@ -502,31 +333,6 @@ def index():
 @app.route("/api/state")
 def api_state():
     return jsonify(read_flow_state())
-
-
-@app.route("/api/approval")
-def api_approval():
-    return jsonify(read_approval_state())
-
-
-@app.route("/api/approval/action", methods=["POST"])
-def api_approval_action():
-    """HTTP endpoint for approve/reject/revision actions."""
-    data = request.get_json() or {}
-    action = data.get("action", "")
-    notes = data.get("notes", "")
-    revision = data.get("revision", False)
-
-    if action == "approve":
-        success = write_approval_action("approve")
-    elif action == "reject":
-        success = write_approval_action("reject")
-    elif action == "revision":
-        success = write_approval_action("approve", revision_notes=notes)
-    else:
-        return jsonify({"success": False, "error": "invalid action"}), 400
-
-    return jsonify({"success": success, "action": action})
 
 
 @app.route("/api/log")

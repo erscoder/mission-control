@@ -38,14 +38,14 @@ class TestSentinelState:
 class TestSentinelLoopFlowHelpers:
     """Tests for Flow helper methods."""
 
-    def test_get_kike_profile_returns_dict(self, flow):
-        profile = flow._get_kike_profile()
-        assert isinstance(profile, dict)
-        assert profile["name"] == "Kike (Enrique Rubio)"
-        assert "@kikerub" in profile["twitter"]
+    def test_get_operator_capacity_returns_dict(self, flow):
+        capacity = flow._get_operator_capacity()
+        assert isinstance(capacity, dict)
+        assert "build_window_hours" in capacity
+        assert "delivery_stack" in capacity
 
     def test_parse_opportunities_with_list(self, flow):
-        mock_result = Mock()
+        mock_result = Mock(spec=["raw"])
         mock_result.raw = [
             {"title": "Opportunity 1"},
             {"title": "Opportunity 2"},
@@ -61,37 +61,23 @@ class TestSentinelLoopFlowHelpers:
         assert parsed == []
 
     def test_parse_opportunities_with_dict(self, flow):
-        mock_result = Mock()
+        mock_result = Mock(spec=["raw"])
         mock_result.raw = {"error": "no results"}
         parsed = flow._parse_opportunities(mock_result)
         assert parsed == []
 
     def test_parse_match_result(self, flow):
-        mock_result = Mock()
+        mock_result = Mock(spec=["raw"])
         mock_result.raw = {"profile": {"name": "Kike"}, "score": 0.9}
         parsed = flow._parse_match_result(mock_result)
         assert parsed["score"] == 0.9
 
     def test_parse_deploy_result(self, flow):
-        mock_result = Mock()
+        mock_result = Mock(spec=["raw"])
         mock_result.raw = {"url": "https://example.com", "deployment_id": "abc123"}
         parsed = flow._parse_deploy_result(mock_result)
         assert parsed["url"] == "https://example.com"
         assert parsed["deployment_id"] == "abc123"
-
-    def test_build_approval_summary(self, flow):
-        flow.state.cycle_count = 5
-        flow.state.top_opportunity = {
-            "title": "AI Code Review Tool",
-            "problem_statement": "Teams need faster code reviews",
-        }
-        flow.state.build_output = "A complete SaaS for automated code reviews."
-        flow.state.pending_since = "2026-04-23T10:00:00Z"
-
-        summary = flow._build_approval_summary()
-        assert "Cycle #5" in summary
-        assert "AI Code Review Tool" in summary
-        assert "Teams need faster code reviews" in summary
 
 
 class TestSentinelLoopFlowKickoff:
@@ -136,7 +122,7 @@ class TestSentinelLoopFlowKickoff:
 
     def test_run_research_stores_opportunities(self, flow):
         """run_research() parses and stores top opportunity."""
-        mock_result = Mock()
+        mock_result = Mock(spec=["raw"])
         mock_result.raw = [
             {"title": "Op A", "problem_statement": "A"},
             {"title": "Op B", "problem_statement": "B"},
@@ -160,7 +146,7 @@ class TestSentinelLoopFlowKickoff:
         flow.state.top_opportunity = {"title": "DeFi Tracker"}
         flow.state.user_profile = {}
 
-        mock_result = Mock()
+        mock_result = Mock(spec=["raw"])
         mock_result.raw = {"profile": {"name": "Kike", "skills": ["Python"]}, "score": 0.87}
 
         with patch(
@@ -181,7 +167,7 @@ class TestSentinelLoopFlowKickoff:
         flow.state.top_opportunity = {"title": "SaaS Tool"}
         flow.state.user_profile = {"name": "Kike"}
 
-        mock_result = Mock()
+        mock_result = Mock(spec=["raw"])
         mock_result.raw = "Built: Next.js app with API"
 
         with patch(
@@ -213,7 +199,7 @@ class TestSentinelLoopFlowKickoff:
         flow.state.build_output = "Built: SaaS app"
         flow.state.top_opportunity = {"title": "Opportunity"}
 
-        mock_result = Mock()
+        mock_result = Mock(spec=["raw"])
         mock_result.raw = {"url": "https://example.com", "deployment_id": "xyz"}
 
         with patch(
@@ -276,22 +262,15 @@ class TestRequestApproval:
     def test_request_approval_sets_phase_and_pending_since(self, flow):
         """request_approval() sets current_phase and pending_since."""
         flow.state.cycle_count = 3
-        flow.state.top_opportunity = {"title": "Test Opportunity",
-                                     "problem_statement": "Test problem"}
+        flow.state.top_opportunity = {"title": "Test Opportunity"}
         flow.state.build_output = "Test build output"
 
         with patch.object(flow, "remember"):
-            with patch("sentinel_v2.tools.telegram_tool.TelegramTool") as mock_tg_cls:
-                mock_tool = MagicMock()
-                mock_tool.send_approval_poll = MagicMock()
-                mock_tg_cls.return_value = mock_tool
-
-                result = flow.request_approval()
+            result = flow.request_approval()
 
         assert result == "pending"
         assert flow.state.current_phase == "approve"
         assert flow.state.pending_since != ""
-        mock_tool.send_approval_poll.assert_called_once()
 
     def test_request_approval_calls_remember(self, flow):
         """request_approval() stores approval pending in memory."""
@@ -301,8 +280,7 @@ class TestRequestApproval:
         flow.state.pending_since = "2026-04-23T10:00:00Z"
 
         with patch.object(flow, "remember") as mock_remember:
-            with patch("sentinel_v2.tools.telegram_tool.TelegramTool"):
-                flow.request_approval()
+            flow.request_approval()
 
         mock_remember.assert_called()
         call_args = str(mock_remember.call_args)
@@ -310,89 +288,43 @@ class TestRequestApproval:
 
 
 class TestCheckApproval:
-    """Tests for check_approval() polling logic."""
+    """Tests for check_approval() — polls dashboard draft status."""
 
-    def test_check_approval_sets_pending(self, flow):
-        """check_approval() writes pending state to ApprovalState."""
-        flow.state.cycle_count = 4
-        flow.state.top_opportunity = {"title": "Op"}
-        flow.state.build_output = "draft"
+    def test_check_approval_returns_stop_when_no_draft_id(self, flow):
+        """check_approval() returns 'stop' when no draft_id is set."""
+        flow.state.draft_id = None
+        with patch("sentinel_v2.dashboard_state.write_state"), \
+             patch("sentinel_v2.dashboard_state.write_flow_breakdown"):
+            result = flow.check_approval()
+        assert result == "stop"
 
-        mock_approval = MagicMock()
-        mock_approval.is_stop_requested.return_value = False
-        mock_approval.is_revison_requested.return_value = False
-        mock_approval.is_approved.side_effect = [False, False, True]
-        mock_approval.get_action.return_value = "approved"
-        mock_approval.set_pending = MagicMock()
-        mock_approval.clear_pending = MagicMock()
-
-        with patch(
-            "sentinel_v2.tools.approval_state.ApprovalState",
-            return_value=mock_approval,
-        ):
-            with patch("sentinel_v2.dashboard_state.write_state"):
-                with patch("time.sleep"):
-                    result = flow.check_approval()
-
+    def test_check_approval_auto_approve(self, flow):
+        """check_approval() auto-approves when SENTINEL_AUTO_APPROVE=1."""
+        flow.state.draft_id = "draft_c1_test"
+        with patch("sentinel_v2.dashboard_state.write_state"), \
+             patch("sentinel_v2.dashboard_state.write_flow_breakdown"), \
+             patch.dict("os.environ", {"SENTINEL_AUTO_APPROVE": "1"}):
+            result = flow.check_approval()
         assert result == "approved"
         assert flow.state.approved is True
-        mock_approval.set_pending.assert_called_once()
-        mock_approval.clear_pending.assert_called_once_with(4)
 
-    def test_check_approval_returns_stop_when_stop_requested(self, flow):
-        """check_approval() returns 'stop' when stop is requested."""
-        flow.state.cycle_count = 5
+    def test_check_approval_approved_via_dashboard(self, flow):
+        """check_approval() returns 'approved' when draft reaches 'deployed' status."""
+        flow.state.draft_id = "draft_c1_test"
+        with patch("sentinel_v2.dashboard_state.write_state"), \
+             patch("sentinel_v2.dashboard_state.write_flow_breakdown"), \
+             patch("sentinel_v2.dashboard_state.wait_for_draft_status", return_value="deployed"):
+            result = flow.check_approval()
+        assert result == "approved"
+        assert flow.state.approved is True
 
-        mock_approval = MagicMock()
-        mock_approval.is_stop_requested.return_value = True
-        mock_approval.set_pending = MagicMock()
-
-        with patch(
-            "sentinel_v2.tools.approval_state.ApprovalState",
-            return_value=mock_approval,
-        ):
-            with patch("sentinel_v2.dashboard_state.write_state"):
-                result = flow.check_approval()
-
-        assert result == "stop"
-        # _shutdown_requested is on the Flow object, not the State
-        assert flow._shutdown_requested is True
-
-    def test_check_approval_returns_revision_when_revision_requested(self, flow):
-        """check_approval() returns 'revision' when revision is requested."""
-        flow.state.cycle_count = 6
-        flow.state.top_opportunity = {"title": "Op"}
-
-        mock_approval = MagicMock()
-        mock_approval.is_stop_requested.return_value = False
-        # First check returns False, second returns True (revision requested)
-        # But we need to mock is_approved to return False always
-        mock_approval.is_revison_requested.side_effect = [True]
-        mock_approval.is_approved.return_value = False
-        mock_approval.set_pending = MagicMock()
-
-        with patch(
-            "sentinel_v2.tools.approval_state.ApprovalState",
-            return_value=mock_approval,
-        ):
-            with patch("sentinel_v2.dashboard_state.write_state"):
-                with patch("time.sleep"):
-                    result = flow.check_approval()
-
-        assert result == "revision"
-        assert flow.state.approved is False
-        assert flow.state.revision_notes == "revision requested"
-        assert flow.state.current_phase == "build"
-
-    def test_check_approval_shutdown_while_waiting_returns_stop(self, flow):
-        """check_approval() returns 'stop' when shutdown during polling."""
-        flow.state.cycle_count = 7
-        flow._shutdown_requested = True
-
-        with patch("sentinel_v2.dashboard_state.write_state"):
-            with patch("time.sleep"):
-                result = flow.check_approval()
-
+    def test_check_approval_timeout_returns_stop(self, flow):
+        """check_approval() returns 'stop' on timeout (wait_for_draft_status returns None)."""
+        flow.state.draft_id = "draft_c1_test"
+        with patch("sentinel_v2.dashboard_state.write_state"), \
+             patch("sentinel_v2.dashboard_state.write_flow_breakdown"), \
+             patch("sentinel_v2.dashboard_state.wait_for_draft_status", return_value=None):
+            result = flow.check_approval()
         assert result == "stop"
 
 

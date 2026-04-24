@@ -436,22 +436,12 @@ class SentinelLoopFlow(Flow[SentinelState]):
 
     @listen(run_build)
     def request_approval(self) -> str:
-        """
-        Phase 4: Present draft to Kike for approval.
-        Send Telegram notification with inline buttons.
-        """
+        """Phase 4: Present draft to Kike for approval via the dashboard."""
         self.state.current_phase = "approve"
         self.state.pending_since = datetime.now(timezone.utc).isoformat()
         self._touch()
         log.info("Phase 4: APPROVE — waiting for Kike")
         print("Phase 4: APPROVE — sending to Kike for review...")
-
-        summary = self._build_approval_summary()
-
-        # Send Telegram poll
-        from sentinel_v2.tools.telegram_tool import TelegramTool
-        tool = TelegramTool()
-        tool.send_approval_poll(summary, self.state.cycle_count)
 
         # Store in CrewAI memory
         try:
@@ -738,30 +728,6 @@ class SentinelLoopFlow(Flow[SentinelState]):
 
         return None
 
-    def _build_approval_summary(self) -> str:
-        opp = self.state.top_opportunity or {}
-        build_preview = self.state.build_output[:500] if self.state.build_output else "N/A"
-        title = opp.get("title", "?")
-        tagline = opp.get("tagline", "")
-        problem = opp.get("problem") or opp.get("problem_statement") or "?"
-        icp = opp.get("icp", "?")
-        price = opp.get("suggested_price", "?")
-        commercial_score = opp.get("commercial_score") or opp.get("tech_fit") or "?"
-        return (
-            f"🛠️ *Sentinel V2 — Cycle #{self.state.cycle_count}*\n\n"
-            f"📋 *{title}*\n"
-            f"_{tagline}_\n\n"
-            f"🎯 *ICP:* {icp}\n"
-            f"💵 *Price:* {price}\n"
-            f"📝 *Problem:* {problem}\n"
-            f"📊 *Commercial score:* {commercial_score}\n\n"
-            f"💼 *Build preview:*\n{build_preview}\n\n"
-            f"⏱️ *Pending since:* {self.state.pending_since}\n\n"
-            f"Choose an option:\n"
-            f"✅ Approve — Deploy to production\n"
-            f"🔁 Revision — Rebuild with feedback\n"
-            f"⏸ Pause — Stop Sentinel"
-        )
 
 
 # ── Entry Points ─────────────────────────────────────────────────────────────

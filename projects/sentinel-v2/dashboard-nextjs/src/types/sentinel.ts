@@ -76,27 +76,6 @@ export type AgentMessage = {
   timestamp: string
 }
 
-export type ApprovalItem = {
-  cycle: number
-  title: string
-  problem?: string
-  solution?: string
-  tech_fit?: number
-  complexity?: number
-  status: 'pending' | 'approve' | 'reject' | string
-  resolved_at?: string
-  revision_notes?: string
-}
-
-export type ApprovalState = {
-  status: string
-  pending: ApprovalItem | null | Record<string, never>
-  approved: ApprovalItem[]
-  rejected: ApprovalItem[]
-  last_action?: string | null
-  last_action_at?: string | null
-}
-
 // ── Drafts + build queue ──────────────────────────────────────────────────────
 
 export type DraftStatus =

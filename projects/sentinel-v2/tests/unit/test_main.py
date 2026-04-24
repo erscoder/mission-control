@@ -141,267 +141,71 @@ class TestRunOnce:
 class TestRunDaemon:
     """Tests for run_daemon() function."""
 
-    @pytest.fixture
-    def _mock_daemon_components(self):
-        """Common mocks for daemon components."""
-        mock_flow = MagicMock()
-        mock_flow.kickoff.return_value = "cycle complete"
-        mock_telegram_tool = MagicMock()
-        mock_thread = MagicMock()
-        
-        return {
-            "flow": mock_flow,
-            "telegram_tool": mock_telegram_tool,
-            "thread": mock_thread,
-        }
-
-    def test_run_daemon_sets_up_signal_handlers(self, _mock_daemon_components):
+    def test_run_daemon_sets_up_signal_handlers(self):
         """run_daemon() registers SIGTERM and SIGINT handlers."""
         from sentinel_v2.main import run_daemon
 
-        # Track the signal handlers that get registered
-        captured_handlers = []
-        def capture_signal(sig, handler):
-            captured_handlers.append((sig, handler))
+        with patch("sentinel_v2.flows.sentinel_loop.SentinelLoopFlow"), \
+             patch("asyncio.run"):
+            run_daemon()
+        assert True  # no crash = signal setup succeeded
 
-        with patch("sentinel_v2.flows.sentinel_loop.SentinelLoopFlow") as mock_flow_cls:
-            with patch("sentinel_v2.tools.telegram_tool.TelegramTool") as mock_tg_cls:
-                with patch("threading.Thread") as mock_thread_cls:
-                    with patch("asyncio.run") as mock_asyncio_run:
-                        
-                        mock_flow_cls.return_value = MagicMock(
-                            kickoff=MagicMock(return_value="done")
-                        )
-                        mock_tg_cls.return_value = MagicMock()
-                        mock_thread = MagicMock()
-                        mock_thread.start = MagicMock()
-                        mock_thread_cls.return_value = mock_thread
-
-                        # Make asyncio.run do nothing
-                        mock_asyncio_run.return_value = None
-
-                        run_daemon()
-
-        # Check signal.signal was called
-        # The global signal module in main.py won't be patched after module load,
-        # but we can verify the code path is reached
-        # In this test we just ensure it doesn't crash
-        assert True
-
-    def test_run_daemon_starts_telegram_listener(self, _mock_daemon_components):
-        """run_daemon() starts Telegram tool listener in background thread."""
+    def test_run_daemon_runs_without_crash(self):
+        """run_daemon() starts and exits cleanly when asyncio.run is mocked."""
         from sentinel_v2.main import run_daemon
 
-        with patch("sentinel_v2.flows.sentinel_loop.SentinelLoopFlow") as mock_flow_cls:
-            with patch("sentinel_v2.tools.telegram_tool.TelegramTool") as mock_tg_cls:
-                with patch("threading.Thread") as mock_thread_cls:
-                    async def immediate_exit():
-                        return
+        with patch("sentinel_v2.flows.sentinel_loop.SentinelLoopFlow") as mock_flow_cls, \
+             patch("asyncio.run") as mock_asyncio_run:
+            mock_flow_cls.return_value = MagicMock(kickoff=MagicMock(return_value="done"))
+            mock_asyncio_run.return_value = None
+            run_daemon()
 
-                    mock_flow_cls.return_value = MagicMock(
-                        kickoff=MagicMock(return_value="done")
-                    )
-                    mock_tg_tool = MagicMock()
-                    mock_tg_cls.return_value = mock_tg_tool
-                    mock_thread = MagicMock()
-                    mock_thread.start = MagicMock()
-                    mock_thread_cls.return_value = mock_thread
-
-                    with patch("asyncio.run", return_value=immediate_exit()):
-                        run_daemon()
-
-        # Verify TelegramTool is instantiated
-        mock_tg_cls.assert_called()
-        # Verify thread.start is called
-        mock_thread.start.assert_called()
-
-    def test_run_daemon_sets_approval_callback(self, _mock_daemon_components):
-        """run_daemon() sets approval callback on TelegramTool."""
-        from sentinel_v2.main import run_daemon
-
-        with patch("sentinel_v2.flows.sentinel_loop.SentinelLoopFlow") as mock_flow_cls:
-            with patch("sentinel_v2.tools.telegram_tool.TelegramTool") as mock_tg_cls:
-                with patch("threading.Thread") as mock_thread_cls:
-                    async def immediate_exit():
-                        return
-
-                    mock_flow_cls.return_value = MagicMock(
-                        kickoff=MagicMock(return_value="done")
-                    )
-                    mock_tg_tool = MagicMock()
-                    mock_tg_cls.return_value = mock_tg_tool
-                    mock_thread = MagicMock()
-                    mock_thread.start = MagicMock()
-                    mock_thread_cls.return_value = mock_thread
-
-                    with patch("asyncio.run", return_value=immediate_exit()):
-                        run_daemon()
-
-        # Verify _set_approval_callback is called
-        mock_tg_tool._set_approval_callback.assert_called_once()
-        callback = mock_tg_tool._set_approval_callback.call_args[0][0]
-        assert callable(callback)
-
-    def test_run_daemon_runs_one_cycle_by_default(self, _mock_daemon_components):
-        """run_daemon() runs at least one cycle - verifies setup without errors."""
-        from sentinel_v2.main import run_daemon
-
-        mock_flow = MagicMock()
-        mock_flow.kickoff.return_value = "cycle result"
-
-        with patch("sentinel_v2.tools.telegram_tool.TelegramTool") as mock_tg_cls:
-            with patch("threading.Thread") as mock_thread_cls:
-                with patch("asyncio.run") as mock_asyncio_run:
-                    with patch("sentinel_v2.flows.sentinel_loop.SentinelLoopFlow") as mock_flow_cls:
-
-                        mock_tg_tool = MagicMock()
-                        mock_tg_cls.return_value = mock_tg_tool
-                        mock_thread = MagicMock()
-                        mock_thread.start = MagicMock()
-                        mock_thread_cls.return_value = mock_thread
-                        mock_asyncio_run.return_value = None
-
-                        # Verify that calling run_daemon doesn't crash
-                        run_daemon()
-
-        # Verify key components were invoked
-        mock_tg_cls.assert_called()
-        mock_tg_tool._set_approval_callback.assert_called_once()
-        mock_thread.start.assert_called()
-
-    def test_run_daemon_respects_shutdown_flag(self, _mock_daemon_components):
-        """run_daemon() stops when _shutdown flag is set."""
-        from sentinel_v2.main import run_daemon
-
-        mock_flow = MagicMock()
-        mock_flow.kickoff.return_value = "cycle result"
-
-        with patch("sentinel_v2.flows.sentinel_loop.SentinelLoopFlow") as mock_flow_cls:
-            with patch("sentinel_v2.tools.telegram_tool.TelegramTool") as mock_tg_cls:
-                with patch("threading.Thread") as mock_thread_cls:
-                    async def immediate_exit():
-                        return
-
-                    mock_flow_cls.return_value = mock_flow
-                    mock_tg_cls.return_value = MagicMock()
-                    mock_thread = MagicMock()
-                    mock_thread.start = MagicMock()
-                    mock_thread_cls.return_value = mock_thread
-
-                    with patch("asyncio.run", return_value=immediate_exit()):
-                        run_daemon()
-
-    def test_run_daemon_respects_sentinel_shutdown_env(self, _mock_daemon_components, monkeypatch):
+    def test_run_daemon_respects_sentinel_shutdown_env(self, monkeypatch):
         """run_daemon() stops when SENTINEL_SHUTDOWN environment variable is set."""
         from sentinel_v2.main import run_daemon
 
-        mock_flow = MagicMock()
-        mock_flow.kickoff.return_value = "cycle result"
+        monkeypatch.setenv("SENTINEL_SHUTDOWN", "1")
+        with patch("sentinel_v2.flows.sentinel_loop.SentinelLoopFlow") as mock_flow_cls, \
+             patch("asyncio.run", return_value=None):
+            mock_flow_cls.return_value = MagicMock(kickoff=MagicMock(return_value="done"))
+            run_daemon()
 
-        with patch("sentinel_v2.flows.sentinel_loop.SentinelLoopFlow") as mock_flow_cls:
-            with patch("sentinel_v2.tools.telegram_tool.TelegramTool") as mock_tg_cls:
-                with patch("threading.Thread") as mock_thread_cls:
-                    async def immediate_exit():
-                        return
-
-                    mock_flow_cls.return_value = mock_flow
-                    mock_tg_cls.return_value = MagicMock()
-                    mock_thread = MagicMock()
-                    mock_thread.start = MagicMock()
-                    mock_thread_cls.return_value = mock_thread
-
-                    # Set the env var
-                    monkeypatch.setenv("SENTINEL_SHUTDOWN", "1")
-
-                    with patch("asyncio.run", return_value=immediate_exit()):
-                        run_daemon()
-
-    def test_run_daemon_continues_on_cycle_error(self, _mock_daemon_components):
+    def test_run_daemon_continues_on_cycle_error(self):
         """run_daemon() continues to next cycle on exception."""
         from sentinel_v2.main import run_daemon
 
-        mock_flow = MagicMock()
-        # First call fails, second succeeds
-        mock_flow.kickoff.side_effect = [RuntimeError("cycle failed"), "success"]
+        with patch("sentinel_v2.flows.sentinel_loop.SentinelLoopFlow") as mock_flow_cls, \
+             patch("asyncio.run", return_value=None):
+            mock_flow = MagicMock()
+            mock_flow.kickoff.side_effect = [RuntimeError("cycle failed"), "success"]
+            mock_flow_cls.return_value = mock_flow
+            run_daemon()
 
-        with patch("sentinel_v2.flows.sentinel_loop.SentinelLoopFlow") as mock_flow_cls:
-            with patch("sentinel_v2.tools.telegram_tool.TelegramTool") as mock_tg_cls:
-                with patch("threading.Thread") as mock_thread_cls:
-                    async def immediate_exit():
-                        return
-
-                    mock_flow_cls.return_value = mock_flow
-                    mock_tg_cls.return_value = MagicMock()
-                    mock_thread = MagicMock()
-                    mock_thread.start = MagicMock()
-                    mock_thread_cls.return_value = mock_thread
-
-                    with patch("asyncio.run", return_value=immediate_exit()):
-                        run_daemon()
-
-    def test_run_daemon_uses_custom_interval_from_env(self, _mock_daemon_components, monkeypatch):
+    def test_run_daemon_uses_custom_interval_from_env(self, monkeypatch):
         """run_daemon() uses SENTINEL_LOOP_INTERVAL_HOURS env var."""
         from sentinel_v2.main import run_daemon
-        import os
 
-        # Save original
-        original_interval = os.environ.get("SENTINEL_LOOP_INTERVAL_HOURS")
-        
-        try:
-            monkeypatch.setenv("SENTINEL_LOOP_INTERVAL_HOURS", "2")
+        monkeypatch.setenv("SENTINEL_LOOP_INTERVAL_HOURS", "2")
+        with patch("sentinel_v2.flows.sentinel_loop.SentinelLoopFlow") as mock_flow_cls, \
+             patch("asyncio.run", return_value=None):
+            mock_flow_cls.return_value = MagicMock(kickoff=MagicMock(return_value="done"))
+            run_daemon()
 
-            mock_flow = MagicMock()
-            mock_flow.kickoff.return_value = "done"
-
-            with patch("sentinel_v2.flows.sentinel_loop.SentinelLoopFlow") as mock_flow_cls:
-                with patch("sentinel_v2.tools.telegram_tool.TelegramTool") as mock_tg_cls:
-                    with patch("threading.Thread") as mock_thread_cls:
-                        async def immediate_exit():
-                            return
-
-                        mock_flow_cls.return_value = mock_flow
-                        mock_tg_cls.return_value = MagicMock()
-                        mock_thread = MagicMock()
-                        mock_thread.start = MagicMock()
-                        mock_thread_cls.return_value = mock_thread
-
-                        with patch("asyncio.run", return_value=immediate_exit()):
-                            run_daemon()
-        finally:
-            # Restore
-            if original_interval is None:
-                monkeypatch.delenv("SENTINEL_LOOP_INTERVAL_HOURS", raising=False)
-            else:
-                monkeypatch.setenv("SENTINEL_LOOP_INTERVAL_HOURS", original_interval)
-
-    def test_run_daemon_signal_handler_sets_shutdown(self, _mock_daemon_components):
+    def test_run_daemon_signal_handler_sets_shutdown(self):
         """Signal handler in daemon sets _shutdown flag."""
         from sentinel_v2.main import run_daemon
 
-        captured_handlers = []
+        captured_handlers: list = []
+
         def capture_signal(sig, handler):
             captured_handlers.append((sig, handler))
-            return None
-        
-        with patch("sentinel_v2.flows.sentinel_loop.SentinelLoopFlow") as mock_flow_cls:
-            with patch("sentinel_v2.tools.telegram_tool.TelegramTool") as mock_tg_cls:
-                with patch("threading.Thread") as mock_thread_cls:
-                    async def immediate_exit():
-                        return
 
-                    mock_flow_cls.return_value = MagicMock(
-                        kickoff=MagicMock(return_value="done")
-                    )
-                    mock_tg_cls.return_value = MagicMock()
-                    mock_thread = MagicMock()
-                    mock_thread.start = MagicMock()
-                    mock_thread_cls.return_value = mock_thread
+        with patch("sentinel_v2.flows.sentinel_loop.SentinelLoopFlow") as mock_flow_cls, \
+             patch("asyncio.run", return_value=None), \
+             patch("signal.signal", side_effect=capture_signal):
+            mock_flow_cls.return_value = MagicMock(kickoff=MagicMock(return_value="done"))
+            run_daemon()
 
-                    with patch("asyncio.run", return_value=immediate_exit()):
-                        with patch("signal.signal", side_effect=capture_signal):
-                            run_daemon()
-
-        # handlers were registered
         assert len(captured_handlers) >= 1
 
 

@@ -27,8 +27,6 @@ os.environ.setdefault("TEMP", str(_stable_tmp))
 
 from dotenv import load_dotenv
 
-# override=True so values in .env take precedence over any stale shell env that may
-# still contain placeholders from earlier sessions (e.g., `your_telegram_bot_token_here`).
 load_dotenv(override=True)
 
 log = logging.getLogger("sentinel_v2")
@@ -54,13 +52,11 @@ def run_once():
 def run_daemon():
     """Run Sentinel in daemon mode (loop)."""
     import asyncio
-    import threading
-    
+
     logging.basicConfig(level=logging.INFO)
     log.info("Starting Sentinel V2 daemon...")
 
     from sentinel_v2.flows.sentinel_loop import SentinelLoopFlow
-    from sentinel_v2.tools.telegram_tool import TelegramTool
 
     # Track flow's sleep interval
     interval_hours = float(os.getenv("SENTINEL_LOOP_INTERVAL_HOURS", "1"))
@@ -77,17 +73,6 @@ def run_daemon():
     import signal
     signal.signal(signal.SIGTERM, _on_signal)
     signal.signal(signal.SIGINT, _on_signal)
-
-    # Start telegram listener in background
-    tool = TelegramTool()
-    listener_thread = threading.Thread(target=tool.start_listening, daemon=True)
-    listener_thread.start()
-
-    # Approval callback
-    def _on_approve(action: str, cycle: int):
-        log.info("Telegram approval: %s for cycle %d", action, cycle)
-
-    tool._set_approval_callback(_on_approve)
 
     async def _run_cycles():
         nonlocal _shutdown  # ensure assignments below bind to the enclosing scope

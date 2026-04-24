@@ -10,11 +10,12 @@ dependencies = [
     "httpx",
     "pydantic>=2.0",
     "python-dotenv",
-    "telegram-send",
-    "python-telegram-bot>=20.0",
     "lancedb",
     "loguru",
     "ollama",
+    "flask>=3.0",
+    "flask-socketio>=5.3",
+    "eventlet>=0.36",
 ]
 
 [project.optional-dependencies]
