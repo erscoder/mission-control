@@ -1,18 +1,15 @@
 """CrewAI Crew hooks for streaming agent messages to dashboard.
 
 This module adds callbacks to CrewAI agents/tasks to emit messages
-to /tmp/sentinel_v2_agent_messages.json in real-time, and sends
-phase-completion summaries to Telegram when configured.
+to /tmp/sentinel_v2_agent_messages.json in real-time.
 """
 from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import threading
 import time
-import urllib.request
 from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
@@ -22,57 +19,6 @@ from enum import Enum
 
 # File to store agent messages
 AGENT_MESSAGES_FILE = Path("/tmp/sentinel_v2_agent_messages.json")
-
-
-# ── Telegram notification ────────────────────────────────────────────────────
-
-def _send_telegram(text: str) -> None:
-    """Send a Telegram message. Silently skips if TELEGRAM_BOT_TOKEN not set."""
-    token = os.getenv("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
-    if not token or len(token) < 40 or not chat_id:
-        return
-    try:
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
-        payload = json.dumps({
-            "chat_id": chat_id,
-            "text": text,
-            "parse_mode": "Markdown",
-        }).encode()
-        req = urllib.request.Request(
-            url, data=payload, headers={"Content-Type": "application/json"}
-        )
-        urllib.request.urlopen(req, timeout=10)
-    except Exception as exc:
-        log.warning("Telegram send failed: %s", exc)
-
-
-def _summarize_phase(phase: str, raw_output: str, cycle: int) -> str:
-    """Ask MiniMax for a 2-3 sentence human summary of the phase output."""
-    try:
-        from sentinel_v2.config.llm_config import get_minimax_llm, make_clean_llm
-        llm = make_clean_llm(get_minimax_llm())
-        prompt = (
-            f"You are Sentinel, an autonomous AI that builds micro-SaaS products. "
-            f"Summarize the '{phase}' phase output below in 2-3 sentences for your operator Kike. "
-            f"Be specific: mention what was found, built, or decided. No preamble, no fluff. English only.\n\n"
-            f"Output (cycle #{cycle}):\n{raw_output[:3000]}"
-        )
-        summary = llm.call(prompt)
-        return (summary or f"Phase {phase} completed.").strip()[:600]
-    except Exception as exc:
-        log.warning("LLM summarization failed: %s", exc)
-        return f"Phase *{phase}* completed (cycle #{cycle})."
-
-
-def notify_phase_telegram(phase: str, raw_output: str, cycle: int) -> None:
-    """Summarize phase result via LLM and push to Telegram in a background thread."""
-    def _run():
-        summary = _summarize_phase(phase, raw_output, cycle)
-        msg = f"🤖 *Sentinel · {phase.upper()} · cycle #{cycle}*\n\n{summary}"
-        _send_telegram(msg)
-
-    threading.Thread(target=_run, daemon=True, name=f"tg-{phase}").start()
 # Lock for thread-safe file writing
 _messages_lock = threading.Lock()
 log = logging.getLogger("sentinel_v2.crew_hooks")
@@ -251,22 +197,17 @@ def crew_with_hooks(
         # Run original kickoff
         try:
             result = original_kickoff(**kwargs)
-
-            raw_output = str(result.raw) if hasattr(result, "raw") else str(result)
-
-            # Log completion with result preview
+            
+            # Log completion
             add_agent_message(
                 agent_id="orchestrator",
                 message=f"Phase completed: {phase}",
                 hook_type="phase_completed",
                 phase=phase,
                 cycle=cycle,
-                metadata={"status": "success", "result_preview": raw_output[:300]}
+                metadata={"status": "success"}
             )
-
-            # Summarize via LLM and notify Telegram
-            notify_phase_telegram(phase, raw_output, cycle)
-
+            
             return result
             
         except Exception as e:
