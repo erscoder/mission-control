@@ -15,6 +15,15 @@ import logging
 import time
 from typing import Optional
 
+# Defensive load_dotenv so env vars are populated even if this module is imported
+# before the main entry point runs load_dotenv(). override=True guards against a
+# stale shell env (e.g., earlier export of the placeholder `your_telegram_bot_token_here`).
+try:
+    from dotenv import load_dotenv
+    load_dotenv(override=True)
+except Exception:  # python-dotenv must be present; safe no-op if something odd.
+    pass
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -79,47 +88,77 @@ class TokenBucketRateLimiter:
 
 
 # ── Bot setup ────────────────────────────────────────────────────────────────
+#
+# Read env vars LAZILY (on TelegramTool instantiation) rather than at module import
+# time. This is robust against import order — any caller that loads .env before
+# constructing TelegramTool() will get the fresh values.
 
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+_PLACEHOLDER_MARKERS = ("your_", "_here")
 
 
-# ── Validate configuration ───────────────────────────────────────────────────
+def _looks_like_placeholder(value: str) -> bool:
+    if not value:
+        return True
+    v = value.strip().lower()
+    return v.startswith("your_") or v.endswith("_here")
 
-def _validate_config() -> bool:
-    """Check BOT_TOKEN and TELEGRAM_CHAT_ID format. Log errors. Returns True if valid."""
-    valid = True
-    if not BOT_TOKEN or len(BOT_TOKEN) < 40:
+
+def _load_telegram_config() -> tuple[str, str, bool]:
+    """Read and validate TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID from env.
+
+    Returns: (token, chat_id, is_valid).
+    Logs ONE line per failure mode so the cause is obvious.
+    """
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+
+    token_valid = True
+    if not token:
+        log.warning("TELEGRAM_BOT_TOKEN not set — Telegram bot disabled")
+        token_valid = False
+    elif _looks_like_placeholder(token):
+        log.error(
+            "TELEGRAM_BOT_TOKEN still holds a placeholder value (%r) — check your .env",
+            token,
+        )
+        token_valid = False
+    elif len(token) < 40:
         log.error(
             "TELEGRAM_BOT_TOKEN invalid format: expected >= 40 chars, got %d",
-            len(BOT_TOKEN),
+            len(token),
         )
-        valid = False
-    if TELEGRAM_CHAT_ID:
-        try:
-            int(TELEGRAM_CHAT_ID)
-        except ValueError:
+        token_valid = False
+
+    chat_valid = True
+    if chat_id:
+        if _looks_like_placeholder(chat_id):
             log.error(
-                "TELEGRAM_CHAT_ID invalid format: cannot convert '%s' to int",
-                TELEGRAM_CHAT_ID,
+                "TELEGRAM_CHAT_ID still holds a placeholder value (%r) — check your .env",
+                chat_id,
             )
-            valid = False
-    return valid
+            chat_valid = False
+        else:
+            try:
+                int(chat_id)
+            except ValueError:
+                log.error(
+                    "TELEGRAM_CHAT_ID invalid format: cannot convert '%s' to int",
+                    chat_id,
+                )
+                chat_valid = False
 
-
-_CONFIG_VALID = _validate_config()
+    return token, chat_id, token_valid and chat_valid
 
 
 class TelegramTool:
-    """
-    Wrapper around python-telegram-bot.
-    Sends messages and handles approval callbacks.
-    """
-
+    """Wrapper around python-telegram-bot. Sends messages and handles approval callbacks."""
 
     def __init__(self):
-        self._token = BOT_TOKEN if _CONFIG_VALID else ""
-        self._chat_id = TELEGRAM_CHAT_ID if _CONFIG_VALID else ""
+        # Lazy read — reflects the live env at construction time (not import time).
+        token, chat_id, is_valid = _load_telegram_config()
+        self._token = token if is_valid else ""
+        self._chat_id = chat_id if is_valid else ""
+        self._config_valid = is_valid
         self._app: Optional[Application] = None
         self._approval_callback: Optional[callable] = None
         self._rate_limiter = TokenBucketRateLimiter()
@@ -246,7 +285,11 @@ class TelegramTool:
             ]
         )
         log.info("Telegram bot starting...")
-        app.run_polling(drop_pending_updates=True)
+        # stop_signals=None disables asyncio signal-handler setup which only works
+        # in the main thread. We run the listener inside a background thread, so we
+        # handle shutdown via SENTINEL_SHUTDOWN env var + the daemon's own signal
+        # handlers on the main thread.
+        app.run_polling(drop_pending_updates=True, stop_signals=None)
 
     def _get_app(self) -> Application:
         if self._app is None:

@@ -77,19 +77,14 @@ def _safe_path(path: Path | str) -> Path:
 
 
 def _sanitize_agent_id(agent_id: str) -> str:
+    """Sanitize an agent_id for safe use in file paths.
+
+    Spaces collapse to dashes; only lowercase alphanumerics and dashes survive;
+    any other character (including underscore, dot, slash, colon) is removed.
     """
-    Sanitize an agent_id for safe use in file paths.
-    
-    Replaces spaces with dashes, removes any path-separator-like
-    characters, and ensures alphanumerics/dash/underscore only.
-    """
-    # Replace spaces with dashes, lower-case
     sanitized = agent_id.lower().replace(" ", "-")
-    # Remove any characters that could be used for path traversal
-    sanitized = re.sub(r"[^a-z0-9_\-]", "", sanitized)
-    # Collapse multiple dashes
+    sanitized = re.sub(r"[^a-z0-9\-]", "", sanitized)
     sanitized = re.sub(r"-+", "-", sanitized)
-    # Strip leading/trailing dashes
     sanitized = sanitized.strip("-")
     return sanitized or "unknown"
 
@@ -131,23 +126,21 @@ def add_agent_message(
             if AGENT_MESSAGES_FILE.exists() and AGENT_MESSAGES_FILE.stat().st_size > 0:
                 with open(AGENT_MESSAGES_FILE, "r") as f:
                     existing_messages = json.load(f)
-        except (IOError, JSONDecodeError, ValueError):
+        except (IOError, json.JSONDecodeError, ValueError):
             existing_messages = []
-        
+
         existing_messages.append(msg_data)
-        
+
         # Keep only last 500 messages
         if len(existing_messages) > 500:
             existing_messages = existing_messages[-500:]
-        
+
         try:
-            # Validate path before writing
             _safe_path(AGENT_MESSAGES_FILE)
             with open(AGENT_MESSAGES_FILE, "w") as f:
                 json.dump(existing_messages, f, indent=2)
-        except (IOError, JSONDecodeError, ValueError):
+        except (IOError, json.JSONDecodeError, ValueError) as exc:
             log.warning("Could not write agent messages file: %s", exc)
-            pass
 
 
 def crew_with_hooks(

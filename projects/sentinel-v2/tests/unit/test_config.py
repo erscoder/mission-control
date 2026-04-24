@@ -38,6 +38,12 @@ def _reset_llm_cache():
 class TestGetMiniMaxLLM:
     """Tests for get_minimax_llm."""
 
+    def setup_method(self):
+        # Other tests in the suite may have populated the module-level cache
+        # (e.g., integration tests exercising the crews). Clear before each test
+        # so the key-missing path is actually reachable.
+        _reset_llm_cache()
+
     def teardown_method(self):
         _reset_llm_cache()
 

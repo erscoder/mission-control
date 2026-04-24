@@ -2,8 +2,9 @@ import './globals.css'
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = {
-  title: 'Sentinel V2 Dashboard',
-  description: 'Real-time AI agent workflow visualization',
+  title: 'Sentinel — Agent Command Center',
+  description: 'Real-time autonomous agent swarm. Research → Match → Build → Approve → Deploy.',
+  icons: { icon: '/icon.svg' },
 }
 
 export default function RootLayout({
@@ -12,8 +13,10 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" className="dark">
-      <body>{children}</body>
+    <html lang="en" className="dark" suppressHydrationWarning>
+      <body className="min-h-screen bg-background font-sans text-foreground antialiased">
+        {children}
+      </body>
     </html>
   )
 }

@@ -47,6 +47,9 @@ class SentinelState(BaseModel):
     revision_notes: Optional[str] = None
     pending_since: Optional[str] = None
 
+    # Draft tracking (dashboard pipeline id)
+    draft_id: Optional[str] = None
+
     # Deploy
     deployed: bool = False
     deployed_url: Optional[str] = None
@@ -143,7 +146,8 @@ class SentinelLoopFlow(Flow[SentinelState]):
         crew = research_crew()
         result = crew.kickoff(
             inputs={
-                "kike_profile": self._get_kike_profile(),
+                "trend_signals": self._get_trend_signals(),
+                "operator_capacity": self._get_operator_capacity(),
                 "cycle": self.state.cycle_count,
             }
         )
@@ -152,6 +156,26 @@ class SentinelLoopFlow(Flow[SentinelState]):
         self.state.top_opportunity = (
             self.state.opportunities[0] if self.state.opportunities else None
         )
+
+        # Publish a draft entry to the dashboard pipeline (human will approve/reject)
+        if self.state.top_opportunity:
+            from sentinel_v2.dashboard_state import write_draft, make_draft_id
+            opp = self.state.top_opportunity
+            self.state.draft_id = make_draft_id(self.state.cycle_count, opp)
+            write_draft(
+                draft_id=self.state.draft_id,
+                cycle=self.state.cycle_count,
+                title=opp.get("title", "Untitled opportunity"),
+                tagline=opp.get("tagline") or opp.get("summary") or "",
+                description=opp.get("description") or opp.get("solution") or "",
+                problem=opp.get("problem") or opp.get("problem_statement") or "",
+                solution=opp.get("solution") or "",
+                tech_fit=float(opp.get("tech_fit", 0.0) or 0.0),
+                complexity=int(opp.get("complexity", 0) or 0),
+                estimated_hours=opp.get("estimated_hours"),
+                tags=opp.get("tags") or [],
+                status="pending",
+            )
 
         # Update state after research
         opp_title = self.state.top_opportunity.get("title", "?") if self.state.top_opportunity else None
@@ -189,9 +213,37 @@ class SentinelLoopFlow(Flow[SentinelState]):
 
         self._touch()
 
-    # ─── Phase 2: MATCH ──────────────────────────────────────────────────
+    # ─── Gate 1: DRAFT APPROVAL (dashboard) ──────────────────────────────
 
     @listen(run_research)
+    def wait_for_draft_approval(self) -> str:
+        """Block until Kike approves the draft from the dashboard (or rejects it)."""
+        if self._shutdown_requested or not self.state.draft_id:
+            return "stop"
+
+        from sentinel_v2.dashboard_state import wait_for_draft_status, get_draft, update_draft
+
+        auto = os.getenv("SENTINEL_AUTO_APPROVE", "").lower() in {"1", "true", "yes"}
+        if auto:
+            update_draft(self.state.draft_id, status="queued")
+            log.info("AUTO_APPROVE=1 — draft %s queued without human input", self.state.draft_id)
+            return "approved"
+
+        log.info("Waiting for dashboard approval on draft %s", self.state.draft_id)
+        status = wait_for_draft_status(
+            self.state.draft_id,
+            target_statuses={"queued", "approved", "rejected"},
+            timeout_seconds=int(os.getenv("SENTINEL_APPROVAL_TIMEOUT_SECONDS", "3600")),
+        )
+        if status in (None, "rejected"):
+            log.info("Draft %s not approved (status=%s) — ending cycle", self.state.draft_id, status)
+            self._shutdown_requested = status is None  # timeout stops the loop
+            return "rejected"
+        return "approved"
+
+    # ─── Phase 2: MATCH ──────────────────────────────────────────────────
+
+    @listen(wait_for_draft_approval)
     def run_match(self):
         """Phase 2: Match top opportunity to Kike's profile."""
         if self._shutdown_requested or not self.state.top_opportunity:
@@ -231,13 +283,20 @@ class SentinelLoopFlow(Flow[SentinelState]):
         result = crew.kickoff(
             inputs={
                 "opportunity": self.state.top_opportunity,
-                "kike_profile": self._get_kike_profile(),
+                "operator_capacity": self._get_operator_capacity(),
             }
         )
 
         parsed = self._parse_match_result(result)
         self.state.user_profile = parsed.get("profile", self.state.user_profile)
         self.state.match_score = parsed.get("score", 0.0)
+
+        if self.state.draft_id:
+            from sentinel_v2.dashboard_state import update_draft
+            update_draft(
+                self.state.draft_id,
+                tech_fit=float(self.state.match_score or 0.0),
+            )
 
         # Store in CrewAI memory
         try:
@@ -311,15 +370,33 @@ class SentinelLoopFlow(Flow[SentinelState]):
             },
         )
 
+        if self.state.draft_id:
+            from sentinel_v2.dashboard_state import update_draft
+            update_draft(self.state.draft_id, status="building", build_progress=0.1)
+
         crew = build_crew()
         result = crew.kickoff(
             inputs={
                 "opportunity": self.state.top_opportunity,
-                "kike_profile": self.state.user_profile,
+                "operator_capacity": self._get_operator_capacity(),
             }
         )
 
         self.state.build_output = str(result.raw) if hasattr(result, "raw") else str(result)
+
+        if self.state.draft_id:
+            from sentinel_v2.dashboard_state import update_draft
+            # Move to review first (code-review + security-audit), then built with metrics.
+            update_draft(self.state.draft_id, status="review", build_progress=0.7)
+            update_draft(
+                self.state.draft_id,
+                status="built",
+                build_progress=1.0,
+                coverage_percent=self._extract_metric(result, "coverage_percent"),
+                tests_passed=self._extract_metric(result, "tests_passed"),
+                tests_total=self._extract_metric(result, "tests_total"),
+                issues_count=self._extract_metric(result, "issues_count"),
+            )
 
         # Update state after build
         write_state(
@@ -389,21 +466,11 @@ class SentinelLoopFlow(Flow[SentinelState]):
 
     @listen(request_approval)
     def check_approval(self) -> str:
-        """
-        Poll approval state from the shared JSON file written by Telegram callback.
-        Blocks until Kike approves/requests revision/times out (1h default).
-        """
-        from sentinel_v2.tools.approval_state import ApprovalState
-        from sentinel_v2.dashboard_state import write_state, write_flow_breakdown
-
-        approval = ApprovalState()
-        cycle = self.state.cycle_count
-
-        # Write pending state so Telegram callback can find it
-        approval.set_pending(
-            cycle=cycle,
-            summary=self._build_approval_summary(),
-            timeout_seconds=int(os.getenv("SENTINEL_APPROVAL_TIMEOUT_SECONDS", "3600")),
+        """Block until the Deploy/Reject gate is resolved via the dashboard."""
+        from sentinel_v2.dashboard_state import (
+            wait_for_draft_status,
+            write_state,
+            write_flow_breakdown,
         )
 
         # Emit state update for approval waiting
@@ -420,45 +487,34 @@ class SentinelLoopFlow(Flow[SentinelState]):
             sub_phase="human-review",
             status="running",
             progress=0.5,
-            current_task="Waiting for Kike approval",
-            pending_tasks=["Kike approval", "Deploy to production"],
+            current_task="Waiting for deploy approval",
+            pending_tasks=["Dashboard approval", "Deploy to production"],
             activity={
                 "type": "awaiting_approval",
                 "agent": "sentinel",
-                "message": "Awaiting Kike approval on draft",
+                "message": "Built — awaiting deploy approval from dashboard",
             },
         )
 
-        import time
-        poll_interval = int(os.getenv("SENTINEL_APPROVAL_POLL_INTERVAL", "5"))
-        log.info("Waiting for approval (poll every %ds, timeout 1h)...", poll_interval)
+        if not self.state.draft_id:
+            return "stop"
 
-        while not self._shutdown_requested:
-            if approval.is_stop_requested():
-                log.info("Stop requested by Kike")
-                self._shutdown_requested = True
-                return "stop"
+        auto = os.getenv("SENTINEL_AUTO_APPROVE", "").lower() in {"1", "true", "yes"}
+        if auto:
+            self.state.approved = True
+            log.info("AUTO_APPROVE=1 — deploying draft %s without human input", self.state.draft_id)
+            return "approved"
 
-            if approval.is_revison_requested(cycle):
-                self.state.approved = False
-                self.state.revision_notes = "revision requested"
-                self.state.current_phase = "build"
-                log.info("Revision requested for cycle #%d", cycle)
-                self._touch()
-                return "revision"
-
-            if approval.is_approved(cycle):
-                self.state.approved = True
-                action = approval.get_action(cycle)
-                log.info("Cycle #%d %s", cycle, action)
-                approval.clear_pending(cycle)
-                self._touch()
-                return "approved"
-
-            time.sleep(poll_interval)
-
-        # Shutdown while waiting
-        log.info("Shutdown while waiting for approval")
+        log.info("Waiting for deploy gate on draft %s", self.state.draft_id)
+        status = wait_for_draft_status(
+            self.state.draft_id,
+            target_statuses={"deployed", "failed"},
+            timeout_seconds=int(os.getenv("SENTINEL_APPROVAL_TIMEOUT_SECONDS", "3600")),
+        )
+        if status == "deployed":
+            self.state.approved = True
+            return "approved"
+        log.info("Deploy gate on %s resolved as %s — stopping cycle", self.state.draft_id, status)
         return "stop"
 
     # ─── Phase 5: DEPLOY ──────────────────────────────────────────────────
@@ -514,6 +570,15 @@ class SentinelLoopFlow(Flow[SentinelState]):
         self.state.deployed_url = parsed.get("url")
         self.state.deployment_id = parsed.get("deployment_id")
 
+        if self.state.draft_id:
+            from sentinel_v2.dashboard_state import update_draft
+            update_draft(
+                self.state.draft_id,
+                status="deployed",
+                deployment_url=self.state.deployed_url,
+                build_progress=1.0,
+            )
+
         try:
             self.remember(
                 f"Cycle #{self.state.cycle_count} deployed at {self.state.deployed_url}",
@@ -540,64 +605,157 @@ class SentinelLoopFlow(Flow[SentinelState]):
 
     # ─── Helpers ──────────────────────────────────────────────────────────
 
-    def _get_kike_profile(self) -> dict:
-        """Retrieve Kike's profile from CrewAI memory."""
-        profile = {
-            "name": "Kike (Enrique Rubio)",
-            "mission": "Construir una organización autónoma de agentes IA que trabaja 24/7",
-            "twitter": "@kikerub",
-            "email": "enrique.rubio.developer@gmail.com",
-            "skills": ["Next.js", "TypeScript", "Tailwind", "NestJS", "PostgreSQL", "Prisma", "Hyperliquid"],
+    def _get_operator_capacity(self) -> dict:
+        """Execution constraints for the build crew. NOT a personal profile — what the
+        agent swarm can ship, not who the operator is. Research/match must stay demand-driven.
+        """
+        return {
+            "build_window_hours": 60,       # 1–2 week solo MVP ceiling
+            "max_mvp_features": 8,
+            "delivery_stack": {
+                "frontend": "Next.js 14 App Router + TypeScript + Tailwind + Radix UI",
+                "backend": "Next.js Route Handlers or NestJS; Prisma + PostgreSQL",
+                "payments": "Stripe Checkout + webhooks (live from day 1)",
+                "auth": "Supabase auth or NextAuth magic link",
+                "hosting": "Vercel + Neon/Supabase Postgres",
+                "telemetry": "PostHog or Plausible, Sentry for errors",
+            },
+            "pricing_range": {
+                "saas_monthly_usd": [9, 299],
+                "one_off_usd": [200, 2000],
+            },
+            "distribution_budget_usd_per_month": 200,
+            "team_size": 1,
             "timezone": "Europe/Madrid",
+            "locale_support": ["en", "es"],
         }
 
-        # Enrich from memory (open ai embedding may fail, just skip)
+    def _get_trend_signals(self) -> list[dict]:
+        """Optional seed of demand signals. Fetched from memory if present; empty list is
+        valid — the research crew is expected to source signals itself."""
         try:
-            matches = self.recall("Kike profile", limit=5)
+            matches = self.recall("demand signal", limit=8)
             if matches:
-                log.info("Enriched Kike profile from memory (%d matches)", len(matches))
+                return [{"source": "memory", "snippet": str(m)[:400]} for m in matches]
         except Exception as e:
-            # Memory recall failed (likely OpenAI quota). Skip enrichment.
             log.debug("Memory recall skipped: %s", e)
-            matches = []
-
-        return profile
+        return []
 
     def _parse_opportunities(self, result) -> list[dict]:
-        try:
-            raw = result.raw if hasattr(result, "raw") else str(result)
-            if isinstance(raw, list):
-                return raw
-            return []
-        except Exception:
-            return []
+        """Accept list, JSON string (plain/fenced), or CrewOutput with .raw/.pydantic."""
+        raw = self._extract_raw(result)
+        parsed = self._coerce_json(raw)
+        if isinstance(parsed, list):
+            return [x for x in parsed if isinstance(x, dict)]
+        if isinstance(parsed, dict):
+            for key in ("opportunities", "top_opportunities", "items", "results"):
+                if isinstance(parsed.get(key), list):
+                    return [x for x in parsed[key] if isinstance(x, dict)]
+            if "title" in parsed:
+                return [parsed]
+        return []
 
     def _parse_match_result(self, result) -> dict:
-        try:
-            raw = result.raw if hasattr(result, "raw") else str(result)
-            if isinstance(raw, dict):
-                return raw
-            return {}
-        except Exception:
-            return {}
+        raw = self._extract_raw(result)
+        parsed = self._coerce_json(raw)
+        return parsed if isinstance(parsed, dict) else {}
 
     def _parse_deploy_result(self, result) -> dict:
+        raw = self._extract_raw(result)
+        parsed = self._coerce_json(raw)
+        return parsed if isinstance(parsed, dict) else {}
+
+    @staticmethod
+    def _extract_metric(result, key: str):
+        raw = SentinelLoopFlow._extract_raw(result)
+        if isinstance(raw, dict) and key in raw:
+            return raw[key]
+        parsed = SentinelLoopFlow._coerce_json(raw)
+        if isinstance(parsed, dict) and key in parsed:
+            return parsed[key]
+        pydantic = getattr(result, "pydantic", None)
+        if pydantic is not None:
+            value = getattr(pydantic, key, None)
+            if value is not None:
+                return value
+        return None
+
+    @staticmethod
+    def _extract_raw(result):
+        if result is None:
+            return None
+        if hasattr(result, "pydantic") and result.pydantic is not None:
+            try:
+                return result.pydantic.model_dump()
+            except Exception:
+                pass
+        if hasattr(result, "json_dict") and result.json_dict is not None:
+            return result.json_dict
+        if hasattr(result, "raw"):
+            return result.raw
+        return result
+
+    @staticmethod
+    def _coerce_json(value):
+        """Accept dict/list/str. For strings, try plain JSON, fenced ```json blocks,
+        then a loose [...] / {...} substring match. Return best-effort parsed value or None."""
+        import json
+        import re
+
+        if value is None:
+            return None
+        if isinstance(value, (dict, list)):
+            return value
+        if not isinstance(value, str):
+            try:
+                value = str(value)
+            except Exception:
+                return None
+
+        s = value.strip()
+        if not s:
+            return None
+
         try:
-            raw = result.raw if hasattr(result, "raw") else str(result)
-            if isinstance(raw, dict):
-                return raw
-            return {}
-        except Exception:
-            return {}
+            return json.loads(s)
+        except json.JSONDecodeError:
+            pass
+
+        fence = re.search(r"```(?:json)?\s*([\[{].*?[\]}])\s*```", s, re.DOTALL)
+        if fence:
+            try:
+                return json.loads(fence.group(1))
+            except json.JSONDecodeError:
+                pass
+
+        for pattern in (r"\[[\s\S]*\]", r"\{[\s\S]*\}"):
+            m = re.search(pattern, s)
+            if m:
+                try:
+                    return json.loads(m.group(0))
+                except json.JSONDecodeError:
+                    continue
+
+        return None
 
     def _build_approval_summary(self) -> str:
         opp = self.state.top_opportunity or {}
         build_preview = self.state.build_output[:500] if self.state.build_output else "N/A"
+        title = opp.get("title", "?")
+        tagline = opp.get("tagline", "")
+        problem = opp.get("problem") or opp.get("problem_statement") or "?"
+        icp = opp.get("icp", "?")
+        price = opp.get("suggested_price", "?")
+        commercial_score = opp.get("commercial_score") or opp.get("tech_fit") or "?"
         return (
             f"🛠️ *Sentinel V2 — Cycle #{self.state.cycle_count}*\n\n"
-            f"📋 *Opportunity:* {opp.get('title', '?')}\n"
-            f"📝 *Problem:* {opp.get('problem_statement', '?')}\n\n"
-            f"💼 *Build Output:*\n{build_preview}\n\n"
+            f"📋 *{title}*\n"
+            f"_{tagline}_\n\n"
+            f"🎯 *ICP:* {icp}\n"
+            f"💵 *Price:* {price}\n"
+            f"📝 *Problem:* {problem}\n"
+            f"📊 *Commercial score:* {commercial_score}\n\n"
+            f"💼 *Build preview:*\n{build_preview}\n\n"
             f"⏱️ *Pending since:* {self.state.pending_since}\n\n"
             f"Choose an option:\n"
             f"✅ Approve — Deploy to production\n"

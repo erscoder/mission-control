@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 STATE_FILE = Path("/tmp/sentinel_v2_state.json")
 AGENT_MESSAGES_FILE = Path("/tmp/sentinel_v2_agent_messages.json")
+DRAFTS_FILE = Path("/tmp/sentinel_v2_drafts.json")
 
 # ── Path Validation ──────────────────────────────────────────────────────────
 
@@ -58,19 +59,14 @@ def _safe_path(path: Path | str) -> Path:
 
 
 def _sanitize_agent_id(agent_id: str) -> str:
+    """Sanitize an agent_id for safe use in file paths.
+
+    Spaces collapse to dashes; only lowercase alphanumerics and dashes survive.
+    Kept consistent with crew_hooks._sanitize_agent_id.
     """
-    Sanitize an agent_id for safe use in file paths.
-    
-    Replaces spaces with dashes, removes any path-separator-like
-    characters, and ensures alphanumerics/dash/underscore only.
-    """
-    # Replace spaces with dashes, lower-case
     sanitized = agent_id.lower().replace(" ", "-")
-    # Remove any characters that could be used for path traversal
-    sanitized = re.sub(r"[^a-z0-9_\-]", "", sanitized)
-    # Collapse multiple dashes
+    sanitized = re.sub(r"[^a-z0-9\-]", "", sanitized)
     sanitized = re.sub(r"-+", "-", sanitized)
-    # Strip leading/trailing dashes
     sanitized = sanitized.strip("-")
     return sanitized or "unknown"
 
@@ -454,3 +450,151 @@ def read_flow_breakdown() -> dict:
             return json.load(f)
     except Exception:
         return {}
+
+
+# ── Drafts (unified pipeline model) ──────────────────────────────────────────
+
+
+def _read_drafts_file() -> dict:
+    """Low-level read of the drafts JSON file."""
+    if not DRAFTS_FILE.exists():
+        return {"drafts": [], "updated_at": ""}
+    try:
+        with open(DRAFTS_FILE, "r") as f:
+            data = json.load(f)
+            if isinstance(data, dict) and isinstance(data.get("drafts"), list):
+                return data
+    except (IOError, json.JSONDecodeError):
+        pass
+    return {"drafts": [], "updated_at": ""}
+
+
+def _write_drafts_file(data: dict) -> None:
+    try:
+        _safe_path(DRAFTS_FILE)
+        with open(DRAFTS_FILE, "w") as f:
+            json.dump(data, f, indent=2, default=str)
+    except Exception as e:  # noqa: BLE001
+        print(f"Failed to write drafts: {e}")
+
+
+def write_draft(
+    draft_id: str,
+    cycle: int,
+    title: str,
+    *,
+    tagline: str | None = None,
+    description: str | None = None,
+    problem: str | None = None,
+    solution: str | None = None,
+    tech_fit: float = 0.0,
+    complexity: int = 0,
+    estimated_hours: int | None = None,
+    tags: list[str] | None = None,
+    status: str = "pending",
+) -> None:
+    """Create or upsert a draft entry for the unified dashboard pipeline.
+
+    Called during the research/match phase when Sentinel surfaces an opportunity.
+    Subsequent phases should use :func:`update_draft` to flip status / progress.
+    """
+    data = _read_drafts_file()
+    drafts: list[dict] = data.get("drafts", [])
+    now = datetime.now(timezone.utc).isoformat()
+    found = False
+    for d in drafts:
+        if d.get("id") == draft_id:
+            d.update(
+                {
+                    "cycle": cycle,
+                    "title": title,
+                    "tagline": tagline or d.get("tagline", ""),
+                    "description": description or d.get("description", ""),
+                    "problem": problem or d.get("problem", ""),
+                    "solution": solution or d.get("solution", ""),
+                    "tech_fit": float(tech_fit),
+                    "complexity": int(complexity),
+                    "estimated_hours": estimated_hours,
+                    "tags": tags or d.get("tags", []),
+                    "status": status,
+                    "updated_at": now,
+                }
+            )
+            found = True
+            break
+    if not found:
+        drafts.append(
+            {
+                "id": draft_id,
+                "cycle": cycle,
+                "title": title,
+                "tagline": tagline or "",
+                "description": description or "",
+                "problem": problem or "",
+                "solution": solution or "",
+                "tech_fit": float(tech_fit),
+                "complexity": int(complexity),
+                "estimated_hours": estimated_hours,
+                "tags": tags or [],
+                "status": status,
+                "created_at": now,
+                "updated_at": now,
+                "build_progress": 0.0,
+            }
+        )
+    data["drafts"] = drafts
+    data["updated_at"] = now
+    _write_drafts_file(data)
+
+
+def update_draft(draft_id: str, **fields: Any) -> bool:
+    """Patch arbitrary fields on a single draft (status, build_progress, metrics, etc.)."""
+    data = _read_drafts_file()
+    drafts: list[dict] = data.get("drafts", [])
+    now = datetime.now(timezone.utc).isoformat()
+    for d in drafts:
+        if d.get("id") == draft_id:
+            d.update(fields)
+            d["updated_at"] = now
+            data["drafts"] = drafts
+            data["updated_at"] = now
+            _write_drafts_file(data)
+            return True
+    return False
+
+
+def get_draft(draft_id: str) -> dict | None:
+    data = _read_drafts_file()
+    for d in data.get("drafts", []):
+        if d.get("id") == draft_id:
+            return d
+    return None
+
+
+def wait_for_draft_status(
+    draft_id: str,
+    target_statuses: set[str],
+    *,
+    poll_interval: float = 2.0,
+    timeout_seconds: float = 3600.0,
+) -> str | None:
+    """Block until a draft reaches one of the target statuses or timeout.
+
+    Returns the matching status, or ``None`` on timeout.
+    """
+    import time
+
+    start = time.monotonic()
+    while time.monotonic() - start < timeout_seconds:
+        draft = get_draft(draft_id)
+        if draft and draft.get("status") in target_statuses:
+            return draft["status"]
+        time.sleep(poll_interval)
+    return None
+
+
+def make_draft_id(cycle: int, opportunity: dict | None) -> str:
+    """Deterministic id from cycle + opportunity title so upserts work."""
+    title = (opportunity or {}).get("title") or "opportunity"
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:40] or "draft"
+    return f"draft_c{cycle}_{slug}"

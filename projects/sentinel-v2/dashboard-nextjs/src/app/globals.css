@@ -2,148 +2,255 @@
 @tailwind components;
 @tailwind utilities;
 
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+/* ============================================================================
+   Design tokens — Linear-inspired dark
+   zinc neutrals + indigo/violet accent
+   ============================================================================ */
 @layer base {
   :root {
-    --background: 222 47% 11%;
-    --foreground: 210 40% 98%;
-    --card: 217 33% 17%;
-    --card-foreground: 210 40% 98%;
-    --popover: 217 33% 17%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 217 91% 60%;
-    --primary-foreground: 222 47% 11%;
-    --secondary: 217 33% 17%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217 33% 17%;
-    --muted-foreground: 215 16% 47%;
-    --accent: 217 33% 17%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 63% 31%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217 33% 17%;
-    --input: 217 33% 17%;
-    --ring: 224 76% 48%;
+    --background: 240 10% 4%;             /* near-black zinc */
+    --foreground: 220 15% 94%;
+
+    --surface: 240 10% 6%;
+    --surface-elevated: 240 8% 9%;
+    --surface-muted: 240 8% 7%;
+
+    --card: 240 9% 7%;
+    --card-foreground: 220 15% 94%;
+
+    --popover: 240 10% 6%;
+    --popover-foreground: 220 15% 94%;
+
+    --primary: 244 80% 68%;                /* indigo-500/violet hybrid */
+    --primary-foreground: 240 10% 4%;
+
+    --secondary: 267 72% 66%;              /* violet */
+    --secondary-foreground: 240 10% 4%;
+
+    --muted: 240 6% 14%;
+    --muted-foreground: 220 9% 58%;
+
+    --accent: 267 72% 66%;
+    --accent-foreground: 240 10% 4%;
+
+    --destructive: 0 72% 58%;
+    --destructive-foreground: 0 0% 98%;
+
+    --success: 152 62% 48%;
+    --warning: 38 92% 56%;
+
+    --border: 240 6% 14%;
+    --border-strong: 240 6% 20%;
+    --input: 240 6% 14%;
+    --ring: 244 80% 68%;
+
+    --radius: 0.75rem;
   }
 
-  .dark {
-    --background: 208 70% 8%;
-    --foreground: 208 70% 98%;
-    --card: 208 70% 10%;
-    --card-foreground: 208 70% 98%;
-    --popover: 208 70% 10%;
-    --popover-foreground: 208 70% 98%;
-    --primary: 208 70% 98%;
-    --primary-foreground: 208 70% 9%;
-    --secondary: 208 70% 10%;
-    --secondary-foreground: 208 70% 98%;
-    --muted: 208 70% 10%;
-    --muted-foreground: 208 60% 90%;
-    --accent: 208 70% 10%;
-    --accent-foreground: 208 70% 98%;
-    --destructive: 349 89% 98%;
-    --destructive-foreground: 208 70% 98%;
-    --border: 208 70% 10%;
-    --input: 208 70% 10%;
-    --ring: 213 31% 91%;
-
-    /* Custom Teal Theme */
-    --teal-1: #071315;
-    --teal-2: #0e1b1d;
-    --teal-3: #022d32;
-    --teal-4: #003a43;
-    --teal-5: #004751;
-    --teal-6: #005661;
-    --teal-7: #006a76;
-    --teal-8: #008493;
-    --teal-9: #3ccadd;
-    --teal-10: #2bbfd2;
-    --teal-11: #42cee1;
-    --teal-12: #b4edf6;
-
-    --teal-a1: #0078de05;
-    --teal-a2: #00d6fd0d;
-    --teal-a3: #00d8fb24;
-    --teal-a4: #00d3fe36;
-    --teal-a5: #00d9fe45;
-    --teal-a6: #00deff56;
-    --teal-a7: #00e1fd6d;
-    --teal-a8: #00e2fe8c;
-    --teal-a9: #44e9ffdb;
-    --teal-a10: #31e8ffcf;
-    --teal-a11: #49e9ffdf;
-    --teal-a12: #baf5fef6;
-
-    --teal-contrast: #03272c;
-    --teal-surface: #0c252980;
-    --teal-indicator: #3ccadd;
-    --teal-track: #3ccadd;
-  }
-}
-
-@layer base {
   * {
     @apply border-border;
   }
+
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-feature-settings: 'cv11', 'ss01', 'ss03';
+    scroll-behavior: smooth;
+  }
+
   body {
-    @apply bg-background text-foreground;
-    font-feature-settings: "rlig" 1, "calt" 1;
+    @apply bg-background text-foreground antialiased;
+    background-image:
+      radial-gradient(
+        ellipse 80% 50% at 50% -20%,
+        hsl(var(--primary) / 0.10),
+        transparent 50%
+      ),
+      radial-gradient(
+        ellipse 60% 40% at 100% 100%,
+        hsl(var(--secondary) / 0.08),
+        transparent 50%
+      );
+    background-attachment: fixed;
+  }
+
+  ::selection {
+    background: hsl(var(--primary) / 0.35);
+    color: hsl(var(--foreground));
+  }
+
+  /* Scrollbars */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--border-strong));
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.4);
   }
 }
 
+/* ============================================================================
+   Component primitives
+   ============================================================================ */
 @layer components {
-  /* Custom scrollbar */
-  .custom-scrollbar::-webkit-scrollbar {
-    width: 6px;
+  .surface-card {
+    @apply rounded-xl border border-border bg-card/70 backdrop-blur-sm;
+    box-shadow:
+      0 1px 0 0 hsl(var(--border-strong) / 0.4) inset,
+      0 24px 48px -24px rgba(0, 0, 0, 0.6);
   }
 
-  .custom-scrollbar::-webkit-scrollbar-track {
-    background-color: var(--teal-surface);
+  .surface-card-elevated {
+    @apply rounded-xl border border-border-strong bg-surface-elevated;
+    box-shadow:
+      0 1px 0 0 rgba(255, 255, 255, 0.02) inset,
+      0 32px 64px -24px rgba(0, 0, 0, 0.7);
   }
 
-  .custom-scrollbar::-webkit-scrollbar-thumb {
-    @apply bg-teal-9 rounded-full hover:bg-teal-10 transition-colors;
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-border bg-surface-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground;
   }
 
-  /* Phase node animations */
-  @keyframes pulse-glow {
-    0%, 100% {
-      box-shadow: 0 0 20px rgba(59, 130, 246, 0.5),
-                  0 0 40px rgba(59, 130, 246, 0.3);
-    }
-    50% {
-      box-shadow: 0 0 30px rgba(59, 130, 246, 0.8),
-                  0 0 60px rgba(59, 130, 246, 0.5);
-    }
+  .kbd {
+    @apply rounded border border-border bg-surface-muted px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground;
   }
 
-  /* Pipeline glow animation */
-  @keyframes glow {
-    0%, 100% {
-      box-shadow: 0 0 15px rgba(96, 165, 250, 0.4),
-                  0 0 30px rgba(139, 92, 246, 0.3);
-    }
-    50% {
-      box-shadow: 0 0 25px rgba(96, 165, 250, 0.6),
-                  0 0 50px rgba(139, 92, 246, 0.4);
-    }
+  .text-gradient {
+    background: linear-gradient(
+      90deg,
+      hsl(var(--primary)),
+      hsl(var(--secondary))
+    );
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
   }
 
-  .node-active {
-    @apply border-primary bg-primary/10;
-    animation: pulse-glow 2s ease-in-out infinite;
+  .divider-y {
+    background-image: linear-gradient(
+      to bottom,
+      transparent,
+      hsl(var(--border-strong)),
+      transparent
+    );
   }
 
-  .node-completed {
-    @apply border-green-600 bg-green-900/20 text-green-500;
-  }
-
-  .node-pending {
-    @apply border-muted bg-muted/30 text-muted-foreground;
+  .grid-overlay {
+    background-image:
+      linear-gradient(hsl(var(--border) / 0.5) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--border) / 0.5) 1px, transparent 1px);
+    background-size: 40px 40px;
+    mask-image: radial-gradient(ellipse at center, black 0%, transparent 70%);
   }
 }
 
+/* ============================================================================
+   Utilities
+   ============================================================================ */
 @layer utilities {
-  .text-balance {
-    text-wrap: balance;
+  .animate-in {
+    animation: animateIn 300ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+  .slide-in-from-right-4 { --tw-enter-translate-x: 1rem; }
+  .slide-in-from-bottom-2 { --tw-enter-translate-y: 0.5rem; }
+  .fade-in { --tw-enter-opacity: 0; }
+
+  .duration-400 { animation-duration: 400ms; }
+
+  /* Masked gradient border */
+  .border-gradient {
+    position: relative;
+  }
+  .border-gradient::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    padding: 1px;
+    border-radius: inherit;
+    background: linear-gradient(
+      135deg,
+      hsl(var(--primary) / 0.6),
+      hsl(var(--secondary) / 0.4) 40%,
+      transparent 70%
+    );
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  .shimmer-bg {
+    background: linear-gradient(
+      90deg,
+      transparent,
+      hsl(var(--primary) / 0.15),
+      transparent
+    );
+    background-size: 200% 100%;
+  }
+
+  .text-balance { text-wrap: balance; }
+}
+
+@keyframes animateIn {
+  from {
+    opacity: var(--tw-enter-opacity, 1);
+    transform: translate3d(
+      var(--tw-enter-translate-x, 0),
+      var(--tw-enter-translate-y, 0),
+      0
+    );
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+/* ── Radix Dialog centered-content animation ────────────────────────────────
+   Keep the centering transform intact across the whole animation so the
+   modal doesn't "jump" from corner to centre.
+*/
+.dialog-content {
+  transform: translate(-50%, -50%);
+  transform-origin: center;
+}
+.dialog-content[data-state='open'] {
+  animation: dialog-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.dialog-content[data-state='closed'] {
+  animation: dialog-out 160ms cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+@keyframes dialog-out {
+  from {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.97);
   }
 }

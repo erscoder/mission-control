@@ -45,6 +45,9 @@ BASE_DIR = Path(__file__).parent.parent
 LOGS_DIR = BASE_DIR / "logs"
 APPROVAL_FILE = Path("/tmp/sentinel_v2_approval.json")
 STATE_FILE = Path("/tmp/sentinel_v2_state.json")
+BREAKDOWN_FILE = Path("/tmp/sentinel_v2_flow_breakdown.json")
+AGENT_MESSAGES_FILE = Path("/tmp/sentinel_v2_agent_messages.json")
+DRAFTS_FILE = Path("/tmp/sentinel_v2_drafts.json")
 SOCKET_AUTH_TOKEN = "sentinel-v2-dashboard-secret"
 
 # ── State reader ──────────────────────────────────────────────────────────────
@@ -82,6 +85,162 @@ def read_flow_state() -> dict:
             return json.load(f)
     except (IOError, json.JSONDecodeError):
         return {"cycle": 0, "phase": "idle", "opportunity": None, "build_output": None, "match_score": 0.0}
+
+
+def read_drafts() -> dict:
+    """Read drafts list from file. Each draft has rich metadata + lifecycle status.
+
+    If the drafts file does not exist yet, synthesize one from the legacy approval
+    state so older Sentinel runs still populate the dashboard's draft queue.
+    """
+    default = {"drafts": [], "updated_at": ""}
+    if DRAFTS_FILE.exists():
+        try:
+            with open(DRAFTS_FILE) as f:
+                data = json.load(f)
+                if isinstance(data, dict) and isinstance(data.get("drafts"), list):
+                    return {**default, **data}
+        except (IOError, json.JSONDecodeError):
+            pass
+
+    # Fallback: synthesize drafts from legacy approval state
+    legacy = read_approval_state()
+    drafts: list[dict] = []
+
+    def _normalize(item: dict, default_status: str) -> dict:
+        if not isinstance(item, dict) or not item.get("title"):
+            return {}
+        cycle = item.get("cycle", 0)
+        status = item.get("status") or default_status
+        # Map legacy status values to new lifecycle
+        status = {
+            "approve": "approved",
+            "reject": "rejected",
+        }.get(status, status)
+        return {
+            "id": item.get("id") or f"legacy_c{cycle}_{abs(hash(item.get('title',''))) % 10_000}",
+            "cycle": cycle,
+            "title": item.get("title", ""),
+            "tagline": item.get("tagline")
+            or (item.get("solution", "")[:80] if item.get("solution") else ""),
+            "description": item.get("description")
+            or item.get("problem", "")
+            or "",
+            "problem": item.get("problem", ""),
+            "solution": item.get("solution", ""),
+            "tech_fit": float(item.get("tech_fit", 0.0) or 0.0),
+            "complexity": int(item.get("complexity", 0) or 0),
+            "estimated_hours": item.get("estimated_hours"),
+            "tags": item.get("tags", []) or [],
+            "status": status,
+            "created_at": item.get("created_at", ""),
+            "updated_at": item.get("resolved_at") or item.get("updated_at", ""),
+            "build_progress": float(item.get("build_progress", 0.0) or 0.0),
+            "queue_position": item.get("queue_position"),
+            "revision_notes": item.get("revision_notes"),
+            "deployment_url": item.get("deployment_url"),
+        }
+
+    pending_raw = legacy.get("pending")
+    if isinstance(pending_raw, dict) and pending_raw.get("title"):
+        d = _normalize(pending_raw, "pending")
+        if d:
+            drafts.append(d)
+    elif isinstance(pending_raw, list):
+        for item in pending_raw:
+            d = _normalize(item, "pending")
+            if d:
+                drafts.append(d)
+
+    for item in legacy.get("approved", []) or []:
+        d = _normalize(item, "approved")
+        if d:
+            drafts.append(d)
+    for item in legacy.get("rejected", []) or []:
+        d = _normalize(item, "rejected")
+        if d:
+            drafts.append(d)
+
+    return {"drafts": drafts, "updated_at": ""}
+
+
+def write_drafts(data: dict) -> bool:
+    try:
+        with open(DRAFTS_FILE, "w") as f:
+            json.dump(data, f, indent=2)
+        return True
+    except (IOError, OSError):
+        return False
+
+
+def update_draft_status(draft_id: str, new_status: str, revision_notes: str | None = None) -> bool:
+    """Update a single draft's status by id. Returns True on success."""
+    data = read_drafts()
+    drafts = data.get("drafts", [])
+    found = False
+    now = datetime.now().isoformat()
+    for d in drafts:
+        if d.get("id") == draft_id:
+            d["status"] = new_status
+            d["updated_at"] = now
+            if revision_notes:
+                d["revision_notes"] = revision_notes
+            found = True
+            break
+    if not found:
+        return False
+    data["drafts"] = drafts
+    data["updated_at"] = now
+    return write_drafts(data)
+
+
+def compute_build_queue(drafts: list[dict]) -> list[dict]:
+    """Derive a build queue view from drafts. Drafts with status 'pending' (just surfaced)
+    now appear at the head of the pipeline as a 'draft' stage; rejected items stay out."""
+    ACTIVE = {"pending", "approved", "queued", "building", "review", "testing", "built", "deployed", "failed"}
+    queue = [d for d in drafts if d.get("status") in ACTIVE]
+    order = {
+        "pending": 0,
+        "building": 1,
+        "review": 1,
+        "testing": 1,
+        "queued": 2,
+        "approved": 2,
+        "built": 3,
+        "deployed": 4,
+        "failed": 5,
+    }
+    queue.sort(key=lambda d: (order.get(d.get("status", ""), 99), d.get("queue_position") or 0, d.get("created_at") or ""))
+    return queue
+
+
+def read_flow_breakdown() -> dict:
+    """Read granular flow breakdown from file."""
+    default = {
+        "cycle": 0,
+        "phase": "idle",
+        "sub_phase": None,
+        "status": "idle",
+        "progress": 0.0,
+        "current_task": None,
+        "next_task": None,
+        "completed_tasks": [],
+        "pending_tasks": [],
+        "blockers": [],
+        "metrics": {},
+        "opportunity_title": None,
+        "match_score": 0.0,
+        "deployed": False,
+        "updated_at": "",
+    }
+    if not BREAKDOWN_FILE.exists():
+        return default
+    try:
+        with open(BREAKDOWN_FILE) as f:
+            data = json.load(f)
+            return {**default, **data}
+    except (IOError, json.JSONDecodeError):
+        return default
 
 
 def get_latest_log() -> tuple[str, str]:
@@ -164,6 +323,8 @@ def state_poller():
     last_approval = ""
     last_log = ""
     last_agent_messages = ""
+    last_breakdown = ""
+    last_drafts = ""
 
     while True:
         try:
@@ -171,10 +332,15 @@ def state_poller():
             approval_state = read_approval_state()
             log_content, log_name = get_latest_log()
             agent_messages = get_agent_messages()
+            breakdown = read_flow_breakdown()
+            drafts_data = read_drafts()
+            build_queue = compute_build_queue(drafts_data.get("drafts", []))
 
             current_state = json.dumps(flow_state)
             current_approval = json.dumps(approval_state)
             current_messages = json.dumps(agent_messages)
+            current_breakdown = json.dumps(breakdown)
+            current_drafts = json.dumps({"drafts": drafts_data.get("drafts", []), "build_queue": build_queue})
 
             if current_state != last_state:
                 socketio.emit("state_update", flow_state, namespace="/dashboard")
@@ -187,6 +353,18 @@ def state_poller():
             if current_messages != last_agent_messages:
                 socketio.emit("agent_messages", agent_messages, namespace="/dashboard")
                 last_agent_messages = current_messages
+
+            if current_breakdown != last_breakdown:
+                socketio.emit("flow_breakdown_update", breakdown, namespace="/dashboard")
+                last_breakdown = current_breakdown
+
+            if current_drafts != last_drafts:
+                socketio.emit(
+                    "drafts_update",
+                    {"drafts": drafts_data.get("drafts", []), "build_queue": build_queue},
+                    namespace="/dashboard",
+                )
+                last_drafts = current_drafts
 
             if log_content != last_log:
                 socketio.emit("log_update", {"content": log_content, "name": log_name}, namespace="/dashboard")
@@ -202,15 +380,17 @@ def state_poller():
         except (IOError, json.JSONDecodeError) as e:
             socketio.emit("error", {"message": str(e)}, namespace="/dashboard")
 
-        socketio.sleep(2)  # Poll every 2 seconds
+        socketio.sleep(1)  # Poll every 1 second
 
 
 # ── SocketIO events ───────────────────────────────────────────────────────────
 
 @socketio.on("connect", namespace="/dashboard")
-def handle_connect():
+def handle_connect(auth=None):
     """Client connected - validate auth token, send current state."""
-    token = request.args.get("token") or (request.auth or {}).get("token")
+    token = request.args.get("token")
+    if not token and isinstance(auth, dict):
+        token = auth.get("token")
     if token != SOCKET_AUTH_TOKEN:
         log.warning("Unauthorized socket connection attempt from %s", request.sid)
         return False  # Reject connection
@@ -220,6 +400,14 @@ def handle_connect():
     # Send current state immediately
     emit("state_update", read_flow_state(), namespace="/dashboard")
     emit("approval_update", read_approval_state(), namespace="/dashboard")
+    emit("flow_breakdown_update", read_flow_breakdown(), namespace="/dashboard")
+    emit("agent_messages", get_agent_messages(), namespace="/dashboard")
+    _drafts = read_drafts()
+    emit(
+        "drafts_update",
+        {"drafts": _drafts.get("drafts", []), "build_queue": compute_build_queue(_drafts.get("drafts", []))},
+        namespace="/dashboard",
+    )
 
 
 @socketio.on("disconnect", namespace="/dashboard")
@@ -240,7 +428,7 @@ def handle_reject(data):
     """Reject the current proposal (or request revision)."""
     revision = data.get("revision", False)
     notes = data.get("notes", "")
-    
+
     # revision means approve to continue with feedback
     if revision:
         success = write_approval_action("approve", revision_notes=notes)
@@ -248,8 +436,60 @@ def handle_reject(data):
     else:
         success = write_approval_action("reject")
         action_name = "reject"
-    
+
     emit("action_response", {"success": success, "action": action_name}, namespace="/dashboard")
+
+
+@socketio.on("approve_draft", namespace="/dashboard")
+def handle_approve_draft(data):
+    """Approve a single draft by id. Sets status to 'queued' so the flow picks it up."""
+    draft_id = (data or {}).get("id", "")
+    if not draft_id:
+        emit("action_response", {"success": False, "action": "approve_draft", "error": "missing id"}, namespace="/dashboard")
+        return
+    ok = update_draft_status(draft_id, "queued")
+    emit("action_response", {"success": ok, "action": "approve_draft", "id": draft_id}, namespace="/dashboard")
+
+
+@socketio.on("reject_draft", namespace="/dashboard")
+def handle_reject_draft(data):
+    """Reject a single draft by id. Optional revision notes move it to 'pending' with notes."""
+    payload = data or {}
+    draft_id = payload.get("id", "")
+    revision = bool(payload.get("revision", False))
+    notes = payload.get("notes", "")
+    if not draft_id:
+        emit("action_response", {"success": False, "action": "reject_draft", "error": "missing id"}, namespace="/dashboard")
+        return
+    if revision:
+        ok = update_draft_status(draft_id, "pending", revision_notes=notes)
+        action = "revise_draft"
+    else:
+        ok = update_draft_status(draft_id, "rejected")
+        action = "reject_draft"
+    emit("action_response", {"success": ok, "action": action, "id": draft_id}, namespace="/dashboard")
+
+
+@socketio.on("approve_deploy", namespace="/dashboard")
+def handle_approve_deploy(data):
+    """Second approval gate: after a draft is built, human approves deployment."""
+    draft_id = (data or {}).get("id", "")
+    if not draft_id:
+        emit("action_response", {"success": False, "action": "approve_deploy", "error": "missing id"}, namespace="/dashboard")
+        return
+    ok = update_draft_status(draft_id, "deployed")
+    emit("action_response", {"success": ok, "action": "approve_deploy", "id": draft_id}, namespace="/dashboard")
+
+
+@socketio.on("reject_deploy", namespace="/dashboard")
+def handle_reject_deploy(data):
+    """Second approval gate: reject deployment of a built draft. Marks it as failed."""
+    draft_id = (data or {}).get("id", "")
+    if not draft_id:
+        emit("action_response", {"success": False, "action": "reject_deploy", "error": "missing id"}, namespace="/dashboard")
+        return
+    ok = update_draft_status(draft_id, "failed")
+    emit("action_response", {"success": ok, "action": "reject_deploy", "id": draft_id}, namespace="/dashboard")
 
 
 # ── HTTP routes ──────────────────────────────────────────────────────────────
@@ -293,6 +533,49 @@ def api_approval_action():
 def api_log():
     content, name = get_latest_log()
     return jsonify({"content": content, "name": name})
+
+
+@app.route("/api/flow_breakdown")
+def api_flow_breakdown():
+    return jsonify(read_flow_breakdown())
+
+
+@app.route("/api/agent_messages")
+def api_agent_messages():
+    return jsonify(get_agent_messages())
+
+
+@app.route("/api/drafts")
+def api_drafts():
+    data = read_drafts()
+    drafts = data.get("drafts", [])
+    return jsonify({
+        "drafts": drafts,
+        "build_queue": compute_build_queue(drafts),
+        "updated_at": data.get("updated_at", ""),
+    })
+
+
+@app.route("/api/drafts/action", methods=["POST"])
+def api_drafts_action():
+    payload = request.get_json(silent=True) or {}
+    draft_id = payload.get("id", "")
+    action = payload.get("action", "")
+    notes = payload.get("notes", "")
+    valid = {"approve", "reject", "revise", "approve_deploy", "reject_deploy"}
+    if not draft_id or action not in valid:
+        return jsonify({"success": False, "error": "invalid payload"}), 400
+    if action == "approve":
+        ok = update_draft_status(draft_id, "queued")
+    elif action == "revise":
+        ok = update_draft_status(draft_id, "pending", revision_notes=notes)
+    elif action == "approve_deploy":
+        ok = update_draft_status(draft_id, "deployed")
+    elif action == "reject_deploy":
+        ok = update_draft_status(draft_id, "failed")
+    else:
+        ok = update_draft_status(draft_id, "rejected")
+    return jsonify({"success": ok, "action": action, "id": draft_id})
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────

@@ -15,8 +15,21 @@ from pathlib import Path
 # Add sentinel-v2 src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+# Pin TMPDIR to a stable location BEFORE any CrewAI/LiteLLM imports. These libs
+# cache a lock-file path derived from tempfile.gettempdir() at import time; if
+# TMPDIR points to an ephemeral sandbox dir that gets cleaned up between invocations
+# we end up with "No such file or directory: '.../.ctx-mode-XXX/crewai:HASH.lock'".
+_stable_tmp = Path(os.environ.get("SENTINEL_TMPDIR", "/tmp"))
+_stable_tmp.mkdir(parents=True, exist_ok=True)
+os.environ["TMPDIR"] = str(_stable_tmp) + "/"
+os.environ.setdefault("TMP", str(_stable_tmp))
+os.environ.setdefault("TEMP", str(_stable_tmp))
+
 from dotenv import load_dotenv
-load_dotenv()
+
+# override=True so values in .env take precedence over any stale shell env that may
+# still contain placeholders from earlier sessions (e.g., `your_telegram_bot_token_here`).
+load_dotenv(override=True)
 
 log = logging.getLogger("sentinel_v2")
 
@@ -77,6 +90,7 @@ def run_daemon():
     tool._set_approval_callback(_on_approve)
 
     async def _run_cycles():
+        nonlocal _shutdown  # ensure assignments below bind to the enclosing scope
         flow = SentinelLoopFlow()
         cycle = 0
 
