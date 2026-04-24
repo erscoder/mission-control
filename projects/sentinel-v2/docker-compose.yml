@@ -1,3 +1,11 @@
+# Two Python services in Docker:
+#   - sentinel: the CrewAI daemon (research → match → build → security → approve → deploy)
+#   - flask:    the dashboard API (Socket.IO + REST) that the Next.js UI talks to
+#
+# The Next.js dashboard (dashboard-nextjs/) is NOT in Docker — run it locally with:
+#   cd dashboard-nextjs && npm run dev
+# It connects to Flask at http://localhost:5173.
+
 services:
   sentinel:
     build: .
@@ -10,7 +18,7 @@ services:
       - ./sentinel.db:/app/sentinel.db
     restart: unless-stopped
 
-  dashboard:
+  flask:
     build: .
     command: python run_dashboard.py
     env_file: .env
