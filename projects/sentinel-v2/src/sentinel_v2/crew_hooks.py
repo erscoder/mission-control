@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -17,8 +18,10 @@ from typing import Callable, Any
 from crewai import Agent, Task, Crew, LLM
 from enum import Enum
 
+_TMP_DIR = Path(os.environ.get("SENTINEL_TMPDIR", "/tmp"))
+
 # File to store agent messages
-AGENT_MESSAGES_FILE = Path("/tmp/sentinel_v2_agent_messages.json")
+AGENT_MESSAGES_FILE = _TMP_DIR / "sentinel_v2_agent_messages.json"
 # Lock for thread-safe file writing
 _messages_lock = threading.Lock()
 log = logging.getLogger("sentinel_v2.crew_hooks")
@@ -36,7 +39,7 @@ class AgentHookType(Enum):
 
 # ── Path Validation ──────────────────────────────────────────────────────────
 
-ALLOWED_TMP_PREFIX = "/tmp/sentinel_v2_"
+ALLOWED_TMP_PREFIX = str(_TMP_DIR) + "/sentinel_v2_"
 
 
 def _safe_path(path: Path | str) -> Path:

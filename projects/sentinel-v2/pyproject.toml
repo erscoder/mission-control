@@ -14,6 +14,7 @@ dependencies = [
     "loguru",
     "ollama",
     "flask>=3.0",
+    "flask-cors>=4.0",
     "flask-socketio>=5.3",
     "eventlet>=0.36",
 ]

@@ -5,6 +5,16 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-24 · TBD — Fix CORS + Docker shared-volume path mismatch
+
+**What changed:**
+- `pyproject.toml`: added `flask-cors>=4.0` dependency
+- `dashboard/app.py`: added `CORS(app, resources={r"/api/*": {"origins": "*"}})` so the REST polling fetch from Next.js (localhost:3003) is no longer blocked; replaced hardcoded `/tmp/sentinel_v2_*.json` paths with `_TMP_DIR = Path(os.environ.get("SENTINEL_TMPDIR", "/tmp"))`; fixed `get_agent_messages()` to use the module-level `AGENT_MESSAGES_FILE` instead of a local hardcoded path
+- `crew_hooks.py`: added `import os`; derived `AGENT_MESSAGES_FILE` and `ALLOWED_TMP_PREFIX` from `_TMP_DIR`
+- `dashboard_state.py`: same pattern; also added `BREAKDOWN_FILE` at module level and removed the 4 redundant local definitions inside functions
+
+**Por qué:** en Docker, `SENTINEL_TMPDIR=/tmp/sentinel_shared` pero todos los paths estaban hardcodeados a `/tmp/`. El daemon escribía en `/tmp/` de su contenedor, Flask leía de `/tmp/` del suyo — el volumen compartido en `/tmp/sentinel_shared` era ignorado. Esto causaba que Agent Feed y Draft Queue nunca recibieran datos.
+
 ## 2026-04-24 · TBD — Dockerize daemon + Flask (two-service compose)
 
 **What changed:**

@@ -5,19 +5,22 @@ Tracks flow state and agent messages for the real-time dashboard.
 Now includes granular FlowBreakdown for detailed phase tracking.
 """
 import json
+import os
 import re
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any
 from pydantic import BaseModel, Field
 
+_TMP_DIR = Path(os.environ.get("SENTINEL_TMPDIR", "/tmp"))
 
-STATE_FILE = Path("/tmp/sentinel_v2_state.json")
-AGENT_MESSAGES_FILE = Path("/tmp/sentinel_v2_agent_messages.json")
+STATE_FILE = _TMP_DIR / "sentinel_v2_state.json"
+AGENT_MESSAGES_FILE = _TMP_DIR / "sentinel_v2_agent_messages.json"
+BREAKDOWN_FILE = _TMP_DIR / "sentinel_v2_flow_breakdown.json"
 
 # ── Path Validation ──────────────────────────────────────────────────────────
 
-ALLOWED_TMP_PREFIX = "/tmp/sentinel_v2_"
+ALLOWED_TMP_PREFIX = str(_TMP_DIR) + "/sentinel_v2_"
 
 
 def _safe_path(path: Path | str) -> Path:
@@ -201,8 +204,6 @@ def write_flow_breakdown(
     Call this at every milestone for detailed dashboard tracking.
     Each call with `activity` adds to the activity feed.
     """
-    BREAKDOWN_FILE = Path("/tmp/sentinel_v2_flow_breakdown.json")
-    
     # Validate path before using
     try:
         _safe_path(BREAKDOWN_FILE)
@@ -271,8 +272,6 @@ def add_blocker(
     severity: str = "medium",
 ) -> None:
     """Add a blocker to the current flow breakdown."""
-    BREAKDOWN_FILE = Path("/tmp/sentinel_v2_flow_breakdown.json")
-    
     # Validate path
     try:
         _safe_path(BREAKDOWN_FILE)
@@ -310,8 +309,6 @@ def add_blocker(
 
 def resolve_blocker(blocker_id: str) -> None:
     """Mark a blocker as resolved."""
-    BREAKDOWN_FILE = Path("/tmp/sentinel_v2_flow_breakdown.json")
-    
     # Validate path
     try:
         _safe_path(BREAKDOWN_FILE)
@@ -400,8 +397,6 @@ def get_agent_messages() -> list[dict]:
 
 def read_flow_breakdown() -> dict:
     """Read the current flow breakdown."""
-    BREAKDOWN_FILE = Path("/tmp/sentinel_v2_flow_breakdown.json")
-    
     try:
         _safe_path(BREAKDOWN_FILE)
     except ValueError:

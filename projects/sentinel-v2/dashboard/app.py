@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import json
 import logging
-
-log = logging.getLogger("sentinel_v2.dashboard")
+import os
 import threading
 from pathlib import Path
 from flask import Flask, jsonify, request
+from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 from datetime import datetime
 
@@ -24,6 +24,7 @@ log = logging.getLogger("sentinel_v2.dashboard")
 # ── Flask + SocketIO app ──────────────────────────────────────────────────────
 
 app = Flask(__name__, static_folder="static")
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 socketio = SocketIO(
     app,
     cors_allowed_origins="*",
@@ -34,9 +35,10 @@ socketio = SocketIO(
 
 BASE_DIR = Path(__file__).parent.parent
 LOGS_DIR = BASE_DIR / "logs"
-STATE_FILE = Path("/tmp/sentinel_v2_state.json")
-BREAKDOWN_FILE = Path("/tmp/sentinel_v2_flow_breakdown.json")
-AGENT_MESSAGES_FILE = Path("/tmp/sentinel_v2_agent_messages.json")
+_TMP_DIR = Path(os.environ.get("SENTINEL_TMPDIR", "/tmp"))
+STATE_FILE = _TMP_DIR / "sentinel_v2_state.json"
+BREAKDOWN_FILE = _TMP_DIR / "sentinel_v2_flow_breakdown.json"
+AGENT_MESSAGES_FILE = _TMP_DIR / "sentinel_v2_agent_messages.json"
 SOCKET_AUTH_TOKEN = "sentinel-v2-dashboard-secret"
 
 # Drafts live in sentinel.db. Use the shared writer module so the flow and
@@ -50,11 +52,10 @@ from sentinel_v2 import dashboard_state as _draft_store  # noqa: E402
 
 def get_agent_messages() -> list:
     """Get all agent messages from dashboard state."""
-    msg_file = Path("/tmp/sentinel_v2_agent_messages.json")
-    if not msg_file.exists():
+    if not AGENT_MESSAGES_FILE.exists():
         return []
     try:
-        with open(msg_file) as f:
+        with open(AGENT_MESSAGES_FILE) as f:
             return json.load(f)
     except (IOError, json.JSONDecodeError):
         return []
