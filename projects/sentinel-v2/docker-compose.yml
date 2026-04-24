@@ -1,0 +1,33 @@
+services:
+  sentinel:
+    build: .
+    command: python -m sentinel_v2.main --mode daemon
+    env_file: .env
+    environment:
+      SENTINEL_TMPDIR: /tmp/sentinel_shared
+    volumes:
+      - sentinel_tmp:/tmp/sentinel_shared
+      - ./sentinel.db:/app/sentinel.db
+    restart: unless-stopped
+
+  dashboard:
+    build: .
+    command: python run_dashboard.py
+    env_file: .env
+    environment:
+      SENTINEL_TMPDIR: /tmp/sentinel_shared
+    volumes:
+      - sentinel_tmp:/tmp/sentinel_shared
+      - ./sentinel.db:/app/sentinel.db
+    ports:
+      - "5173:5173"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5173/api/state || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  sentinel_tmp:

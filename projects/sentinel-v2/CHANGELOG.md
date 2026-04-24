@@ -5,6 +5,20 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-24 · TBD — Dockerize daemon + Flask (two-service compose)
+
+**What changed:**
+- `Dockerfile`: single shared image, Python 3.12-slim, `uv sync --frozen --no-dev`, `PYTHONPATH=/app/src:/app`
+- `docker-compose.yml`: two services (`sentinel`, `dashboard`), named volume `sentinel_tmp` at `/tmp/sentinel_shared` shared between both, `SENTINEL_TMPDIR` env var routes daemon's `/tmp` writes there, `./sentinel.db` bind-mounted, port 5173 exposed, `restart: unless-stopped`, healthcheck on `/api/state`
+- `.dockerignore`: excludes `.venv`, `__pycache__`, `dashboard-nextjs/`, `node_modules/`, `.git/`, SQLite WAL files
+
+**Uso:**
+```bash
+touch sentinel.db   # only needed on first run if file doesn't exist
+docker compose up -d
+docker compose logs -f
+```
+
 ## 2026-04-24 · TBD — Rich Agent Feed + REST fallback for draft approval
 
 **What changed:**

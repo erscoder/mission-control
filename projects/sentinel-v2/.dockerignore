@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+dashboard-nextjs/
+node_modules/
+.git/
+.env
+*.db
+*.db-shm
+*.db-wal
+.pytest_cache/
+htmlcov/
+.coverage
+dist/
+build/
