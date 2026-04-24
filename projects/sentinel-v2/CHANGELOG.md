@@ -5,6 +5,15 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-24 · TBD — Phase summaries via LLM sent to Telegram after each crew
+
+**What changed:**
+- `crew_hooks.py`: `notify_phase_telegram(phase, raw_output, cycle)` — after each crew kickoff completes, spawns a daemon thread that (1) calls MiniMax to produce a 2-3 sentence human summary of the crew output and (2) sends it to Telegram via Bot API. Silently skips if `TELEGRAM_BOT_TOKEN` is not set.
+- `crew_hooks.py`: `_send_telegram(text)` — minimal urllib POST, no new deps. `_summarize_phase(phase, raw_output, cycle)` — MiniMax prompt asking for operator-facing summary.
+- `.env`: added `TELEGRAM_BOT_TOKEN` (blank placeholder) and `TELEGRAM_CHAT_ID=347154745`
+
+**Result**: instead of "Task started / Agent initialized" noise, operators get a single Telegram message per phase: "🤖 *Sentinel · RESEARCH · cycle #1* — Found 8 candidates, top pick is X: [2-line description]"
+
 ## 2026-04-24 · TBD — Daemon checkpoint/resume: survive restarts mid-cycle
 
 **What changed:**
