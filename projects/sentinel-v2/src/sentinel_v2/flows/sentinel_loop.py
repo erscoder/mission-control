@@ -9,6 +9,7 @@ Uses CrewAI built-ins:
 from datetime import datetime, timezone
 import logging
 import os
+import re
 import signal
 import threading
 from typing import Optional
@@ -17,6 +18,14 @@ from crewai.flow.flow import Flow, listen, start, router
 from pydantic import BaseModel, Field
 
 log = logging.getLogger("sentinel_v2.flow")
+
+ERSLABS_ROOT_DOMAIN = "erslabs.net"
+
+
+def _make_slug(source: str) -> str:
+    """Convert an arbitrary string to a DNS-safe, fly.io-safe slug (1-30 chars)."""
+    s = re.sub(r"[^a-z0-9]+", "-", source.lower()).strip("-") or "app"
+    return s[:30].rstrip("-") or "app"
 
 
 # ── State ────────────────────────────────────────────────────────────────────
@@ -41,6 +50,8 @@ class SentinelState(BaseModel):
     draft: Optional[dict] = None
     draft_file: Optional[str] = None
     build_output: Optional[str] = None
+    workspace_dir: Optional[str] = None          # /tmp/sentinel_workspaces/<draft_id>
+    stripe_product_ids: list[str] = []
 
     # Approve
     approved: bool = False
@@ -52,8 +63,12 @@ class SentinelState(BaseModel):
 
     # Deploy
     deployed: bool = False
-    deployed_url: Optional[str] = None
+    deployed_url: Optional[str] = None            # https://<slug>.erslabs.net (frontend)
     deployment_id: Optional[str] = None
+    backend_url: Optional[str] = None             # https://<slug>-api.fly.dev
+    fly_app_name: Optional[str] = None
+    cf_pages_project: Optional[str] = None
+    stripe_webhook_endpoint_id: Optional[str] = None
 
 
 # ── Main Flow ────────────────────────────────────────────────────────────────
@@ -415,11 +430,22 @@ class SentinelLoopFlow(Flow[SentinelState]):
             from sentinel_v2.dashboard_state import update_draft
             update_draft(self.state.draft_id, status="building", build_progress=0.1)
 
+        # Materialize a per-draft workspace so the build agents can write files to disk
+        from pathlib import Path as _Path
+        workspaces_root = _Path(os.environ.get("SENTINEL_WORKSPACES_ROOT", "/tmp/sentinel_workspaces"))
+        workspace_dir = workspaces_root / (self.state.draft_id or f"cycle_{self.state.cycle_count}")
+        workspace_dir.mkdir(parents=True, exist_ok=True)
+        self.state.workspace_dir = str(workspace_dir)
+        slug = _make_slug(self.state.draft_id or f"cycle-{self.state.cycle_count}")
+
         crew = build_crew()
         result = crew.kickoff(
             inputs={
                 "opportunity": self.state.top_opportunity,
                 "operator_capacity": self._get_operator_capacity(),
+                "workspace_dir": self.state.workspace_dir,
+                "slug": slug,
+                "draft_id": self.state.draft_id or "unknown",
             }
         )
 
@@ -601,18 +627,39 @@ class SentinelLoopFlow(Flow[SentinelState]):
             },
         )
 
+        slug = _make_slug(self.state.draft_id or f"cycle-{self.state.cycle_count}")
+        workspace_dir = self.state.workspace_dir or str(
+            os.path.join(
+                os.environ.get("SENTINEL_WORKSPACES_ROOT", "/tmp/sentinel_workspaces"),
+                self.state.draft_id or f"cycle_{self.state.cycle_count}",
+            )
+        )
+
         crew = deploy_crew()
         result = crew.kickoff(
             inputs={
                 "draft": self.state.build_output,
                 "opportunity": self.state.top_opportunity,
+                "workspace_dir": workspace_dir,
+                "slug": slug,
+                "draft_id": self.state.draft_id or "unknown",
+                "erslabs_root": ERSLABS_ROOT_DOMAIN,
+                "stripe_publishable": os.environ.get("STRIPE_API_KEY", ""),
             }
         )
 
         parsed = self._parse_deploy_result(result)
         self.state.deployed = True
-        self.state.deployed_url = parsed.get("url")
+        self.state.deployed_url = (
+            parsed.get("frontend_url")
+            or parsed.get("url")
+            or f"https://{slug}.{ERSLABS_ROOT_DOMAIN}"
+        )
         self.state.deployment_id = parsed.get("deployment_id")
+        self.state.backend_url = parsed.get("backend_url") or f"https://{slug}-api.fly.dev"
+        self.state.fly_app_name = f"{slug}-api"
+        self.state.cf_pages_project = slug
+        self.state.stripe_webhook_endpoint_id = parsed.get("stripe_webhook_endpoint_id")
 
         if self.state.draft_id:
             from sentinel_v2.dashboard_state import update_draft

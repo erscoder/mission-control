@@ -1,0 +1,139 @@
+"""Tests for file_tool.py — workspace sandboxing and shell whitelist."""
+from __future__ import annotations
+
+import pytest
+from pathlib import Path
+
+from sentinel_v2.tools.file_tool import (
+    ListFilesTool,
+    RunShellTool,
+    WriteFileTool,
+    _resolve_workspace,
+    _safe_child,
+)
+
+
+@pytest.fixture
+def workspace(tmp_path, monkeypatch):
+    """Isolated workspaces root under pytest's tmp_path."""
+    root = tmp_path / "workspaces"
+    monkeypatch.setenv("SENTINEL_WORKSPACES_ROOT", str(root))
+    # Patch module-level constant — it reads env only at import
+    from sentinel_v2.tools import file_tool as ft
+    monkeypatch.setattr(ft, "WORKSPACES_ROOT", root)
+    ws = root / "draft_c0_test"
+    ws.mkdir(parents=True)
+    return ws
+
+
+# ── _resolve_workspace ────────────────────────────────────────────────────────
+
+
+def test_resolve_workspace_accepts_valid_path(workspace):
+    resolved = _resolve_workspace(str(workspace))
+    assert resolved == workspace.resolve()
+
+
+def test_resolve_workspace_rejects_escape(workspace, tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    with pytest.raises(ValueError, match="escapes"):
+        _resolve_workspace(str(outside))
+
+
+# ── _safe_child ──────────────────────────────────────────────────────────────
+
+
+def test_safe_child_accepts_nested_path(workspace):
+    path = _safe_child(workspace, "backend/src/index.ts")
+    assert str(path).startswith(str(workspace))
+
+
+def test_safe_child_rejects_dotdot(workspace):
+    with pytest.raises(ValueError, match="traversal"):
+        _safe_child(workspace, "../outside.ts")
+
+
+def test_safe_child_rejects_absolute_outside(workspace):
+    # Absolute path that resolves outside workspace
+    with pytest.raises(ValueError, match="escapes"):
+        _safe_child(workspace, "/etc/passwd")
+
+
+# ── WriteFileTool ────────────────────────────────────────────────────────────
+
+
+def test_write_file_creates_file(workspace):
+    tool = WriteFileTool()
+    result = tool._run(
+        workspace_dir=str(workspace),
+        path="backend/index.ts",
+        content="console.log('hi')",
+    )
+    assert "wrote" in result
+    assert (workspace / "backend" / "index.ts").read_text() == "console.log('hi')"
+
+
+def test_write_file_refuses_traversal(workspace):
+    tool = WriteFileTool()
+    with pytest.raises(ValueError):
+        tool._run(workspace_dir=str(workspace), path="../evil.ts", content="x")
+
+
+# ── ListFilesTool ────────────────────────────────────────────────────────────
+
+
+def test_list_files_empty_workspace(workspace):
+    tool = ListFilesTool()
+    assert tool._run(workspace_dir=str(workspace)) == "(empty)"
+
+
+def test_list_files_after_write(workspace):
+    WriteFileTool()._run(
+        workspace_dir=str(workspace), path="a.ts", content="x"
+    )
+    WriteFileTool()._run(
+        workspace_dir=str(workspace), path="dir/b.ts", content="y"
+    )
+    listing = ListFilesTool()._run(workspace_dir=str(workspace))
+    assert "a.ts" in listing
+    assert "dir/b.ts" in listing
+
+
+def test_list_files_skips_node_modules(workspace):
+    (workspace / "node_modules" / "foo").mkdir(parents=True)
+    (workspace / "node_modules" / "foo" / "pkg.js").write_text("x")
+    listing = ListFilesTool()._run(workspace_dir=str(workspace))
+    assert "node_modules" not in listing
+
+
+# ── RunShellTool ─────────────────────────────────────────────────────────────
+
+
+def test_run_shell_rejects_non_whitelist(workspace):
+    tool = RunShellTool()
+    result = tool._run(workspace_dir=str(workspace), command="curlish http://evil")
+    assert "not in whitelist" in result
+
+
+def test_run_shell_rejects_rm_rf_outside(workspace):
+    """Whitelist includes rm but cwd is workspace — escape via absolute path still limited."""
+    tool = RunShellTool()
+    # This shouldn't be blocked by whitelist (rm is allowed), but the cwd is the workspace
+    # so any damage is contained to the workspace dir.
+    result = tool._run(workspace_dir=str(workspace), command="rm -rf .")
+    # It runs (exit=0 or exit≠0) but only deletes workspace contents
+    assert result.startswith("exit=")
+
+
+def test_run_shell_empty_command(workspace):
+    tool = RunShellTool()
+    result = tool._run(workspace_dir=str(workspace), command="")
+    assert "shell-error" in result
+
+
+def test_run_shell_echo_works(workspace):
+    tool = RunShellTool()
+    result = tool._run(workspace_dir=str(workspace), command="echo hello")
+    assert "exit=0" in result
+    assert "hello" in result

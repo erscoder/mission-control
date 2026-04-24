@@ -1,11 +1,27 @@
-"""Deploy Crew - Ship to Vercel + Neon (or equivalent PaaS) with Stripe live, telemetry on,
-and a one-minute rollback. No k8s, no hand-rolled CI/CD. Fast time-to-first-dollar.
+"""Deploy Crew — ship the backend to fly.io and the frontend to Cloudflare Pages
+under ``<slug>.erslabs.net``. Wire Stripe webhooks to the live backend URL.
+Fully automated, no manual steps after the first run.
 """
 from crewai import Agent, Crew, Task, Process
 
 from sentinel_v2.config.llm_config import get_minimax_llm
 from sentinel_v2.config.embedder_config import get_memory_for_crew_full
 from sentinel_v2.crew_hooks import hook_crew_full
+from sentinel_v2.tools import (
+    CloudflareDnsCnameTool,
+    CloudflarePagesAddCustomDomainTool,
+    CloudflarePagesCreateTool,
+    CloudflarePagesDeployTool,
+    CloudflarePagesSetEnvTool,
+    FlyAppCreateTool,
+    FlyDeployTool,
+    FlySecretsSetTool,
+    FlyStatusTool,
+    ListFilesTool,
+    RunShellTool,
+    StripeCreateWebhookTool,
+    WriteFileTool,
+)
 
 
 def deploy_crew() -> Crew:
@@ -15,23 +31,80 @@ def deploy_crew() -> Crew:
     minimax_smart = get_minimax_llm("MiniMax-M2.7")
     memory = get_memory_for_crew_full(minimax)
 
+    # Shared tool instances
+    fly_app_create = FlyAppCreateTool()
+    fly_secrets_set = FlySecretsSetTool()
+    fly_deploy = FlyDeployTool()
+    fly_status = FlyStatusTool()
+    cf_pages_create = CloudflarePagesCreateTool()
+    cf_pages_deploy = CloudflarePagesDeployTool()
+    cf_pages_set_env = CloudflarePagesSetEnvTool()
+    cf_dns_cname = CloudflareDnsCnameTool()
+    cf_pages_custom_domain = CloudflarePagesAddCustomDomainTool()
+    stripe_create_webhook = StripeCreateWebhookTool()
+    write_file = WriteFileTool()
+    list_files = ListFilesTool()
+    run_shell = RunShellTool()
+
     deployer = Agent(
         role="Deployment Engineer",
         goal=(
-            "Push the MVP to a production-ready URL that accepts real payments within a single "
-            "deployment cycle. Zero manual steps after the first run."
+            "Ship the MVP to production URLs that accept real payments. Backend on fly.io, frontend on "
+            "Cloudflare Pages under <slug>.erslabs.net. Zero manual steps after kickoff."
         ),
         backstory=(
-            "You ship indie SaaS products weekly. Your defaults: Vercel for the Next.js frontend and "
-            "API routes, Neon or Supabase for Postgres, GitHub Actions to run tests and migrations on "
-            "every push to main, Sentry for error tracking, PostHog/Plausible for product analytics, "
-            "Stripe in live mode with webhooks wired to the production URL. You avoid Docker/k8s for "
-            "MVPs unless there is a hard reason. You enforce zero-downtime via Vercel's atomic "
-            "deploys; rollback is `vercel rollback <deployment>`. You wire a pre-deploy step that "
-            "runs prisma migrate deploy + smoke tests before promoting."
+            "You have shipped 100+ indie SaaS products. You know the exact sequence for fly.io + "
+            "Cloudflare + Stripe and never deviate from it:\n\n"
+            "BACKEND (fly.io):\n"
+            "  1. `fly_app_create(app_name='<slug>-api')` — idempotent.\n"
+            "  2. Apply Postgres migrations (prisma migrate deploy / drizzle-kit migrate) using "
+            "     `run_shell` in `<workspace_dir>/backend/` against the DATABASE_URL the build plan "
+            "     requires.\n"
+            "  3. `fly_secrets_set(app_name='<slug>-api', secrets={DATABASE_URL, STRIPE_SECRET_KEY, "
+            "     … others the backend needs}, stage=True)` so they are present at first boot.\n"
+            "  4. `fly_deploy(app_name='<slug>-api', source_dir='<workspace_dir>/backend')` — the "
+            "     Dockerfile and fly.toml the backend agent wrote are used. The tool returns "
+            "     `https://<slug>-api.fly.dev` as the backend URL.\n"
+            "  5. `stripe_create_webhook(url='<backend_url>/api/stripe/webhook', events=["
+            "     'checkout.session.completed', 'customer.subscription.created', "
+            "     'customer.subscription.updated', 'customer.subscription.deleted', "
+            "     'invoice.payment_succeeded', 'invoice.payment_failed'], draft_id='<draft_id>')` — "
+            "     returns {endpoint_id, secret}. Save the secret to STRIPE_WEBHOOK_SECRET.\n"
+            "  6. `fly_secrets_set(app_name='<slug>-api', secrets={STRIPE_WEBHOOK_SECRET: <secret>})` "
+            "     — triggers a new release with the webhook secret now present.\n\n"
+            "FRONTEND (Cloudflare Pages + erslabs.net):\n"
+            "  7. `cloudflare_pages_create(project_name='<slug>')`.\n"
+            "  8. `cloudflare_pages_set_env(project_name='<slug>', env_vars={"
+            "     NEXT_PUBLIC_API_URL: '<backend_url>', "
+            "     NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: STRIPE_API_KEY (publishable)})`.\n"
+            "  9. `run_shell('npm ci', cwd=<workspace_dir>/frontend)` then "
+            "     `run_shell('npm run build', cwd=<workspace_dir>/frontend)`. Next.js static export "
+            "     produces `out/`.\n"
+            " 10. `cloudflare_pages_deploy(project_name='<slug>', dist_dir='<workspace_dir>/frontend/out')` "
+            "     — returns the .pages.dev URL.\n"
+            " 11. `cloudflare_dns_cname(subdomain='<slug>', target='<slug>.pages.dev')` — attaches "
+            "     <slug>.erslabs.net to the Pages project.\n"
+            " 12. `cloudflare_pages_add_custom_domain(project_name='<slug>', "
+            "     domain='<slug>.erslabs.net')`.\n\n"
+            "You never hardcode secrets into generated code or logs. You never touch `.env` files that "
+            "contain live keys. You use the tools idempotently so retries do not create duplicates."
         ),
-        tools=[],
-        llm=minimax,
+        tools=[
+            fly_app_create,
+            fly_secrets_set,
+            fly_deploy,
+            fly_status,
+            cf_pages_create,
+            cf_pages_deploy,
+            cf_pages_set_env,
+            cf_dns_cname,
+            cf_pages_custom_domain,
+            stripe_create_webhook,
+            write_file,
+            list_files,
+            run_shell,
+        ],
+        llm=minimax_smart,
         verbose=True,
         allow_delegation=False,
     )
@@ -39,19 +112,16 @@ def deploy_crew() -> Crew:
     verifier = Agent(
         role="Production QA Verifier",
         goal=(
-            "Prove the product WORKS for a paying customer in production, not just that /health is 200."
+            "Prove the product WORKS for a paying customer on the LIVE <slug>.erslabs.net URL, "
+            "not just that /health returns 200."
         ),
         backstory=(
-            "You do not trust green checkmarks. You run the three paid-user journeys on the LIVE "
-            "production URL: (1) signup + email verification, (2) Stripe Checkout completes with a "
-            "test-mode card OR a controlled live micro-charge, and the webhook provisions access, "
-            "(3) the core value action executes end-to-end. You verify error rate < 0.5% over the "
-            "first 5 minutes, p95 latency under your SLOs (typically 300ms for API, 2.5s LCP for "
-            "landing), no console errors in Chrome and Safari, no 5xx in server logs, PostHog events "
-            "firing for every funnel step, Sentry connected and receiving a test event. You produce "
-            "a GO / ROLLBACK decision backed by evidence."
+            "You do not trust green checkmarks. You run `curl -f` against the live frontend domain, "
+            "the backend health endpoint, and the Stripe webhook URL (HEAD request). You confirm "
+            "the app is HTTPS, no mixed content, no 5xx on the health endpoint, and the fly.io app "
+            "status is 'running'. You produce a GO/ROLLBACK decision."
         ),
-        tools=[],
+        tools=[run_shell, fly_status],
         llm=minimax_smart,
         verbose=True,
         allow_delegation=False,
@@ -59,63 +129,39 @@ def deploy_crew() -> Crew:
 
     deploy_task = Task(
         description=(
-            "Deploy the approved build to production with minimum moving parts. Deliverables:\n\n"
-            "1. vercel.json (or equivalent) with the correct build/install commands and output dir.\n"
-            "2. Production database provisioned (Neon/Supabase) with migrations applied via "
-            "   `prisma migrate deploy` (or `drizzle-kit migrate`).\n"
-            "3. All env vars set in Vercel (separate preview vs production). .env.example documents "
-            "   every required var. No secrets committed to git.\n"
-            "4. Stripe live-mode wired: products + prices created, webhook endpoint registered to "
-            "   the production URL, STRIPE_WEBHOOK_SECRET set server-side.\n"
-            "5. Auth provider configured for production domain (OAuth callbacks, email templates).\n"
-            "6. Sentry (frontend + backend) connected; source maps uploaded.\n"
-            "7. PostHog (or Plausible) production project key set client-side via NEXT_PUBLIC_*.\n"
-            "8. GitHub Actions: PR workflow runs typecheck + lint + unit tests + build; main workflow "
-            "   triggers Vercel deploy via vercel CLI with the prod token.\n"
-            "9. Custom domain configured with HTTPS; www -> apex redirect or vice versa; HSTS on.\n"
-            "10. Rollback procedure documented: exact `vercel rollback` commands and the last known-"
-            "    good deployment hash, plus DB rollback steps if a migration is involved.\n\n"
-            "Output a deployment package: config files, migration commands run, env var checklist, "
-            "Stripe setup checklist, Sentry/PostHog keys placeholder, GitHub Actions workflows, "
-            "rollback runbook."
+            "INPUT: workspace_dir={workspace_dir}; slug={slug}; draft_id={draft_id}; "
+            "erslabs_root={erslabs_root}; stripe_publishable={stripe_publishable}.\n\n"
+            "Deploy the build that lives in `{workspace_dir}/` to production. Follow the EXACT sequence "
+            "in your backstory — do not skip steps, do not reorder.\n\n"
+            "At the end, report:\n"
+            "- backend_url (https://<slug>-api.fly.dev)\n"
+            "- frontend_url (https://<slug>.{erslabs_root})\n"
+            "- stripe_webhook_endpoint_id\n"
+            "- cf_pages_project\n"
+            "- fly_app_name\n"
+            "- any step that failed with the exact tool output"
         ),
         expected_output=(
-            "Production deployment artifacts: vercel.json (or platform equivalent), database "
-            "migration status, env var checklist (populated), Stripe products+prices+webhook ids "
-            "(or placeholders with TODOs), Sentry DSN setup, analytics project id setup, "
-            "GitHub Actions workflows (.github/workflows/ci.yml and deploy.yml), custom domain "
-            "config, and ROLLBACK.md with exact commands."
+            "JSON-ish report with backend_url, frontend_url, stripe_webhook_endpoint_id, "
+            "cf_pages_project, fly_app_name, and status per step (ok/failed)."
         ),
         agent=deployer,
     )
 
     verify_task = Task(
         description=(
-            "Verify the live production URL across three paid-user journeys and infrastructure health. "
-            "Return a concrete GO/ROLLBACK with evidence.\n\n"
-            "CHECKS:\n"
-            "1. /api/health returns 200 with { status, uptime_seconds, db, version }.\n"
-            "2. DB connectivity: a read and write against a test row succeed and roll back cleanly.\n"
-            "3. Auth: signup, email verification (or magic link), login, session refresh, logout.\n"
-            "4. Stripe: create a Checkout Session, complete with a controlled test card in live mode "
-            "   (or a real $0.50 charge that we refund), observe webhook delivery, observe user "
-            "   provisioning in DB.\n"
-            "5. Core value action: execute the primary user journey end-to-end, confirm artifact "
-            "   produced / state changed as expected.\n"
-            "6. Logs: no 5xx, no unhandled exceptions, no secrets in logs.\n"
-            "7. Performance: p95 API latency under 500ms; LCP under 2.5s on mobile emulation; first "
-            "   paint under 1s.\n"
-            "8. Errors: Sentry receives a test event; browser console clean in Chrome + Safari + "
-            "   mobile Safari emulation.\n"
-            "9. Telemetry: PostHog receives events for landing_view, signup_started, signup_completed, "
-            "   checkout_started, checkout_completed, core_action_success.\n"
-            "10. Rollback readiness: confirm `vercel rollback` dry-run works against last-good deploy.\n"
+            "Verify the live deployment for slug={slug} under {erslabs_root}:\n\n"
+            "1. `curl -fsSL -o /dev/null -w '%{{http_code}}' https://{slug}.{erslabs_root}/` — "
+            "   expect 200.\n"
+            "2. `curl -fsSL https://{slug}-api.fly.dev/api/health` — expect JSON with "
+            "   `status: 'ok'` or equivalent.\n"
+            "3. `fly_status(app_name='{slug}-api')` — expect running state, zero crash loops.\n"
+            "4. Check the Stripe webhook endpoint id reported by the deployer is present on Stripe.\n\n"
+            "Return GO if all checks pass, else ROLLBACK with the failing check and its output."
         ),
         expected_output=(
-            "Production verification report with: health JSON, DB check result, auth results (per "
-            "step), Stripe checkout proof (session id + webhook id), core-action proof, error log "
-            "summary, performance numbers (p50/p95 API, LCP, FCP), telemetry events observed, "
-            "Sentry test event id, go_no_go ('GO' | 'ROLLBACK'), rollback_command (string)."
+            "Verification report with http_code, health JSON, fly status summary, webhook present "
+            "(bool), go_no_go ('GO'|'ROLLBACK'), and failing_step (string or null)."
         ),
         agent=verifier,
     )

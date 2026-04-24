@@ -9,6 +9,13 @@ from crewai import Agent, Crew, Task, Process
 from sentinel_v2.config.llm_config import get_minimax_llm
 from sentinel_v2.config.embedder_config import get_memory_for_crew_full
 from sentinel_v2.crew_hooks import hook_crew_full
+from sentinel_v2.tools import (
+    ListFilesTool,
+    RunShellTool,
+    StripeCreateProductTool,
+    StripeListProductsTool,
+    WriteFileTool,
+)
 
 
 def build_crew() -> Crew:
@@ -17,6 +24,13 @@ def build_crew() -> Crew:
     minimax = get_minimax_llm()
     minimax_smart = get_minimax_llm("MiniMax-M2.7")
     memory = get_memory_for_crew_full(minimax)
+
+    # Shared tool instances
+    write_file = WriteFileTool()
+    list_files = ListFilesTool()
+    run_shell = RunShellTool()
+    stripe_create_product = StripeCreateProductTool()
+    stripe_list_products = StripeListProductsTool()
 
     # ── Agents ───────────────────────────────────────────────────────────────
 
@@ -48,15 +62,19 @@ def build_crew() -> Crew:
             "focused landing page plus the core app screens. Mobile-first. Accessible. Fast."
         ),
         backstory=(
-            "You are a senior product engineer who has shipped Vercel-deployed Next.js apps with Stripe "
-            "checkout, Supabase auth, and analytics instrumentation baked in from day 1. You default to "
-            "App Router, Server Components for data fetching, Tailwind + Radix UI for components, "
-            "next-safe-action for typed server actions, Zod for form validation, and react-hook-form "
-            "for complex forms. You ship dark-mode-by-default, responsive, and accessible (WCAG AA). "
-            "You wire up PostHog or Plausible for event tracking on every conversion step so we can see "
-            "the funnel in week 1."
+            "You are a senior product engineer who has shipped Next.js apps with Stripe checkout, "
+            "Supabase auth, and analytics instrumentation baked in from day 1. You default to App Router, "
+            "Server Components for data fetching, Tailwind + Radix UI for components, next-safe-action "
+            "for typed server actions, Zod for form validation, and react-hook-form for complex forms. "
+            "You ship dark-mode-by-default, responsive, accessible (WCAG AA). PostHog or Plausible wired "
+            "for funnel telemetry.\n\n"
+            "HOW YOU WORK: you materialize every file to disk using the `write_file` tool under "
+            "`<workspace_dir>/frontend/`. Never return code as chat — always write it. The API URL is "
+            "injected at deploy time via `NEXT_PUBLIC_API_URL`; use that env var everywhere. The Stripe "
+            "publishable key lives in `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`. Static export is preferred "
+            "(`output: 'export'` in next.config.mjs) because the frontend ships to Cloudflare Pages."
         ),
-        tools=[],
+        tools=[write_file, list_files, run_shell],
         llm=minimax,
         verbose=True,
         allow_delegation=False,
@@ -66,19 +84,32 @@ def build_crew() -> Crew:
         role="Senior Backend Engineer",
         goal=(
             "Ship a typed, tested, Stripe-integrated API that the frontend can consume safely. "
-            "Pragmatic over enterprise."
+            "Pragmatic over enterprise. Create REAL Stripe products and embed their price IDs."
         ),
         backstory=(
             "You are a senior backend engineer who has shipped 30+ production APIs for indie SaaS. You "
-            "prefer small, boring, fast code. Your defaults: NestJS + Prisma + PostgreSQL for APIs that "
-            "need structure, or Next.js Route Handlers + Drizzle for simpler CRUD. Either way: strict "
-            "TypeScript, Zod/class-validator on every input, idiomatic error handling with proper HTTP "
-            "status codes, structured logging with request IDs, a /health endpoint, rate limiting on "
-            "public endpoints, Stripe Checkout + webhook signature verification on day 1, and a clean "
-            "RBAC model if multi-tenant. You write tests only for the risky parts (payments, auth, "
-            "critical business logic); you do not waste budget chasing coverage on getters."
+            "prefer small, boring, fast code. Your defaults: Next.js Route Handlers + Drizzle + "
+            "PostgreSQL for simple CRUD, or NestJS + Prisma if the plan explicitly needs structure. "
+            "Either way: strict TypeScript, Zod on every input, proper HTTP status codes, structured "
+            "logging with request IDs, a /health endpoint, rate limiting on public endpoints, Stripe "
+            "Checkout + webhook signature verification on day 1, row-level authorization everywhere.\n\n"
+            "HOW YOU WORK:\n"
+            "1. You materialize every file to disk with `write_file` under `<workspace_dir>/backend/`. "
+            "   Never return code as chat.\n"
+            "2. The backend ships to fly.io, so you MUST produce a Dockerfile and fly.toml in "
+            "   `<workspace_dir>/backend/` matching the chosen stack.\n"
+            "3. When the plan calls for paid tiers, you CREATE the real Stripe products using "
+            "   `stripe_create_product` (idempotent via draft_id metadata). Then you embed the returned "
+            "   `price_ids` directly in your code — no placeholders like `price_XXX`. Before creating, "
+            "   call `stripe_list_products` with the draft_id to avoid duplicates on retries.\n"
+            "4. The Stripe webhook URL is `<backend_url>/api/stripe/webhook` where <backend_url> is "
+            "   injected at deploy time. Do NOT create the webhook yourself — the deploy crew does it "
+            "   once the app URL is known.\n"
+            "5. Read `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` from env at runtime. List them in "
+            "   `.env.example` but never hardcode.\n"
+            "6. Tests only on the risky slices: auth, Stripe webhook, core business rule."
         ),
-        tools=[],
+        tools=[write_file, list_files, run_shell, stripe_create_product, stripe_list_products],
         llm=minimax,
         verbose=True,
         allow_delegation=False,
@@ -93,9 +124,11 @@ def build_crew() -> Crew:
             "Stripe webhook signature checks, permissive CORS, missing auth on protected routes, "
             "off-by-one in pagination, SQL N+1 queries, dangling TODO/FIXME/HACK, dead code, "
             "over-engineering (abstractions with a single caller), and under-engineering (duplicated "
-            "logic in 3 files). You report severity (critical / high / medium / low) and a concrete fix."
+            "logic in 3 files). You report severity (critical / high / medium / low) and a concrete fix.\n\n"
+            "HOW YOU WORK: you read the code from disk using `list_files` and reviewing key files "
+            "(the frontend and backend agents already wrote them to `<workspace_dir>/`)."
         ),
-        tools=[],
+        tools=[list_files, run_shell],
         llm=minimax_smart,
         verbose=True,
         allow_delegation=False,
@@ -112,9 +145,11 @@ def build_crew() -> Crew:
             "unsafe JSON parsing, SSRF in any fetch-by-URL endpoints, row-level authorization on every "
             "DB read, open redirects, unsafe iframe embedding, permissive CORS/CSP, HTTPS and HSTS "
             "enforcement, cookie flags (HttpOnly, Secure, SameSite=Lax min), JWT secret rotation. "
-            "You provide CVSS severity and the exact fix, not vague advice."
+            "You provide CVSS severity and the exact fix, not vague advice.\n\n"
+            "HOW YOU WORK: run `npm audit --omit=dev --audit-level=high` via `run_shell` inside the "
+            "workspace backend and frontend dirs. Read suspect files via `list_files`."
         ),
-        tools=[],
+        tools=[list_files, run_shell],
         llm=minimax_smart,
         verbose=True,
         allow_delegation=False,
@@ -129,9 +164,12 @@ def build_crew() -> Crew:
             "to-end on Chrome + Safari + mobile? Your coverage target is 80% on business-critical "
             "modules (payments, auth, core workflow) and 40-60% overall; you do not waste time chasing "
             "100%. Build must be green, TypeScript strict must compile, ESLint must pass on new files, "
-            "Playwright smoke must pass the three paid-user journeys: signup -> checkout -> core action."
+            "Playwright smoke must pass the three paid-user journeys: signup -> checkout -> core action.\n\n"
+            "HOW YOU WORK: run `npm run build`, `npm test`, `npx tsc --noEmit`, `npx eslint .` inside "
+            "`<workspace_dir>/backend/` and `<workspace_dir>/frontend/` via `run_shell`, and verify each "
+            "exit code in the final report."
         ),
-        tools=[],
+        tools=[list_files, run_shell],
         llm=minimax_smart,
         verbose=True,
         allow_delegation=False,
@@ -141,7 +179,8 @@ def build_crew() -> Crew:
 
     plan_task = Task(
         description=(
-            "INPUT: opportunity = {opportunity}; operator_capacity = {operator_capacity}.\n\n"
+            "INPUT: opportunity = {opportunity}; operator_capacity = {operator_capacity}; "
+            "workspace_dir = {workspace_dir}; slug = {slug}; draft_id = {draft_id}.\n\n"
             "Produce a 1-page shipping plan. Rules:\n"
             "- MVP must be shippable in 20-60 engineering hours.\n"
             "- Scope MUST cut to ONE headline value prop and ONE primary user journey.\n"
@@ -172,7 +211,8 @@ def build_crew() -> Crew:
 
     frontend_task = Task(
         description=(
-            "Implement the Next.js 14 (App Router) frontend per the plan.\n\n"
+            "Implement the Next.js 14 (App Router) frontend per the plan. Write every file to disk "
+            "under `{workspace_dir}/frontend/` using the `write_file` tool (never return code as chat).\n\n"
             "HARD REQUIREMENTS:\n"
             "- TypeScript strict (no `any`, no `@ts-ignore` without a comment justifying it).\n"
             "- Tailwind + Radix UI primitives (Dialog, Dropdown, Toast). No custom CSS files.\n"
@@ -203,7 +243,17 @@ def build_crew() -> Crew:
     backend_task = Task(
         description=(
             "Implement the server-side API per the plan. Default to Next.js Route Handlers for a single-"
-            "service app; only use NestJS if the plan explicitly needs it.\n\n"
+            "service app; only use NestJS if the plan explicitly needs it. Write every file under "
+            "`{workspace_dir}/backend/` using `write_file`.\n\n"
+            "STRIPE PRODUCT CREATION (do this FIRST):\n"
+            "- Call `stripe_list_products(draft_id='{draft_id}')` to check for existing products.\n"
+            "- If none, call `stripe_create_product` with the draft_id and the pricing tiers from the "
+            "  plan (free trial, paid monthly, paid yearly — whatever the plan calls for).\n"
+            "- Embed the returned `price_ids` directly in your checkout code. No `price_XXX` placeholders.\n\n"
+            "DEPLOY ARTIFACTS (required for fly.io):\n"
+            "- `Dockerfile` — multi-stage build that produces a small runtime image.\n"
+            "- `fly.toml` — with app name `{slug}-api`, primary region, health check on /api/health, "
+            "  internal_port matching the HTTP server, [env] minimum, secrets via flyctl (not committed).\n\n"
             "HARD REQUIREMENTS:\n"
             "- Strict TypeScript throughout.\n"
             "- Zod (or class-validator if NestJS) on every input, including query params.\n"

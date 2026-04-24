@@ -5,6 +5,24 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-24 · TBD — Stripe + fly.io + Cloudflare Pages automation
+
+**What changed:**
+- `src/sentinel_v2/tools/file_tool.py` (new): `WriteFileTool`, `ListFilesTool`, `RunShellTool`. Sandboxed to `/tmp/sentinel_workspaces/<draft_id>/`; shell whitelist (`npm`, `npx`, `git`, `prisma`, `flyctl`, `curl`, etc.); rejects `..` traversal and paths outside workspace.
+- `src/sentinel_v2/tools/stripe_tool.py` (new): `StripeCreateProductTool`, `StripeListProductsTool`, `StripeCreateWebhookTool`, `StripeDeleteProductTool`. All idempotent via `metadata.sentinel_draft_id`. Uses `STRIPE_SECRET_KEY`.
+- `src/sentinel_v2/tools/cloudflare_tool.py` (new): `CloudflarePagesCreateTool`, `CloudflarePagesDeployTool` (Direct Upload via tarball), `CloudflarePagesSetEnvTool`, `CloudflareDnsCnameTool`, `CloudflarePagesAddCustomDomainTool`. Uses `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`; resolves zone id for `erslabs.net` at call time.
+- `src/sentinel_v2/tools/fly_tool.py` (new): `FlyAppCreateTool`, `FlySecretsSetTool`, `FlyDeployTool`, `FlyStatusTool`. Subprocess wrapper around `flyctl`; uses `FLY_API_TOKEN`.
+- `src/sentinel_v2/crews/build_crew/build_crew.py`: Frontend Lead, Backend Lead, Code Reviewer, Security Auditor, and QA Lead now have the tools attached. Backend Lead backstory rewritten to require creating real Stripe products via tool (idempotent), embedding returned price IDs directly in generated code, and producing `Dockerfile` + `fly.toml` in the workspace. Task descriptions inject `{workspace_dir}`, `{slug}`, `{draft_id}`.
+- `src/sentinel_v2/crews/deploy_crew/deploy_crew.py`: Complete rewrite. Targets **backend → fly.io, frontend → Cloudflare Pages under `<slug>.erslabs.net`** (Vercel removed). Deployer has `fly_*` + `cloudflare_*` + `stripe_create_webhook` tools with a strict 12-step deploy sequence in the backstory.
+- `src/sentinel_v2/flows/sentinel_loop.py`: Added `SentinelState` fields (`workspace_dir`, `stripe_product_ids`, `backend_url`, `fly_app_name`, `cf_pages_project`, `stripe_webhook_endpoint_id`). `run_build` materializes the workspace dir before kickoff and passes it (plus `slug` and `draft_id`) as crew inputs. `run_deploy` passes `workspace_dir`, `slug`, `erslabs_root`, `stripe_publishable` and parses `frontend_url` / `backend_url` from the deploy crew output. Added `_make_slug()` helper.
+- `Dockerfile`: installs `flyctl` binary + `curl`, `ca-certificates`, `git` (needed for deploy operations).
+- `pyproject.toml`: `stripe>=7.0` added.
+- `tests/unit/test_file_tool.py`, `test_stripe_tool.py`, `test_fly_tool.py`, `test_cloudflare_tool.py` (new): 46 tests total (14/8/11/13), all passing.
+
+**Env vars consumed:** `STRIPE_SECRET_KEY`, `STRIPE_API_KEY` (publishable, for frontend), `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `FLY_API_TOKEN`.
+
+**Por qué:** las crews de build/deploy eran solo-texto — generaban código como strings y nada llegaba a disco ni a producción. Este cambio introduce la capa de ejecución real: el backend agent CREA productos Stripe de verdad y embebe los price IDs; el deploy agent despliega backend en fly.io, frontend en Cloudflare Pages, crea el CNAME `<slug>.erslabs.net`, registra el webhook de Stripe apuntando al URL fly.dev, y todo sin intervención manual.
+
 ## 2026-04-24 · TBD — Fix CORS + Docker shared-volume path mismatch
 
 **What changed:**
