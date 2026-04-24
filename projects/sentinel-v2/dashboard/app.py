@@ -37,8 +37,13 @@ LOGS_DIR = BASE_DIR / "logs"
 STATE_FILE = Path("/tmp/sentinel_v2_state.json")
 BREAKDOWN_FILE = Path("/tmp/sentinel_v2_flow_breakdown.json")
 AGENT_MESSAGES_FILE = Path("/tmp/sentinel_v2_agent_messages.json")
-DRAFTS_FILE = Path("/tmp/sentinel_v2_drafts.json")
 SOCKET_AUTH_TOKEN = "sentinel-v2-dashboard-secret"
+
+# Drafts live in sentinel.db. Use the shared writer module so the flow and
+# dashboard never disagree on shape or storage location.
+import sys
+sys.path.insert(0, str(BASE_DIR / "src"))
+from sentinel_v2 import dashboard_state as _draft_store  # noqa: E402
 
 # ── State reader ──────────────────────────────────────────────────────────────
 
@@ -67,48 +72,19 @@ def read_flow_state() -> dict:
 
 
 def read_drafts() -> dict:
-    """Read drafts list from file."""
-    default = {"drafts": [], "updated_at": ""}
-    if not DRAFTS_FILE.exists():
-        return default
-    try:
-        with open(DRAFTS_FILE) as f:
-            data = json.load(f)
-            if isinstance(data, dict) and isinstance(data.get("drafts"), list):
-                return {**default, **data}
-    except (IOError, json.JSONDecodeError):
-        pass
-    return default
-
-
-def write_drafts(data: dict) -> bool:
-    try:
-        with open(DRAFTS_FILE, "w") as f:
-            json.dump(data, f, indent=2)
-        return True
-    except (IOError, OSError):
-        return False
+    """Return {drafts, updated_at} derived from sentinel.db."""
+    drafts = _draft_store.list_drafts()
+    latest = max((d.get("updated_at", "") for d in drafts), default="")
+    return {"drafts": drafts, "updated_at": latest}
 
 
 def update_draft_status(draft_id: str, new_status: str, revision_notes: str | None = None) -> bool:
-    """Update a single draft's status by id. Returns True on success."""
-    data = read_drafts()
-    drafts = data.get("drafts", [])
-    found = False
-    now = datetime.now().isoformat()
-    for d in drafts:
-        if d.get("id") == draft_id:
-            d["status"] = new_status
-            d["updated_at"] = now
-            if revision_notes:
-                d["revision_notes"] = revision_notes
-            found = True
-            break
-    if not found:
-        return False
-    data["drafts"] = drafts
-    data["updated_at"] = now
-    return write_drafts(data)
+    """Flip a draft's status in sentinel.db. Returns True on success."""
+    return _draft_store.update_draft(
+        draft_id,
+        status=new_status,
+        revision_notes=revision_notes,
+    )
 
 
 def compute_build_queue(drafts: list[dict]) -> list[dict]:

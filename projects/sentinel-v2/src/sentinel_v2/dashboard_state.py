@@ -14,7 +14,6 @@ from pydantic import BaseModel, Field
 
 STATE_FILE = Path("/tmp/sentinel_v2_state.json")
 AGENT_MESSAGES_FILE = Path("/tmp/sentinel_v2_agent_messages.json")
-DRAFTS_FILE = Path("/tmp/sentinel_v2_drafts.json")
 
 # ── Path Validation ──────────────────────────────────────────────────────────
 
@@ -452,30 +451,27 @@ def read_flow_breakdown() -> dict:
         return {}
 
 
-# ── Drafts (unified pipeline model) ──────────────────────────────────────────
+# ── Drafts (unified pipeline model, SQLite-backed) ───────────────────────────
+#
+# Backend: sentinel.db (see sentinel_v2.db). Function signatures preserved
+# from the JSON era so sentinel_loop.py and dashboard/app.py keep working.
+
+from sentinel_v2 import db as _db
 
 
-def _read_drafts_file() -> dict:
-    """Low-level read of the drafts JSON file."""
-    if not DRAFTS_FILE.exists():
-        return {"drafts": [], "updated_at": ""}
-    try:
-        with open(DRAFTS_FILE, "r") as f:
-            data = json.load(f)
-            if isinstance(data, dict) and isinstance(data.get("drafts"), list):
-                return data
-    except (IOError, json.JSONDecodeError):
-        pass
-    return {"drafts": [], "updated_at": ""}
-
-
-def _write_drafts_file(data: dict) -> None:
-    try:
-        _safe_path(DRAFTS_FILE)
-        with open(DRAFTS_FILE, "w") as f:
-            json.dump(data, f, indent=2, default=str)
-    except Exception as e:  # noqa: BLE001
-        print(f"Failed to write drafts: {e}")
+# Field → phase routing for update_draft(). Each phase owns a JSON blob so
+# the schema stays stable while research/match/build/deploy can add anything.
+_MATCH_FIELDS = {"tech_fit", "match_score", "user_profile"}
+_BUILD_FIELDS = {
+    "build_progress",
+    "build_output",
+    "coverage_percent",
+    "tests_passed",
+    "tests_total",
+    "issues_count",
+}
+_DEPLOY_FIELDS = {"deployment_url", "deployment_id"}
+_STABLE_FIELDS = {"status", "revision_notes"}
 
 
 def write_draft(
@@ -493,82 +489,88 @@ def write_draft(
     tags: list[str] | None = None,
     status: str = "pending",
 ) -> None:
-    """Create or upsert a draft entry for the unified dashboard pipeline.
+    """Create or upsert a draft at research time.
 
-    Called during the research/match phase when Sentinel surfaces an opportunity.
-    Subsequent phases should use :func:`update_draft` to flip status / progress.
+    Stores the rich opportunity payload in the `opportunity` JSON blob so the
+    dashboard gets the same flat shape it always had, and later phases can
+    layer their contributions via :func:`update_draft` without losing data.
     """
-    data = _read_drafts_file()
-    drafts: list[dict] = data.get("drafts", [])
-    now = datetime.now(timezone.utc).isoformat()
-    found = False
-    for d in drafts:
-        if d.get("id") == draft_id:
-            d.update(
-                {
-                    "cycle": cycle,
-                    "title": title,
-                    "tagline": tagline or d.get("tagline", ""),
-                    "description": description or d.get("description", ""),
-                    "problem": problem or d.get("problem", ""),
-                    "solution": solution or d.get("solution", ""),
-                    "tech_fit": float(tech_fit),
-                    "complexity": int(complexity),
-                    "estimated_hours": estimated_hours,
-                    "tags": tags or d.get("tags", []),
-                    "status": status,
-                    "updated_at": now,
-                }
-            )
-            found = True
-            break
-    if not found:
-        drafts.append(
-            {
-                "id": draft_id,
-                "cycle": cycle,
-                "title": title,
-                "tagline": tagline or "",
-                "description": description or "",
-                "problem": problem or "",
-                "solution": solution or "",
-                "tech_fit": float(tech_fit),
-                "complexity": int(complexity),
-                "estimated_hours": estimated_hours,
-                "tags": tags or [],
-                "status": status,
-                "created_at": now,
-                "updated_at": now,
-                "build_progress": 0.0,
-            }
-        )
-    data["drafts"] = drafts
-    data["updated_at"] = now
-    _write_drafts_file(data)
+    opportunity = {
+        "tagline": tagline or "",
+        "description": description or "",
+        "problem": problem or "",
+        "solution": solution or "",
+        "tech_fit": float(tech_fit),
+        "complexity": int(complexity),
+        "estimated_hours": estimated_hours,
+        "tags": tags or [],
+        "build_progress": 0.0,
+    }
+    _db.upsert_draft(
+        draft_id,
+        cycle=cycle,
+        title=title,
+        status=status,
+        opportunity=opportunity,
+    )
 
 
 def update_draft(draft_id: str, **fields: Any) -> bool:
-    """Patch arbitrary fields on a single draft (status, build_progress, metrics, etc.)."""
-    data = _read_drafts_file()
-    drafts: list[dict] = data.get("drafts", [])
-    now = datetime.now(timezone.utc).isoformat()
-    for d in drafts:
-        if d.get("id") == draft_id:
-            d.update(fields)
-            d["updated_at"] = now
-            data["drafts"] = drafts
-            data["updated_at"] = now
-            _write_drafts_file(data)
-            return True
-    return False
+    """Patch fields on a draft. Each field is routed to the phase blob it belongs to."""
+    if not fields:
+        return _db.get(draft_id) is not None
+
+    status = fields.pop("status", None)
+    revision_notes = fields.pop("revision_notes", None)
+
+    phase_payloads: dict[str, dict] = {
+        "match_info": {},
+        "build_info": {},
+        "deploy_info": {},
+        "opportunity": {},
+    }
+    for key, value in fields.items():
+        if key in _MATCH_FIELDS:
+            phase_payloads["match_info"][key] = value
+        elif key in _BUILD_FIELDS:
+            phase_payloads["build_info"][key] = value
+        elif key in _DEPLOY_FIELDS:
+            phase_payloads["deploy_info"][key] = value
+        else:
+            # Unknown keys default to the opportunity blob so nothing silently drops.
+            phase_payloads["opportunity"][key] = value
+
+    touched = False
+    for phase, payload in phase_payloads.items():
+        if payload:
+            ok = _db.patch_phase(draft_id, phase, payload)
+            if not ok:
+                return False
+            touched = True
+
+    if status is not None or revision_notes is not None:
+        ok = _db.set_status(
+            draft_id,
+            status if status is not None else _db.get(draft_id)["status"],
+            revision_notes=revision_notes,
+        )
+        if not ok:
+            return False
+        touched = True
+
+    return touched
 
 
 def get_draft(draft_id: str) -> dict | None:
-    data = _read_drafts_file()
-    for d in data.get("drafts", []):
-        if d.get("id") == draft_id:
-            return d
-    return None
+    return _db.get(draft_id)
+
+
+def list_drafts() -> list[dict]:
+    return _db.list_all()
+
+
+def list_drafts_by_status(statuses: set[str]) -> list[dict]:
+    return _db.list_by_status(statuses)
 
 
 def wait_for_draft_status(

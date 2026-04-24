@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# Env
+.env
+
+# Runtime data (SQLite DB, temp state)
+sentinel.db
+sentinel.db-wal
+sentinel.db-shm
+
+# Next.js
+dashboard-nextjs/.next/
+dashboard-nextjs/node_modules/
+dashboard-nextjs/tsconfig.tsbuildinfo
+
+# Logs
+logs/
+*.log

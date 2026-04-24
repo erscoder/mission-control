@@ -214,7 +214,7 @@ BACKEND_URL=http://localhost:5173
 3. Use Radix Themes tokens exclusively and remove Tailwind color tokens
 
 ### 🟡 Approval Flow
-Approval is dashboard-driven: the Flask backend flips draft status (`queued` → `deployed`/`failed`) in `/tmp/sentinel_v2_drafts.json`, and the Sentinel flow polls that file via `wait_for_draft_status`.
+Approval is dashboard-driven: the Flask backend flips draft status (`queued` → `deployed`/`failed`) in `sentinel.db` (SQLite), and the Sentinel flow polls that row via `wait_for_draft_status`. Both processes share the writer in `sentinel_v2.dashboard_state`.
 
 ### 🟡 Build Crew Manager
 The hierarchical build crew may need the Manager LLM to be `gpt-4o` to handle delegation properly (not `gpt-4o-mini`).
