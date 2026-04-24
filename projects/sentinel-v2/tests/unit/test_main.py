@@ -5,6 +5,17 @@ from pathlib import Path
 import asyncio
 import signal as signal_module
 
+from sentinel_v2 import db
+
+
+@pytest.fixture
+def isolated_db(tmp_path, monkeypatch):
+    """Each test gets a fresh sentinel.db under tmp_path."""
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "test.db"))
+    db._initialized = False
+    yield
+    db._initialized = False
+
 
 class TestMainImports:
     """Test that main module imports correctly."""
@@ -228,11 +239,70 @@ class TestMainSignalHandlers:
         from sentinel_v2.main import log
 
         shutdown_info = {"value": False}
-        
+
         def on_signal(signum, frame):
             shutdown_info["value"] = True
-        
+
         with patch.object(log, "info") as mock_log_info:
             on_signal(signal_module.SIGINT, None)
-        
+
         assert shutdown_info["value"] is True
+
+
+class TestOrphanRecovery:
+    """Tests for _recover_orphaned_drafts on daemon startup."""
+
+    def test_marks_inflight_drafts_as_failed(self, isolated_db):
+        """queued/building/review/built drafts become failed after restart."""
+        from sentinel_v2.main import _recover_orphaned_drafts
+
+        for draft_id, status in [
+            ("d-q", "queued"),
+            ("d-b", "building"),
+            ("d-r", "review"),
+            ("d-built", "built"),
+        ]:
+            db.upsert_draft(draft_id, cycle=1, title=draft_id, status=status)
+
+        _recover_orphaned_drafts()
+
+        for draft_id in ("d-q", "d-b", "d-r", "d-built"):
+            assert db.get(draft_id)["status"] == "failed"
+
+    def test_preserves_terminal_states(self, isolated_db):
+        """pending/deployed/failed/rejected drafts are left alone."""
+        from sentinel_v2.main import _recover_orphaned_drafts
+
+        for draft_id, status in [
+            ("d-pending", "pending"),
+            ("d-deployed", "deployed"),
+            ("d-failed", "failed"),
+            ("d-rejected", "rejected"),
+        ]:
+            db.upsert_draft(draft_id, cycle=1, title=draft_id, status=status)
+
+        _recover_orphaned_drafts()
+
+        for draft_id, status in [
+            ("d-pending", "pending"),
+            ("d-deployed", "deployed"),
+            ("d-failed", "failed"),
+            ("d-rejected", "rejected"),
+        ]:
+            assert db.get(draft_id)["status"] == status
+
+    def test_writes_revision_notes(self, isolated_db):
+        """Recovered drafts get a revision_notes explaining why."""
+        from sentinel_v2.main import _recover_orphaned_drafts
+
+        db.upsert_draft("d-q", cycle=1, title="T", status="queued")
+        _recover_orphaned_drafts()
+
+        draft = db.get("d-q")
+        assert draft["status"] == "failed"
+        assert "restart" in (draft["revision_notes"] or "").lower()
+
+    def test_empty_db_is_noop(self, isolated_db):
+        """Recovery on an empty DB does nothing and does not crash."""
+        from sentinel_v2.main import _recover_orphaned_drafts
+        _recover_orphaned_drafts()  # should not raise

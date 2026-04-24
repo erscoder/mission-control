@@ -40,10 +40,36 @@ def setup_logging():
     )
 
 
+def _recover_orphaned_drafts() -> None:
+    """Mark in-flight drafts as failed on daemon start.
+
+    A draft in queued/building/review/built is half-processed by a prior daemon
+    that's no longer running. Without this, the dashboard shows them as live
+    forever. Marking them failed lets the user see what happened and re-approve
+    from scratch.
+    """
+    from sentinel_v2.dashboard_state import list_drafts_by_status, update_draft
+
+    orphaned_statuses = {"queued", "building", "review", "built"}
+    orphans = list_drafts_by_status(orphaned_statuses)
+    for draft in orphans:
+        update_draft(
+            draft["id"],
+            status="failed",
+            revision_notes="marked failed on daemon restart (was in-flight)",
+        )
+        log.info(
+            "Recovered orphaned draft %s (was %s → failed)",
+            draft["id"],
+            draft.get("status"),
+        )
+
+
 def run_once():
     """Run one full cycle."""
     from sentinel_v2.flows.sentinel_loop import SentinelLoopFlow
 
+    _recover_orphaned_drafts()
     flow = SentinelLoopFlow()
     flow.kickoff()
     log.info("Cycle complete")
@@ -55,6 +81,8 @@ def run_daemon():
 
     logging.basicConfig(level=logging.INFO)
     log.info("Starting Sentinel V2 daemon...")
+
+    _recover_orphaned_drafts()
 
     from sentinel_v2.flows.sentinel_loop import SentinelLoopFlow
 
