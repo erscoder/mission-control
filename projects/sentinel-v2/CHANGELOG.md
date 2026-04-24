@@ -5,6 +5,19 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-24 · TBD — Agent Feed: drop lifecycle noise, surface real task outputs
+
+**What changed:**
+- `src/sentinel_v2/crew_hooks.py`:
+  - Removed per-agent `"Agent initialized: <role>"` messages (one per agent per phase — pure noise, the avatar already tells you the agent exists).
+  - Removed per-task `"Task started: <80 char description>"` messages (`_hook_task` is no longer called from the wrapped kickoff). These were the most-complained-about noise.
+  - `phase_started` is now a single concise ping: `🚀 RESEARCH phase started · 2 tasks · 2 agents`. Agent roles are included in metadata.
+  - `phase_completed` is prefixed with `✅ <PHASE> complete` and shows up to 800 chars of the crew's final output (vs 500 before).
+  - `phase_error` is prefixed with `❌ <PHASE> failed:`.
+  - `task_callback` (`_make_task_callback`) now includes a **task description header** (first line, bold, truncated to 80 chars) above the raw output, and bumps the output preview from 400 → 800 chars. `metadata` includes `agent_role` and `description_first_line` so the UI can render it structured later.
+
+**Why:** the previous feed was 90% lifecycle pings (`Task started: <the full 500-char task prompt>`, `Agent initialized: Demand Hunter`, `Agent initialized: Commercial Validator`…) and only revealed agent output after tasks completed. That mix felt spammy without being informative. After this change, each phase produces one start ping, one completion summary, and one rich message per completed task with its actual findings.
+
 ## 2026-04-24 · TBD — Retry actually works: cycle picks up queued drafts, daemon gets unblocked
 
 **What changed:**

@@ -155,15 +155,34 @@ def _make_task_callback(phase: str, cycle: int) -> Callable:
     def _on_task_done(task_output: Any) -> None:
         agent_role = getattr(task_output, "agent", None) or "orchestrator"
         agent_id = _sanitize_agent_id(str(agent_role))
-        raw = getattr(task_output, "raw", "") or ""
-        summary = raw[:400].strip() if raw else "Task completed"
+        raw = (getattr(task_output, "raw", "") or "").strip()
+        description = (getattr(task_output, "description", "") or "").strip()
+
+        # Up to 800 chars of actual output so the Feed shows real work.
+        if raw:
+            body = raw[:800] + ("…" if len(raw) > 800 else "")
+        else:
+            body = "(no output)"
+
+        # Compact one-line task header if we have a description
+        header = ""
+        if description:
+            first_line = description.split("\n", 1)[0].strip()
+            if len(first_line) > 80:
+                first_line = first_line[:77] + "…"
+            header = f"**{first_line}**\n\n"
+
         add_agent_message(
             agent_id=agent_id,
-            message=summary,
+            message=f"{header}{body}",
             hook_type=AgentHookType.TASK_COMPLETED.value,
             phase=phase,
             cycle=cycle,
-            metadata={"preview": raw[:200]},
+            metadata={
+                "agent_role": str(agent_role),
+                "preview": raw[:300],
+                "description_first_line": description.split("\n", 1)[0] if description else "",
+            },
         )
     return _on_task_done
 
@@ -194,60 +213,48 @@ def crew_with_hooks(
     @wraps(original_kickoff)
     def kickoff_with_hooks(**kwargs) -> Any:
         """Enhanced kickoff that streams agent messages."""
-        # Log phase start
+        # One concise start-of-phase ping. No per-agent noise, no per-task ping —
+        # task_callback handles per-task completion summaries with the actual output.
         add_agent_message(
             agent_id="orchestrator",
-            message=f"Starting phase: {phase}",
+            message=f"🚀 {phase.upper()} phase started · {len(crew.tasks)} tasks · {len(crew.agents)} agents",
             hook_type="phase_started",
             phase=phase,
             cycle=cycle,
-            metadata={"task_count": len(crew.tasks)}
+            metadata={
+                "task_count": len(crew.tasks),
+                "agents": [a.role for a in crew.agents],
+            },
         )
-
-        # Hook into each task's lifecycle
-        for task in crew.tasks:
-            _hook_task(task, phase, cycle)
-
-        # Log each agent
-        for agent in crew.agents:
-            add_agent_message(
-                agent_id=_agent_id_from_agent(agent),
-                message=f"Agent initialized: {agent.role}",
-                hook_type="agent_initialized",
-                phase=phase,
-                cycle=cycle,
-                metadata={
-                    "role": agent.role,
-                    "goal": agent.goal[:100] + "..." if len(agent.goal) > 100 else agent.goal
-                }
-            )
 
         # Run original kickoff
         try:
             result = original_kickoff(**kwargs)
 
-            # Emit phase summary with the crew's actual output
+            # Emit phase summary with the crew's actual output (up to 800 chars)
             raw_output = str(result.raw) if hasattr(result, "raw") else str(result)
+            summary = raw_output.strip()
+            if len(summary) > 800:
+                summary = summary[:800] + "…"
             add_agent_message(
                 agent_id="orchestrator",
-                message=raw_output[:500],
+                message=f"✅ {phase.upper()} complete\n\n{summary}" if summary else f"✅ {phase.upper()} complete",
                 hook_type="phase_completed",
                 phase=phase,
                 cycle=cycle,
-                metadata={"status": "success", "result_preview": raw_output[:300]},
+                metadata={"status": "success", "result_preview": raw_output[:400]},
             )
 
             return result
 
         except Exception as e:
-            # Log error
             add_agent_message(
                 agent_id="orchestrator",
-                message=f"Phase failed: {phase} - {str(e)}",
+                message=f"❌ {phase.upper()} failed: {str(e)[:200]}",
                 hook_type="phase_error",
                 phase=phase,
                 cycle=cycle,
-                metadata={"error": str(e)}
+                metadata={"error": str(e)},
             )
             raise
 
