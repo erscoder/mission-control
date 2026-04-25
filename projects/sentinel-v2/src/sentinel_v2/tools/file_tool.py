@@ -1,6 +1,6 @@
 """File/shell tools for CrewAI agents, sandboxed to a per-draft workspace.
 
-All paths are constrained to ``/tmp/sentinel_workspaces/<draft_id>/``. Shell
+All paths are constrained to ``~/Sentinel/<draft_id>/``. Shell
 commands are whitelisted to the small set needed for Next.js + backend builds.
 
 Tools are meant to be attached to Build and Deploy crew agents so they can
@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 log = logging.getLogger("sentinel_v2.tools.file")
 
-WORKSPACES_ROOT = Path(os.environ.get("SENTINEL_WORKSPACES_ROOT", "/tmp/sentinel_workspaces"))
+WORKSPACES_ROOT = Path(os.environ.get("SENTINEL_WORKSPACES_ROOT", os.path.expanduser("~/Sentinel")))
 
 # Commands an agent may invoke. Anything else is refused. Keep this list tight.
 _SHELL_WHITELIST = {

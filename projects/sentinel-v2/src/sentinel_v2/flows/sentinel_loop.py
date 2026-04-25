@@ -50,7 +50,7 @@ class SentinelState(BaseModel):
     draft: Optional[dict] = None
     draft_file: Optional[str] = None
     build_output: Optional[str] = None
-    workspace_dir: Optional[str] = None          # /tmp/sentinel_workspaces/<draft_id>
+    workspace_dir: Optional[str] = None          # ~/Sentinel/<draft_id>
     stripe_product_ids: list[str] = []
 
     # Security remediation (between build and approval)
@@ -515,7 +515,7 @@ class SentinelLoopFlow(Flow[SentinelState]):
 
         # Materialize a per-draft workspace so the build agents can write files to disk
         from pathlib import Path as _Path
-        workspaces_root = _Path(os.environ.get("SENTINEL_WORKSPACES_ROOT", "/tmp/sentinel_workspaces"))
+        workspaces_root = _Path(os.environ.get("SENTINEL_WORKSPACES_ROOT", os.path.expanduser("~/Sentinel")))
         workspace_dir = workspaces_root / (self.state.draft_id or f"cycle_{self.state.cycle_count}")
         workspace_dir.mkdir(parents=True, exist_ok=True)
         self.state.workspace_dir = str(workspace_dir)
@@ -840,7 +840,7 @@ class SentinelLoopFlow(Flow[SentinelState]):
         slug = _make_slug(self.state.draft_id or f"cycle-{self.state.cycle_count}")
         workspace_dir = self.state.workspace_dir or str(
             os.path.join(
-                os.environ.get("SENTINEL_WORKSPACES_ROOT", "/tmp/sentinel_workspaces"),
+                os.environ.get("SENTINEL_WORKSPACES_ROOT", os.path.expanduser("~/Sentinel")),
                 self.state.draft_id or f"cycle_{self.state.cycle_count}",
             )
         )
