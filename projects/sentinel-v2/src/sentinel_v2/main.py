@@ -142,11 +142,11 @@ def run_daemon():
 
     async def _run_cycles():
         nonlocal _shutdown  # ensure assignments below bind to the enclosing scope
-        flow = SentinelLoopFlow()
         cycle = 0
 
         while not _shutdown:
             cycle += 1
+            flow = SentinelLoopFlow()  # fresh state each cycle
             log.info("=== Cycle #%d ===", cycle)
             print(f"\n{'='*50}\nCycle #{cycle}\n{'='*50}")
 

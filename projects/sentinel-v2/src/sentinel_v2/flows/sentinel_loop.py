@@ -181,6 +181,24 @@ class SentinelLoopFlow(Flow[SentinelState]):
                 }
                 self.state.opportunities = [self.state.top_opportunity]
                 self.state.approved = True  # user already approved via retry
+                # Reset phase outputs so phases actually run
+                self.state.build_output = None
+                self.state.workspace_dir = None
+                self.state.match_score = 0.0
+                self.state.user_profile = {}
+                self.state.security_remediated = False
+                self.state.vulnerability_count = 0
+                self.state.vulnerability_scan_error = None
+                self.state.vulnerability_findings = []
+                self.state.deployed = False
+                self.state.deployed_url = None
+                self.state.deployment_id = None
+                self.state.backend_url = None
+                self.state.fly_app_name = None
+                self.state.cf_pages_project = None
+                self.state.stripe_webhook_endpoint_id = None
+                self.state.stripe_product_ids = []
+                self.state.error = None
                 self._save_checkpoint()
         except Exception as e:
             log.warning("Could not check for queued drafts at cycle start: %s", e)
@@ -372,13 +390,23 @@ class SentinelLoopFlow(Flow[SentinelState]):
             },
         )
 
-        crew = match_crew()
-        result = crew.kickoff(
-            inputs={
-                "opportunity": self.state.top_opportunity,
-                "operator_capacity": self._get_operator_capacity(),
-            }
-        )
+        try:
+            crew = match_crew()
+            result = crew.kickoff(
+                inputs={
+                    "opportunity": self.state.top_opportunity,
+                    "operator_capacity": self._get_operator_capacity(),
+                }
+            )
+        except Exception as e:
+            log.error("Match crew failed: %s", e)
+            if self.state.draft_id:
+                from sentinel_v2.dashboard_state import update_draft
+                update_draft(self.state.draft_id, status="failed",
+                             revision_notes=f"Match failed: {e}")
+            self.state.error = str(e)
+            self._save_checkpoint()
+            return
 
         parsed = self._parse_match_result(result)
         self.state.user_profile = parsed.get("profile", self.state.user_profile)
@@ -479,16 +507,26 @@ class SentinelLoopFlow(Flow[SentinelState]):
         self.state.workspace_dir = str(workspace_dir)
         slug = _make_slug(self.state.draft_id or f"cycle-{self.state.cycle_count}")
 
-        crew = build_crew()
-        result = crew.kickoff(
-            inputs={
-                "opportunity": self.state.top_opportunity,
-                "operator_capacity": self._get_operator_capacity(),
-                "workspace_dir": self.state.workspace_dir,
-                "slug": slug,
-                "draft_id": self.state.draft_id or "unknown",
-            }
-        )
+        try:
+            crew = build_crew()
+            result = crew.kickoff(
+                inputs={
+                    "opportunity": self.state.top_opportunity,
+                    "operator_capacity": self._get_operator_capacity(),
+                    "workspace_dir": self.state.workspace_dir,
+                    "slug": slug,
+                    "draft_id": self.state.draft_id or "unknown",
+                }
+            )
+        except Exception as e:
+            log.error("Build crew failed: %s", e)
+            if self.state.draft_id:
+                from sentinel_v2.dashboard_state import update_draft
+                update_draft(self.state.draft_id, status="failed",
+                             revision_notes=f"Build failed: {e}")
+            self.state.error = str(e)
+            self._save_checkpoint()
+            return
 
         self.state.build_output = str(result.raw) if hasattr(result, "raw") else str(result)
 
@@ -790,18 +828,28 @@ class SentinelLoopFlow(Flow[SentinelState]):
             )
         )
 
-        crew = deploy_crew()
-        result = crew.kickoff(
-            inputs={
-                "draft": self.state.build_output,
-                "opportunity": self.state.top_opportunity,
-                "workspace_dir": workspace_dir,
-                "slug": slug,
-                "draft_id": self.state.draft_id or "unknown",
-                "erslabs_root": ERSLABS_ROOT_DOMAIN,
-                "stripe_publishable": os.environ.get("STRIPE_API_KEY", ""),
-            }
-        )
+        try:
+            crew = deploy_crew()
+            result = crew.kickoff(
+                inputs={
+                    "draft": self.state.build_output,
+                    "opportunity": self.state.top_opportunity,
+                    "workspace_dir": workspace_dir,
+                    "slug": slug,
+                    "draft_id": self.state.draft_id or "unknown",
+                    "erslabs_root": ERSLABS_ROOT_DOMAIN,
+                    "stripe_publishable": os.environ.get("STRIPE_API_KEY", ""),
+                }
+            )
+        except Exception as e:
+            log.error("Deploy crew failed: %s", e)
+            if self.state.draft_id:
+                from sentinel_v2.dashboard_state import update_draft
+                update_draft(self.state.draft_id, status="failed",
+                             revision_notes=f"Deploy failed: {e}")
+            self.state.error = str(e)
+            self._save_checkpoint()
+            return
 
         parsed = self._parse_deploy_result(result)
         self.state.deployed = True
