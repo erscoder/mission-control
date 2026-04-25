@@ -22,12 +22,31 @@ log = logging.getLogger("sentinel_v2.flow")
 ERSLABS_ROOT_DOMAIN = "erslabs.net"
 
 
-def _make_slug(source: str) -> str:
-    """Convert an arbitrary string to a DNS-safe, fly.io-safe slug (1-30 chars)."""
-    # Strip draft_cN_ prefix so the slug is the app name, not the internal id
-    s = re.sub(r"^draft_c\d+_", "", source)
-    s = re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-") or "app"
-    return s[:30].rstrip("-") or "app"
+def _make_slug(title: str) -> str:
+    """Extract the product name from an opportunity title and return a DNS-safe slug.
+
+    Examples:
+        "ComplianceDesk HIPAA Compliance" → "compliancedesk"
+        "QuickInvoice - Fast invoicing"   → "quickinvoice"
+        "AI Resume Builder"               → "airesumebuilder"
+
+    Strategy: take the first token that looks like a product name (CamelCase word
+    or the first word before a separator like ' - ', ':', '|').
+    """
+    # Strip draft_cN_ prefix if accidentally passed
+    s = re.sub(r"^draft_c\d+_", "", title).strip()
+    # Split on common title separators
+    s = re.split(r"\s*[-:|/]\s*", s)[0].strip()
+    # Concatenate tokens until the slug is at least 4 chars
+    tokens = s.split()
+    product = ""
+    for token in tokens:
+        product += token
+        if len(re.sub(r"[^a-z0-9]", "", product.lower())) >= 4:
+            break
+    # DNS-safe: lowercase, alphanumeric only, no hyphens
+    slug = re.sub(r"[^a-z0-9]", "", product.lower()) or "app"
+    return slug[:30] or "app"
 
 
 # ── State ────────────────────────────────────────────────────────────────────
@@ -521,7 +540,11 @@ class SentinelLoopFlow(Flow[SentinelState]):
         workspace_dir = workspaces_root / (self.state.draft_id or f"cycle_{self.state.cycle_count}")
         workspace_dir.mkdir(parents=True, exist_ok=True)
         self.state.workspace_dir = str(workspace_dir)
-        slug = _make_slug(self.state.draft_id or f"cycle-{self.state.cycle_count}")
+        slug = _make_slug(
+            (self.state.top_opportunity or {}).get("title")
+            or self.state.draft_id
+            or f"cycle-{self.state.cycle_count}"
+        )
 
         try:
             crew = build_crew(cycle=self.state.cycle_count)
@@ -839,7 +862,11 @@ class SentinelLoopFlow(Flow[SentinelState]):
             },
         )
 
-        slug = _make_slug(self.state.draft_id or f"cycle-{self.state.cycle_count}")
+        slug = _make_slug(
+            (self.state.top_opportunity or {}).get("title")
+            or self.state.draft_id
+            or f"cycle-{self.state.cycle_count}"
+        )
         workspace_dir = self.state.workspace_dir or str(
             os.path.join(
                 os.environ.get("SENTINEL_WORKSPACES_ROOT", os.path.expanduser("~/Sentinel")),
