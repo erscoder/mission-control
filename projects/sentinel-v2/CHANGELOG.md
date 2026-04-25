@@ -5,6 +5,17 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-25 · e93372e — Fix builds stuck/looping: stale flow state + missing error handling
+
+**What changed:**
+- `main.py`: daemon now creates a fresh `SentinelLoopFlow()` inside the `while` loop instead of reusing the same instance. Prevents cycles 2+ from silently skipping all phases due to stale state.
+- `sentinel_loop.py`: wrapped `build_crew()`, `match_crew()`, and `deploy_crew()` kickoff calls in try/except. On failure, the draft is marked `"failed"` with error details instead of staying stuck in `"building"` forever.
+- `sentinel_loop.py`: when `start_cycle` picks up a queued (retried) draft, all phase outputs are now reset (`build_output`, `match_score`, `deployed`, security fields, etc.) so downstream phases actually execute instead of hitting their "already done" guards.
+
+**Root causes:** (A) single flow instance across daemon cycles, (B) unhandled crew exceptions leaving drafts in limbo, (C) stale state on retry pickup.
+
+**Result:** 228 passed, 0 failed. Orphaned "building" drafts will be recovered to "failed" on next daemon start via `_recover_orphaned_drafts`.
+
 ## 2026-04-25 · TBD — Tests no longer leak into prod sentinel.db; full suite green
 
 **What changed:**
