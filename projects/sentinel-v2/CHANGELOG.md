@@ -5,6 +5,11 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-25 · 7b3c36a — Use app name as subdomain + verify deploy before success
+
+- `_make_slug()`: strips `draft_cN_` prefix so subdomain is the app name (e.g. `compliancedesk-hipaa.erslabs.net`) not the internal draft id.
+- `run_deploy()`: now checks QA verifier's GO/ROLLBACK verdict. If ROLLBACK, draft is marked `failed` with the failing step instead of blindly marking `deployed`.
+
 ## 2026-04-25 · 78b81d7 — Change default workspace root to ~/Sentinel
 
 - `sentinel_loop.py` + `file_tool.py`: default `SENTINEL_WORKSPACES_ROOT` changed from `/tmp/sentinel_workspaces` to `~/Sentinel`. Generated app code now persists across reboots. Env var override still works.
