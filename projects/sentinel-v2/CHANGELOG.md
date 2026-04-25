@@ -5,6 +5,11 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-25 · 67676bb — Derive subdomain from app name only
+
+- `_make_slug()`: rewrote to extract the product name from the opportunity title. "ComplianceDesk HIPAA Compliance" now produces `compliancedesk` (not `draft-c1-compliancedesk-hipaa`). No hyphens, just clean app name. Concatenates tokens until >= 4 chars.
+- Build and deploy phases now pass opportunity title to `_make_slug()` instead of draft_id.
+
 ## 2026-04-25 · 7b3c36a — Use app name as subdomain + verify deploy before success
 
 - `_make_slug()`: strips `draft_cN_` prefix so subdomain is the app name (e.g. `compliancedesk-hipaa.erslabs.net`) not the internal draft id.
