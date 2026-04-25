@@ -199,6 +199,10 @@ class SentinelLoopFlow(Flow[SentinelState]):
                 self.state.stripe_webhook_endpoint_id = None
                 self.state.stripe_product_ids = []
                 self.state.error = None
+                self.state.draft = None
+                self.state.draft_file = None
+                self.state.revision_notes = None
+                self.state.pending_since = None
                 self._save_checkpoint()
         except Exception as e:
             log.warning("Could not check for queued drafts at cycle start: %s", e)
@@ -401,9 +405,12 @@ class SentinelLoopFlow(Flow[SentinelState]):
         except Exception as e:
             log.error("Match crew failed: %s", e)
             if self.state.draft_id:
-                from sentinel_v2.dashboard_state import update_draft
-                update_draft(self.state.draft_id, status="failed",
-                             revision_notes=f"Match failed: {e}")
+                try:
+                    from sentinel_v2.dashboard_state import update_draft
+                    update_draft(self.state.draft_id, status="failed",
+                                 revision_notes=f"Match failed: {e}")
+                except Exception as db_err:
+                    log.warning("Could not mark draft failed: %s", db_err)
             self.state.error = str(e)
             self._save_checkpoint()
             return
@@ -521,9 +528,12 @@ class SentinelLoopFlow(Flow[SentinelState]):
         except Exception as e:
             log.error("Build crew failed: %s", e)
             if self.state.draft_id:
-                from sentinel_v2.dashboard_state import update_draft
-                update_draft(self.state.draft_id, status="failed",
-                             revision_notes=f"Build failed: {e}")
+                try:
+                    from sentinel_v2.dashboard_state import update_draft
+                    update_draft(self.state.draft_id, status="failed",
+                                 revision_notes=f"Build failed: {e}")
+                except Exception as db_err:
+                    log.warning("Could not mark draft failed: %s", db_err)
             self.state.error = str(e)
             self._save_checkpoint()
             return
@@ -844,9 +854,12 @@ class SentinelLoopFlow(Flow[SentinelState]):
         except Exception as e:
             log.error("Deploy crew failed: %s", e)
             if self.state.draft_id:
-                from sentinel_v2.dashboard_state import update_draft
-                update_draft(self.state.draft_id, status="failed",
-                             revision_notes=f"Deploy failed: {e}")
+                try:
+                    from sentinel_v2.dashboard_state import update_draft
+                    update_draft(self.state.draft_id, status="failed",
+                                 revision_notes=f"Deploy failed: {e}")
+                except Exception as db_err:
+                    log.warning("Could not mark draft failed: %s", db_err)
             self.state.error = str(e)
             self._save_checkpoint()
             return
