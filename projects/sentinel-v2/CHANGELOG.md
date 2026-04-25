@@ -14,6 +14,8 @@ the commit hash so every change is traceable and auditable.
 
 **Root causes:** (A) single flow instance across daemon cycles, (B) unhandled crew exceptions leaving drafts in limbo, (C) stale state on retry pickup.
 
+**Follow-up (8c51883):** hardened `update_draft` inside except blocks with nested try/except to prevent DB errors from swallowing the original crew error. Added `revision_notes`, `pending_since`, `draft`, `draft_file` to retry reset list.
+
 **Result:** 228 passed, 0 failed. Orphaned "building" drafts will be recovered to "failed" on next daemon start via `_recover_orphaned_drafts`.
 
 ## 2026-04-25 · TBD — Tests no longer leak into prod sentinel.db; full suite green
