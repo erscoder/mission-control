@@ -218,7 +218,7 @@ class TestFlowEventChain:
         mock_result = Mock()
         mock_result.pydantic = None
         mock_result.json_dict = None
-        mock_result.raw = {"url": "https://myapp.onrender.com", "deployment_id": "xyz"}
+        mock_result.raw = {"url": "https://myapp.onrender.com", "deployment_id": "xyz", "go_no_go": "GO"}
 
         with patch(
             "sentinel_v2.crews.deploy_crew.deploy_crew.deploy_crew"

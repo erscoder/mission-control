@@ -188,6 +188,10 @@ def build_crew(cycle: int = 1) -> Crew:
         description=(
             "INPUT: opportunity = {opportunity}; operator_capacity = {operator_capacity}; "
             "workspace_dir = {workspace_dir}; slug = {slug}; draft_id = {draft_id}.\n\n"
+            "REVISION FEEDBACK (if any): {revision_notes}\n"
+            "If revision feedback is provided, this is NOT a fresh build. The workspace "
+            "already has previous code. Focus ONLY on the feedback. Read existing files "
+            "first, then make surgical changes. Do not rebuild from scratch.\n\n"
             "Produce a 1-page shipping plan. Rules:\n"
             "- MVP must be shippable in 20-60 engineering hours.\n"
             "- Scope MUST cut to ONE headline value prop and ONE primary user journey.\n"

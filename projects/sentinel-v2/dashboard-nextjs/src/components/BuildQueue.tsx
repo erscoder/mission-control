@@ -38,6 +38,8 @@ interface BuildQueueProps {
   onRetryDraft?: (id: string) => void
   onApproveDeploy?: (id: string) => void
   onRejectDeploy?: (id: string) => void
+  onRequestChanges?: (id: string, notes: string) => void
+  onValidateDraft?: (id: string) => void
 }
 
 type StageKey = 'draft' | 'queued' | 'building' | 'review' | 'built' | 'deployed'
@@ -128,10 +130,12 @@ export default function BuildQueue({
   onRetryDraft,
   onApproveDeploy,
   onRejectDeploy,
+  onRequestChanges,
+  onValidateDraft,
 }: BuildQueueProps) {
-  // Active pipeline = everything NOT in history (deployed / rejected / failed move out)
+  // Active pipeline = everything NOT in history (validated / rejected move out)
   const active = queue.filter(
-    (d) => d.status !== 'rejected' && d.status !== 'deployed',
+    (d) => d.status !== 'rejected' && d.status !== 'validated',
   )
   const isEmpty = active.length === 0
   const summary = countByStage(active)
@@ -141,7 +145,7 @@ export default function BuildQueue({
   const historyDrafts = allDrafts ?? queue
   const historyCount =
     historyDrafts.filter(
-      (d) => d.status === 'deployed' || d.status === 'rejected' || d.status === 'failed',
+      (d) => d.status === 'validated' || d.status === 'rejected' || d.status === 'failed',
     ).length
 
   return (
@@ -197,6 +201,8 @@ export default function BuildQueue({
               onRetryDraft={onRetryDraft}
               onApproveDeploy={onApproveDeploy}
               onRejectDeploy={onRejectDeploy}
+              onRequestChanges={onRequestChanges}
+              onValidateDraft={onValidateDraft}
             />
           ))}
         </ul>
@@ -215,6 +221,8 @@ function PipelineRow({
   onRetryDraft,
   onApproveDeploy,
   onRejectDeploy,
+  onRequestChanges,
+  onValidateDraft,
 }: {
   draft: Draft
   onApproveDraft?: (id: string) => void
@@ -223,6 +231,8 @@ function PipelineRow({
   onRetryDraft?: (id: string) => void
   onApproveDeploy?: (id: string) => void
   onRejectDeploy?: (id: string) => void
+  onRequestChanges?: (id: string, notes: string) => void
+  onValidateDraft?: (id: string) => void
 }) {
   const failed = draft.status === 'failed'
   const currentIdx = currentStageIndex(draft.status)
@@ -420,6 +430,18 @@ function PipelineRow({
                   </button>
                   <button
                     type="button"
+                    onClick={() => setReviseOpen((v) => !v)}
+                    className={cn(
+                      'flex items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] font-semibold text-amber-300 transition-colors hover:bg-amber-500 hover:text-white',
+                      reviseOpen && 'bg-amber-500/20',
+                    )}
+                    title="Request changes"
+                  >
+                    <Pencil className="h-3 w-3" />
+                    Changes
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => onRejectDeploy?.(draft.id)}
                     className="flex items-center rounded-md border border-rose-500/30 bg-rose-500/10 px-2 py-1 text-rose-300 transition-colors hover:bg-rose-500 hover:text-white"
                     title="Reject deployment"
@@ -430,27 +452,68 @@ function PipelineRow({
               )}
             </>
           )}
-          {draft.status === 'deployed' && draft.deployment_url && (
-            <a
-              href={draft.deployment_url}
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-300 transition-colors hover:bg-emerald-500 hover:text-white"
-            >
-              Open
-              <ArrowRight className="h-3 w-3" />
-            </a>
+          {draft.status === 'deployed' && (
+            <>
+              {draft.deployment_url && (
+                <a
+                  href={draft.deployment_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-300 transition-colors hover:bg-emerald-500 hover:text-white"
+                >
+                  Open
+                  <ArrowRight className="h-3 w-3" />
+                </a>
+              )}
+              <button
+                type="button"
+                onClick={() => onValidateDraft?.(draft.id)}
+                className="flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-300 transition-colors hover:bg-emerald-500 hover:text-white"
+                title="Mark as validated - move to history"
+              >
+                <CheckCircle className="h-3 w-3" />
+                Validate
+              </button>
+              <button
+                type="button"
+                onClick={() => setReviseOpen((v) => !v)}
+                className={cn(
+                  'flex items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] font-semibold text-amber-300 transition-colors hover:bg-amber-500 hover:text-white',
+                  reviseOpen && 'bg-amber-500/20',
+                )}
+                title="Request changes"
+              >
+                <Pencil className="h-3 w-3" />
+                Changes
+              </button>
+            </>
           )}
-          {failed && onRetryDraft && (
-            <button
-              type="button"
-              onClick={() => onRetryDraft(draft.id)}
-              className="flex items-center gap-1 rounded-md border border-indigo-500/40 bg-indigo-500/10 px-2 py-1 text-[10px] font-semibold text-indigo-300 transition-colors hover:bg-indigo-500 hover:text-white"
-              title="Retry: resume from the last checkpoint if available, otherwise restart from pending"
-            >
-              <Loader2 className="h-3 w-3" />
-              Retry
-            </button>
+          {failed && (
+            <>
+              {onRetryDraft && (
+                <button
+                  type="button"
+                  onClick={() => onRetryDraft(draft.id)}
+                  className="flex items-center gap-1 rounded-md border border-indigo-500/40 bg-indigo-500/10 px-2 py-1 text-[10px] font-semibold text-indigo-300 transition-colors hover:bg-indigo-500 hover:text-white"
+                  title="Retry: resume from the last checkpoint if available, otherwise restart from pending"
+                >
+                  <Loader2 className="h-3 w-3" />
+                  Retry
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setReviseOpen((v) => !v)}
+                className={cn(
+                  'flex items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] font-semibold text-amber-300 transition-colors hover:bg-amber-500 hover:text-white',
+                  reviseOpen && 'bg-amber-500/20',
+                )}
+                title="Request changes"
+              >
+                <Pencil className="h-3 w-3" />
+                Changes
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -516,18 +579,22 @@ function PipelineRow({
         </div>
       )}
 
-      {/* Revision note composer (draft stage only) */}
-      {isDraftStage && reviseOpen && (
+      {/* Revision note composer (draft, built, deployed, failed) */}
+      {reviseOpen && (
         <div className="mt-3 flex flex-col gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-3 animate-slide-in-up">
           <label className="text-[10px] font-mono uppercase tracking-wider text-amber-300">
-            Revision notes
+            {isDraftStage ? 'Revision notes' : 'Change request'}
           </label>
           <textarea
             value={reviseNotes}
             onChange={(e) => setReviseNotes(e.target.value)}
             rows={3}
             autoFocus
-            placeholder="What should the crew change before re-submitting?"
+            placeholder={
+              isDraftStage
+                ? 'What should the crew change before re-submitting?'
+                : 'What needs to change? The build crew will receive these notes.'
+            }
             className="w-full rounded-md border border-border bg-background px-3 py-2 text-[12px] outline-none ring-primary/40 placeholder:text-muted-foreground/50 focus:ring-2"
           />
           <div className="flex items-center justify-end gap-2">
@@ -543,13 +610,17 @@ function PipelineRow({
             <button
               disabled={!reviseNotes.trim()}
               onClick={() => {
-                onReviseDraft?.(draft.id, reviseNotes.trim())
+                if (isDraftStage) {
+                  onReviseDraft?.(draft.id, reviseNotes.trim())
+                } else {
+                  onRequestChanges?.(draft.id, reviseNotes.trim())
+                }
                 setReviseOpen(false)
                 setReviseNotes('')
               }}
               className="rounded-md bg-gradient-to-br from-amber-500 to-orange-500 px-3 py-1 text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Send revision
+              {isDraftStage ? 'Send revision' : 'Request changes'}
             </button>
           </div>
         </div>

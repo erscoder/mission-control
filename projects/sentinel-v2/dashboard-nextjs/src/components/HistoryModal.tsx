@@ -20,14 +20,14 @@ interface HistoryModalProps {
 export default function HistoryModal({ drafts, children }: HistoryModalProps) {
   const items = useMemo(() => {
     const list = drafts.filter(
-      (x) => x.status === 'deployed' || x.status === 'rejected' || x.status === 'failed',
+      (x) => x.status === 'validated' || x.status === 'rejected' || x.status === 'failed',
     )
     list.sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''))
     return list
   }, [drafts])
 
-  const deployedCount = items.filter((x) => x.status === 'deployed').length
-  const rejectedCount = items.length - deployedCount
+  const validatedCount = items.filter((x) => x.status === 'validated').length
+  const rejectedCount = items.length - validatedCount
   const total = items.length
 
   return (
@@ -47,7 +47,7 @@ export default function HistoryModal({ drafts, children }: HistoryModalProps) {
                   History
                 </Dialog.Title>
                 <Dialog.Description className="text-[11px] text-muted-foreground">
-                  {total} total · {deployedCount} deployed · {rejectedCount} rejected
+                  {total} total · {validatedCount} validated · {rejectedCount} rejected
                 </Dialog.Description>
               </div>
             </div>
@@ -71,7 +71,7 @@ export default function HistoryModal({ drafts, children }: HistoryModalProps) {
                   <HistoryItem
                     key={d.id}
                     draft={d}
-                    variant={d.status === 'deployed' ? 'deployed' : 'rejected'}
+                    variant={d.status === 'validated' ? 'validated' : 'rejected'}
                   />
                 ))}
               </ul>
@@ -88,9 +88,9 @@ function HistoryItem({
   variant,
 }: {
   draft: Draft
-  variant: 'deployed' | 'rejected'
+  variant: 'validated' | 'rejected'
 }) {
-  const isDeployed = variant === 'deployed'
+  const isDeployed = variant === 'validated'
   return (
     <li
       className={cn(
@@ -121,7 +121,7 @@ function HistoryItem({
                 : 'border-rose-500/30 bg-rose-500/10 text-rose-300',
             )}
           >
-            {isDeployed ? 'Deployed' : 'Rejected at draft'}
+            {isDeployed ? 'Validated' : 'Rejected at draft'}
           </span>
           {draft.cycle ? (
             <span className="chip bg-background/60">Cycle #{draft.cycle}</span>

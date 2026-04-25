@@ -347,6 +347,31 @@ def handle_retry_draft(data):
     )
 
 
+@socketio.on("request_changes", namespace="/dashboard")
+def handle_request_changes(data):
+    """Send a built/deployed/failed draft back to the build queue with revision notes."""
+    payload = data or {}
+    draft_id = payload.get("id", "")
+    notes = payload.get("notes", "")
+    if not draft_id or not notes.strip():
+        emit("action_response", {"success": False, "action": "request_changes", "error": "missing id or notes"}, namespace="/dashboard")
+        return
+    _unblock_daemon_for_retry(draft_id)
+    ok = update_draft_status(draft_id, "queued", revision_notes=notes.strip())
+    emit("action_response", {"success": ok, "action": "request_changes", "id": draft_id}, namespace="/dashboard")
+
+
+@socketio.on("validate_draft", namespace="/dashboard")
+def handle_validate_draft(data):
+    """Mark a deployed draft as validated — moves it to history."""
+    draft_id = (data or {}).get("id", "")
+    if not draft_id:
+        emit("action_response", {"success": False, "action": "validate_draft", "error": "missing id"}, namespace="/dashboard")
+        return
+    ok = update_draft_status(draft_id, "validated")
+    emit("action_response", {"success": ok, "action": "validate_draft", "id": draft_id}, namespace="/dashboard")
+
+
 @socketio.on("approve_deploy", namespace="/dashboard")
 def handle_approve_deploy(data):
     """Second approval gate: after a draft is built, human approves deployment."""
@@ -414,7 +439,7 @@ def api_drafts_action():
     draft_id = payload.get("id", "")
     action = payload.get("action", "")
     notes = payload.get("notes", "")
-    valid = {"approve", "reject", "revise", "approve_deploy", "reject_deploy", "retry"}
+    valid = {"approve", "reject", "revise", "approve_deploy", "reject_deploy", "retry", "request_changes", "validate"}
     if not draft_id or action not in valid:
         return jsonify({"success": False, "error": "invalid payload"}), 400
     if action == "approve":
@@ -428,6 +453,11 @@ def api_drafts_action():
     elif action == "retry":
         _unblock_daemon_for_retry(draft_id)
         ok = update_draft_status(draft_id, "queued", revision_notes="retry requested")
+    elif action == "request_changes":
+        _unblock_daemon_for_retry(draft_id)
+        ok = update_draft_status(draft_id, "queued", revision_notes=notes)
+    elif action == "validate":
+        ok = update_draft_status(draft_id, "validated")
     else:
         ok = update_draft_status(draft_id, "rejected")
     return jsonify({"success": ok, "action": action, "id": draft_id})

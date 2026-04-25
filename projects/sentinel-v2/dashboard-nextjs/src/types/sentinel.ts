@@ -88,6 +88,7 @@ export type DraftStatus =
   | 'testing'
   | 'built'
   | 'deployed'
+  | 'validated'
   | 'failed'
 
 export type Draft = {

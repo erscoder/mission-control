@@ -21,6 +21,8 @@ export default function HomePage() {
     retryDraft,
     approveDeploy,
     rejectDeploy,
+    requestChanges,
+    validateDraft,
   } = useSentinelSocket()
 
   const activeAgentId = useMemo(() => {
@@ -46,6 +48,8 @@ export default function HomePage() {
             onRetryDraft={retryDraft}
             onApproveDeploy={approveDeploy}
             onRejectDeploy={rejectDeploy}
+            onRequestChanges={requestChanges}
+            onValidateDraft={validateDraft}
           />
         </div>
 

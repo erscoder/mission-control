@@ -209,6 +209,8 @@ class SentinelLoopFlow(Flow[SentinelState]):
                 }
                 self.state.opportunities = [self.state.top_opportunity]
                 self.state.approved = True  # user already approved via retry
+                # Carry revision_notes from the draft so build crew can use them
+                self.state.revision_notes = draft.get("revision_notes") or None
                 # Reset phase outputs so phases actually run
                 self.state.build_output = None
                 self.state.workspace_dir = None
@@ -229,7 +231,6 @@ class SentinelLoopFlow(Flow[SentinelState]):
                 self.state.error = None
                 self.state.draft = None
                 self.state.draft_file = None
-                self.state.revision_notes = None
                 self.state.pending_since = None
                 self._save_checkpoint()
         except Exception as e:
@@ -555,6 +556,7 @@ class SentinelLoopFlow(Flow[SentinelState]):
                     "workspace_dir": self.state.workspace_dir,
                     "slug": slug,
                     "draft_id": self.state.draft_id or "unknown",
+                    "revision_notes": self.state.revision_notes or "",
                 }
             )
         except Exception as e:
@@ -921,14 +923,21 @@ class SentinelLoopFlow(Flow[SentinelState]):
             self._save_checkpoint()
             return
 
+        frontend_url = parsed.get("frontend_url") or parsed.get("url") if isinstance(parsed, dict) else None
+        if not frontend_url:
+            log.error("Deploy crew returned no frontend_url -- marking as failed")
+            self.state.error = "Deploy crew did not return a real frontend URL"
+            if self.state.draft_id:
+                from sentinel_v2.dashboard_state import update_draft
+                update_draft(self.state.draft_id, status="failed",
+                             revision_notes="Deploy failed: no frontend URL returned by deploy crew")
+            self._save_checkpoint()
+            return
+
         self.state.deployed = True
-        self.state.deployed_url = (
-            parsed.get("frontend_url")
-            or parsed.get("url")
-            or f"https://{slug}.{ERSLABS_ROOT_DOMAIN}"
-        )
+        self.state.deployed_url = frontend_url
         self.state.deployment_id = parsed.get("deployment_id")
-        self.state.backend_url = parsed.get("backend_url") or f"https://{slug}-api.fly.dev"
+        self.state.backend_url = parsed.get("backend_url")  # None is OK if frontend-only
         self.state.fly_app_name = f"{slug}-api"
         self.state.cf_pages_project = slug
         self.state.stripe_webhook_endpoint_id = parsed.get("stripe_webhook_endpoint_id")

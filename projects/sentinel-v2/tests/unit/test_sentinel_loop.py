@@ -200,7 +200,7 @@ class TestSentinelLoopFlowKickoff:
         flow.state.top_opportunity = {"title": "Opportunity"}
 
         mock_result = Mock(spec=["raw"])
-        mock_result.raw = {"url": "https://example.com", "deployment_id": "xyz"}
+        mock_result.raw = {"url": "https://example.com", "deployment_id": "xyz", "go_no_go": "GO"}
 
         with patch(
             "sentinel_v2.crews.deploy_crew.deploy_crew.deploy_crew"
@@ -432,8 +432,8 @@ class TestWriteState:
         flow.state.approved = True
         flow.state.build_output = "Built: app"
         flow.state.top_opportunity = {"title": "Op"}
-        mock_result = Mock()
-        mock_result.raw = {"url": "https://example.com", "deployment_id": "abc"}
+        mock_result = Mock(spec=["raw"])
+        mock_result.raw = {"url": "https://example.com", "deployment_id": "abc", "go_no_go": "GO"}
 
         with patch(
             "sentinel_v2.crews.deploy_crew.deploy_crew.deploy_crew"
@@ -497,8 +497,8 @@ class TestRememberCalls:
         flow.state.approved = True
         flow.state.build_output = "Built: app"
         flow.state.top_opportunity = {"title": "Op"}
-        mock_result = Mock()
-        mock_result.raw = {"url": "https://example.com", "deployment_id": "abc"}
+        mock_result = Mock(spec=["raw"])
+        mock_result.raw = {"url": "https://example.com", "deployment_id": "abc", "go_no_go": "GO"}
 
         with patch(
             "sentinel_v2.crews.deploy_crew.deploy_crew.deploy_crew"
@@ -511,6 +511,157 @@ class TestRememberCalls:
                 flow.run_deploy()
 
         mock_remember.assert_called()
+
+
+class TestFeedbackLoop:
+    """Tests for the feedback loop: revision_notes flow and deploy URL validation."""
+
+    def test_start_cycle_reads_revision_notes_from_draft(self, flow):
+        """start_cycle() reads revision_notes from a queued draft."""
+        mock_draft = {
+            "id": "draft_c1_test",
+            "title": "Test App",
+            "revision_notes": "Fix the login page",
+            "status": "queued",
+            "tech_fit": 0.8,
+            "complexity": 3,
+        }
+        with patch("sentinel_v2.dashboard_state.list_drafts_by_status", return_value=[mock_draft]), \
+             patch("sentinel_v2.dashboard_state.clear_agent_messages"):
+            flow.start_cycle()
+
+        assert flow.state.revision_notes == "Fix the login page"
+        assert flow.state.draft_id == "draft_c1_test"
+
+    def test_start_cycle_clears_revision_notes_when_none(self, flow):
+        """start_cycle() sets revision_notes to None when draft has none."""
+        mock_draft = {
+            "id": "draft_c1_test",
+            "title": "Test App",
+            "revision_notes": None,
+            "status": "queued",
+            "tech_fit": 0.8,
+            "complexity": 3,
+        }
+        with patch("sentinel_v2.dashboard_state.list_drafts_by_status", return_value=[mock_draft]), \
+             patch("sentinel_v2.dashboard_state.clear_agent_messages"):
+            flow.start_cycle()
+
+        assert flow.state.revision_notes is None
+
+    def test_run_build_passes_revision_notes_in_inputs(self, flow):
+        """run_build() passes revision_notes to crew.kickoff inputs."""
+        flow.state.top_opportunity = {"title": "SaaS Tool"}
+        flow.state.revision_notes = "Fix the auth flow"
+
+        mock_result = Mock(spec=["raw"])
+        mock_result.raw = "Built: SaaS app"
+
+        with patch(
+            "sentinel_v2.crews.build_crew.build_crew.build_crew"
+        ) as mock_crew_cls:
+            mock_crew = MagicMock()
+            mock_crew.kickoff.return_value = mock_result
+            mock_crew_cls.return_value = mock_crew
+
+            with patch.object(flow, "remember"):
+                flow.run_build()
+
+            inputs = mock_crew.kickoff.call_args.kwargs.get("inputs") or mock_crew.kickoff.call_args[1].get("inputs", {})
+            assert inputs["revision_notes"] == "Fix the auth flow"
+
+    def test_run_build_passes_empty_revision_notes_when_none(self, flow):
+        """run_build() passes empty string when revision_notes is None."""
+        flow.state.top_opportunity = {"title": "SaaS Tool"}
+        flow.state.revision_notes = None
+
+        mock_result = Mock(spec=["raw"])
+        mock_result.raw = "Built: SaaS app"
+
+        with patch(
+            "sentinel_v2.crews.build_crew.build_crew.build_crew"
+        ) as mock_crew_cls:
+            mock_crew = MagicMock()
+            mock_crew.kickoff.return_value = mock_result
+            mock_crew_cls.return_value = mock_crew
+
+            with patch.object(flow, "remember"):
+                flow.run_build()
+
+            inputs = mock_crew.kickoff.call_args.kwargs.get("inputs") or mock_crew.kickoff.call_args[1].get("inputs", {})
+            assert inputs["revision_notes"] == ""
+
+    def test_run_deploy_fails_without_frontend_url(self, flow):
+        """run_deploy() marks draft as failed when no frontend_url is returned."""
+        flow.state.approved = True
+        flow.state.build_output = "Built: app"
+        flow.state.top_opportunity = {"title": "Op"}
+        flow.state.draft_id = "draft_c1_test"
+
+        mock_result = Mock(spec=["raw"])
+        mock_result.raw = {"deployment_id": "abc", "go_no_go": "GO"}  # No url or frontend_url
+
+        with patch(
+            "sentinel_v2.crews.deploy_crew.deploy_crew.deploy_crew"
+        ) as mock_crew_cls:
+            mock_crew = MagicMock()
+            mock_crew.kickoff.return_value = mock_result
+            mock_crew_cls.return_value = mock_crew
+
+            with patch.object(flow, "remember"), \
+                 patch("sentinel_v2.dashboard_state.update_draft") as mock_update:
+                flow.run_deploy()
+
+            assert flow.state.deployed is False
+            assert "did not return a real frontend URL" in (flow.state.error or "")
+            mock_update.assert_called()
+            # Last call should mark draft as failed
+            last_call = mock_update.call_args_list[-1]
+            assert last_call.kwargs.get("status") == "failed"
+
+    def test_run_deploy_succeeds_with_frontend_url(self, flow):
+        """run_deploy() succeeds when frontend_url is returned."""
+        flow.state.approved = True
+        flow.state.build_output = "Built: app"
+        flow.state.top_opportunity = {"title": "Op"}
+
+        mock_result = Mock(spec=["raw"])
+        mock_result.raw = {"frontend_url": "https://myapp.erslabs.net", "deployment_id": "abc", "go_no_go": "GO"}
+
+        with patch(
+            "sentinel_v2.crews.deploy_crew.deploy_crew.deploy_crew"
+        ) as mock_crew_cls:
+            mock_crew = MagicMock()
+            mock_crew.kickoff.return_value = mock_result
+            mock_crew_cls.return_value = mock_crew
+
+            with patch.object(flow, "remember"):
+                flow.run_deploy()
+
+        assert flow.state.deployed is True
+        assert flow.state.deployed_url == "https://myapp.erslabs.net"
+
+    def test_run_deploy_succeeds_with_url_key(self, flow):
+        """run_deploy() also accepts 'url' key as fallback for frontend_url."""
+        flow.state.approved = True
+        flow.state.build_output = "Built: app"
+        flow.state.top_opportunity = {"title": "Op"}
+
+        mock_result = Mock(spec=["raw"])
+        mock_result.raw = {"url": "https://myapp.example.com", "deployment_id": "xyz", "go_no_go": "GO"}
+
+        with patch(
+            "sentinel_v2.crews.deploy_crew.deploy_crew.deploy_crew"
+        ) as mock_crew_cls:
+            mock_crew = MagicMock()
+            mock_crew.kickoff.return_value = mock_result
+            mock_crew_cls.return_value = mock_crew
+
+            with patch.object(flow, "remember"):
+                flow.run_deploy()
+
+        assert flow.state.deployed is True
+        assert flow.state.deployed_url == "https://myapp.example.com"
 
 
 class TestParseExceptions:
