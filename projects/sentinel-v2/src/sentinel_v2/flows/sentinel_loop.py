@@ -24,7 +24,9 @@ ERSLABS_ROOT_DOMAIN = "erslabs.net"
 
 def _make_slug(source: str) -> str:
     """Convert an arbitrary string to a DNS-safe, fly.io-safe slug (1-30 chars)."""
-    s = re.sub(r"[^a-z0-9]+", "-", source.lower()).strip("-") or "app"
+    # Strip draft_cN_ prefix so the slug is the app name, not the internal id
+    s = re.sub(r"^draft_c\d+_", "", source)
+    s = re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-") or "app"
     return s[:30].rstrip("-") or "app"
 
 
@@ -872,6 +874,26 @@ class SentinelLoopFlow(Flow[SentinelState]):
             return
 
         parsed = self._parse_deploy_result(result)
+
+        # Check whether the QA verifier said GO or ROLLBACK
+        raw_text = str(getattr(result, "raw", result)).upper()
+        go_no_go = parsed.get("go_no_go", "").upper() if isinstance(parsed, dict) else ""
+        is_go = go_no_go == "GO" or ("GO" in raw_text and "ROLLBACK" not in raw_text)
+
+        if not is_go:
+            failing_step = parsed.get("failing_step", "unknown") if isinstance(parsed, dict) else "unknown"
+            log.error("Deploy verification ROLLBACK: failing_step=%s", failing_step)
+            self.state.error = f"Deploy verification failed: {failing_step}"
+            if self.state.draft_id:
+                from sentinel_v2.dashboard_state import update_draft
+                update_draft(
+                    self.state.draft_id,
+                    status="failed",
+                    revision_notes=f"Deploy verification ROLLBACK: {failing_step}",
+                )
+            self._save_checkpoint()
+            return
+
         self.state.deployed = True
         self.state.deployed_url = (
             parsed.get("frontend_url")
