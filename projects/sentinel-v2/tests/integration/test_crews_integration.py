@@ -34,14 +34,13 @@ class TestResearchCrew:
         crew = research_crew()
         assert crew.process == Process.sequential
 
-    def test_research_crew_has_memory(self):
-        """Crew has memory enabled."""
+    def test_research_crew_memory_disabled_by_default(self):
+        """Memory is disabled by default — see embedder_config docs."""
         from sentinel_v2.crews.research_crew.research_crew import research_crew
-        from crewai.memory.unified_memory import Memory
 
         crew = research_crew()
-        assert crew.memory is not None
-        assert isinstance(crew.memory, Memory)
+        # crew.memory is False/None when disabled, not a Memory instance
+        assert not crew.memory
 
     def test_research_crew_agents_have_roles(self):
         """Both agents have defined roles."""

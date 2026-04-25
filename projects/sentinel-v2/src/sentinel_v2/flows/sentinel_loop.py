@@ -238,25 +238,30 @@ class SentinelLoopFlow(Flow[SentinelState]):
             self.state.opportunities[0] if self.state.opportunities else None
         )
 
-        # Publish a draft entry to the dashboard pipeline (human will approve/reject)
-        if self.state.top_opportunity:
+        # Publish ALL surfaced opportunities as pending drafts so the user can
+        # see and approve any of them. The flow proceeds with top_opportunity
+        # for the current cycle; if the user approves a different one, future
+        # cycles' start_cycle will pick it up via the queued-draft lookup.
+        if self.state.opportunities:
             from sentinel_v2.dashboard_state import write_draft, make_draft_id
-            opp = self.state.top_opportunity
-            self.state.draft_id = make_draft_id(self.state.cycle_count, opp)
-            write_draft(
-                draft_id=self.state.draft_id,
-                cycle=self.state.cycle_count,
-                title=opp.get("title", "Untitled opportunity"),
-                tagline=opp.get("tagline") or opp.get("summary") or "",
-                description=opp.get("description") or opp.get("solution") or "",
-                problem=opp.get("problem") or opp.get("problem_statement") or "",
-                solution=opp.get("solution") or "",
-                tech_fit=float(opp.get("tech_fit", 0.0) or 0.0),
-                complexity=int(opp.get("complexity", 0) or 0),
-                estimated_hours=opp.get("estimated_hours"),
-                tags=opp.get("tags") or [],
-                status="pending",
-            )
+            for idx, opp in enumerate(self.state.opportunities):
+                draft_id = make_draft_id(self.state.cycle_count, opp)
+                if idx == 0:
+                    self.state.draft_id = draft_id
+                write_draft(
+                    draft_id=draft_id,
+                    cycle=self.state.cycle_count,
+                    title=opp.get("title", "Untitled opportunity"),
+                    tagline=opp.get("tagline") or opp.get("summary") or "",
+                    description=opp.get("description") or opp.get("solution") or "",
+                    problem=opp.get("problem") or opp.get("problem_statement") or "",
+                    solution=opp.get("solution") or "",
+                    tech_fit=float(opp.get("tech_fit", 0.0) or 0.0),
+                    complexity=int(opp.get("complexity", 0) or 0),
+                    estimated_hours=opp.get("estimated_hours"),
+                    tags=opp.get("tags") or [],
+                    status="pending",
+                )
 
         # Update state after research
         opp_title = self.state.top_opportunity.get("title", "?") if self.state.top_opportunity else None

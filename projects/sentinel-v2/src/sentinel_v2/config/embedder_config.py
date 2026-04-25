@@ -94,13 +94,18 @@ def get_memory_for_crew(llm=None):
 
 def get_memory_for_crew_full(minimax_llm):
     """
-    Return a Memory instance with MiniMax LLM and Jina embedder.
+    Return a CrewAI Memory instance, or None if memory is disabled.
 
-    This is the recommended way to create memory for crews.
+    Memory is DISABLED by default (returns None) because CrewAI's UnifiedMemory
+    layer uses LiteLLM structured outputs (instructor / response_format=QueryAnalysis)
+    which BYPASSES our `llm.call()` <think>-stripping wrapper. With MiniMax reasoning
+    models that prepend <think>...</think>, this consistently fails with
+    "Invalid JSON: expected value at line 1 column 1" and the embedder defaults
+    to OpenAI which then complains about CHROMA_OPENAI_API_KEY.
 
-    Usage:
-        crews = [
-            get_memory_for_crew_full(minimax_llm)
-        ]
+    Set SENTINEL_ENABLE_MEMORY=1 to opt back in (you'll need a non-reasoning
+    LLM and a working embedder).
     """
-    return get_memory_for_crew(llm=minimax_llm)
+    if os.environ.get("SENTINEL_ENABLE_MEMORY") == "1":
+        return get_memory_for_crew(llm=minimax_llm)
+    return None

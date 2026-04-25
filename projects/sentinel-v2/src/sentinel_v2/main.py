@@ -80,7 +80,9 @@ def _recover_orphaned_drafts() -> None:
     except Exception:
         pass
 
-    orphaned_statuses = {"queued", "building", "review", "built"}
+    # "queued" = approved, awaiting daemon pickup → NOT in-flight, leave alone.
+    # Only mark drafts that were actively being processed when the daemon died.
+    orphaned_statuses = {"building", "review", "built"}
     orphans = list_drafts_by_status(orphaned_statuses)
     for draft in orphans:
         if draft["id"] in checkpointed:

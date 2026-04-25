@@ -214,10 +214,22 @@ class TestGetMemoryForCrewFull:
     def teardown_method(self):
         _reset_llm_cache()
 
-    def test_returns_memory_instance(self, monkeypatch):
-        """Returns a CrewAI Memory instance."""
+    def test_returns_none_by_default(self, monkeypatch):
+        """Memory is disabled by default to dodge MiniMax <think> JSON parse failures."""
         monkeypatch.setenv("MINIMAX_API_KEY", "test-key-full")
         monkeypatch.setenv("JINA_API_KEY", "jina-key-full")
+        monkeypatch.delenv("SENTINEL_ENABLE_MEMORY", raising=False)
+        from sentinel_v2.config.llm_config import get_minimax_llm
+        from sentinel_v2.config.embedder_config import get_memory_for_crew_full
+        llm = get_minimax_llm()
+        memory = get_memory_for_crew_full(llm)
+        assert memory is None
+
+    def test_returns_memory_instance_when_enabled(self, monkeypatch):
+        """SENTINEL_ENABLE_MEMORY=1 opts back into the (broken-with-reasoning-LLMs) memory path."""
+        monkeypatch.setenv("MINIMAX_API_KEY", "test-key-full")
+        monkeypatch.setenv("JINA_API_KEY", "jina-key-full")
+        monkeypatch.setenv("SENTINEL_ENABLE_MEMORY", "1")
         from sentinel_v2.config.llm_config import get_minimax_llm
         from sentinel_v2.config.embedder_config import get_memory_for_crew_full
         llm = get_minimax_llm()

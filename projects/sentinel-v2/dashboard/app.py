@@ -278,43 +278,61 @@ def handle_reject_draft(data):
     emit("action_response", {"success": ok, "action": action, "id": draft_id}, namespace="/dashboard")
 
 
+def _unblock_daemon_for_retry(target_draft_id: str) -> str | None:
+    """Surgically unblock the daemon: identify the SPECIFIC draft the daemon is
+    polling on (from the active checkpoint) and reject only that one. Leave
+    all other pending drafts (e.g. fresh ones from the latest research) alone.
+
+    Returns the draft_id that was rejected, or None if nothing to do.
+    """
+    import json as _json
+    try:
+        from sentinel_v2 import db as _db
+        from sentinel_v2 import dashboard_state as _ds
+        checkpoint_json = _db.load_active_flow_checkpoint()
+        if not checkpoint_json:
+            _db.clear_active_flow_checkpoint()
+            return None
+        try:
+            state = _json.loads(checkpoint_json)
+        except _json.JSONDecodeError:
+            _db.clear_active_flow_checkpoint()
+            return None
+        blocked = state.get("draft_id")
+        # Always clear the checkpoint so the next cycle starts fresh
+        _db.clear_active_flow_checkpoint()
+        if blocked and blocked != target_draft_id:
+            draft = _ds.get_draft(blocked)
+            if draft and draft.get("status") == "pending":
+                _ds.update_draft(
+                    blocked,
+                    status="rejected",
+                    revision_notes="auto-rejected to unblock daemon on retry",
+                )
+                return blocked
+    except Exception as e:
+        log.warning("Could not surgically unblock daemon for retry: %s", e)
+    return None
+
+
 @socketio.on("retry_draft", namespace="/dashboard")
 def handle_retry_draft(data):
     """Retry a failed draft.
 
     Semantics:
-      - The failed draft is flipped to "queued" (approved for build).
-      - Any active flow checkpoint is cleared so the daemon doesn't get confused
-        about which draft it was working on.
-      - Any OTHER currently-pending drafts are rejected — this unblocks the
-        daemon if it's sitting inside `wait_for_draft_status` polling on one
-        of them, so the current cycle ends and the next one picks up the
-        retried draft via `start_cycle`'s queued-draft lookup.
+      - Clear the active flow checkpoint.
+      - Identify the specific draft the daemon is polling on (from the
+        checkpoint state) and reject ONLY that one if it's pending and
+        different from our target. Fresh pending drafts from later research
+        runs are left alone.
+      - Flip the target draft to "queued" so `start_cycle` picks it up.
     """
     draft_id = (data or {}).get("id", "")
     if not draft_id:
         emit("action_response", {"success": False, "action": "retry_draft", "error": "missing id"}, namespace="/dashboard")
         return
 
-    # 1. Clear any active checkpoint (its draft_id might not match this one)
-    try:
-        from sentinel_v2 import db as _db
-        _db.clear_active_flow_checkpoint()
-    except Exception as e:
-        log.warning("Could not clear checkpoint for retry: %s", e)
-
-    # 2. Reject other pending drafts so the daemon unblocks.
-    other_rejected: list[str] = []
-    try:
-        from sentinel_v2 import dashboard_state as _ds
-        for d in _ds.list_drafts_by_status({"pending"}):
-            if d["id"] != draft_id:
-                _ds.update_draft(d["id"], status="rejected", revision_notes="auto-rejected to unblock daemon on retry")
-                other_rejected.append(d["id"])
-    except Exception as e:
-        log.warning("Could not reject other pending drafts: %s", e)
-
-    # 3. Flip the target draft back to queued (approved for build)
+    unblocked = _unblock_daemon_for_retry(draft_id)
     ok = update_draft_status(draft_id, "queued", revision_notes="retry requested")
     emit(
         "action_response",
@@ -323,7 +341,7 @@ def handle_retry_draft(data):
             "action": "retry_draft",
             "id": draft_id,
             "new_status": "queued",
-            "unblocked": other_rejected,
+            "unblocked": unblocked,
         },
         namespace="/dashboard",
     )
@@ -408,18 +426,7 @@ def api_drafts_action():
     elif action == "reject_deploy":
         ok = update_draft_status(draft_id, "failed")
     elif action == "retry":
-        try:
-            from sentinel_v2 import db as _db
-            _db.clear_active_flow_checkpoint()
-        except Exception:
-            pass
-        try:
-            from sentinel_v2 import dashboard_state as _ds
-            for d in _ds.list_drafts_by_status({"pending"}):
-                if d["id"] != draft_id:
-                    _ds.update_draft(d["id"], status="rejected", revision_notes="auto-rejected to unblock daemon on retry")
-        except Exception:
-            pass
+        _unblock_daemon_for_retry(draft_id)
         ok = update_draft_status(draft_id, "queued", revision_notes="retry requested")
     else:
         ok = update_draft_status(draft_id, "rejected")

@@ -10,6 +10,8 @@ import {
   Pause,
   Filter,
 } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type { AgentMessage } from '@/types/sentinel'
 import { cn, formatTime } from '@/lib/utils'
 import { getAgent, humanize } from '@/lib/agents'
@@ -186,7 +188,64 @@ function MessageBubble({ message, index }: { message: AgentMessage; index: numbe
                 : 'border-border bg-surface-muted/60 text-foreground/90',
           )}
         >
-          <p className="whitespace-pre-wrap break-words">{message.message}</p>
+          <div className="agent-md break-words text-[13px] leading-relaxed">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
+                em: ({ children }) => <em className="italic">{children}</em>,
+                code: ({ className, children, ...props }) => {
+                  const isBlock = /language-/.test(className ?? '')
+                  return isBlock ? (
+                    <pre className="my-2 overflow-x-auto rounded-md border border-border/60 bg-background/60 p-2 font-mono text-[11px] leading-snug">
+                      <code {...props}>{children}</code>
+                    </pre>
+                  ) : (
+                    <code
+                      className="rounded bg-background/60 px-1 py-0.5 font-mono text-[11px] text-emerald-200"
+                      {...props}
+                    >
+                      {children}
+                    </code>
+                  )
+                },
+                pre: ({ children }) => <>{children}</>,
+                ul: ({ children }) => <ul className="my-1 list-disc space-y-0.5 pl-5">{children}</ul>,
+                ol: ({ children }) => <ol className="my-1 list-decimal space-y-0.5 pl-5">{children}</ol>,
+                li: ({ children }) => <li className="text-foreground/90">{children}</li>,
+                h1: ({ children }) => <h1 className="mb-1 mt-2 text-[14px] font-semibold tracking-tight">{children}</h1>,
+                h2: ({ children }) => <h2 className="mb-1 mt-2 text-[13.5px] font-semibold tracking-tight">{children}</h2>,
+                h3: ({ children }) => <h3 className="mb-1 mt-2 text-[13px] font-semibold tracking-tight">{children}</h3>,
+                a: ({ href, children }) => (
+                  <a
+                    href={href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-indigo-300 underline decoration-dotted underline-offset-2 hover:text-indigo-200"
+                  >
+                    {children}
+                  </a>
+                ),
+                table: ({ children }) => (
+                  <div className="my-2 overflow-x-auto rounded-md border border-border/60">
+                    <table className="w-full text-[11.5px]">{children}</table>
+                  </div>
+                ),
+                th: ({ children }) => (
+                  <th className="border-b border-border/60 bg-background/40 px-2 py-1 text-left font-semibold text-foreground/80">
+                    {children}
+                  </th>
+                ),
+                td: ({ children }) => (
+                  <td className="border-b border-border/30 px-2 py-1 align-top">{children}</td>
+                ),
+                hr: () => <hr className="my-2 border-border/40" />,
+              }}
+            >
+              {message.message}
+            </ReactMarkdown>
+          </div>
 
           {(filesReviewed != null || issuesFound != null) && (
             <div className="mt-2 flex items-center gap-3 border-t border-border/60 pt-2 text-[10px] text-muted-foreground">

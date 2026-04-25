@@ -5,6 +5,17 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-25 · TBD — Disable broken memory, surgical retry, all candidates → drafts, markdown feed
+
+**What changed:**
+- `src/sentinel_v2/config/embedder_config.py`: `get_memory_for_crew_full` returns `None` by default. CrewAI's `UnifiedMemory.QueryAnalysis` uses LiteLLM structured outputs that bypass our `<think>`-stripping wrapper, and the embedder kept falling back to OpenAI (raising `CHROMA_OPENAI_API_KEY` errors). Memory was causing more pain than value. Set `SENTINEL_ENABLE_MEMORY=1` to opt back in.
+- `src/sentinel_v2/main.py`: removed `"queued"` from the orphan-recovery status set. `queued` means "approved, awaiting daemon pickup" — not in-flight. The previous behavior wiped retry-flagged drafts on every daemon restart.
+- `src/sentinel_v2/flows/sentinel_loop.py`: `run_research` now writes ALL surfaced opportunities as pending drafts (not just `opportunities[0]`). The user can approve any of them; future cycles' `start_cycle` queued-draft hook picks up whichever one they choose.
+- `dashboard/app.py`: extracted `_unblock_daemon_for_retry()` helper. Retry now identifies the SPECIFIC draft the daemon is polling on (via the active checkpoint state JSON) and rejects only that one. Fresh pending drafts from later research runs are no longer collateral-damaged.
+- `dashboard-nextjs/src/components/AgentConversation.tsx`: replaced `<p>{message}</p>` with `<ReactMarkdown remark-gfm>` and styled component overrides for headings, lists, code blocks, tables, and links. Agent outputs now render cleanly instead of as raw markdown.
+- `package.json`: `react-markdown@^10` + `remark-gfm`.
+- `tests/unit/test_config.py`, `tests/integration/test_crews_integration.py`: updated to reflect memory-disabled-by-default behavior.
+
 ## 2026-04-24 · TBD — Agent Feed: drop lifecycle noise, surface real task outputs
 
 **What changed:**
