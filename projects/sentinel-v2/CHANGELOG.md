@@ -5,6 +5,23 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-25 · 65ad362 — Fix BUILD error 400, dashboard cycle#1 stuck, agent feed cross-cycle bleed
+
+**Bug 1 - BUILD fails with MiniMax "invalid message role: system":**
+- `llm_config.py`: added `_patch_litellm_system_messages()` that monkey-patches `litellm.completion` and `litellm.acompletion` globally to rewrite `system` role to `user` before any API call. Called once from `get_minimax_llm()`. The existing per-LLM `.call()` patch remains as defense-in-depth; the global patch catches CrewAI hierarchical process code paths that bypass it.
+
+**Bug 2 - Dashboard always shows cycle #1:**
+- All 5 crew factories (`research_crew`, `match_crew`, `build_crew`, `security_remediation_crew`, `deploy_crew`) now accept `cycle: int = 1` param and pass it to `hook_crew_full()` instead of hardcoding `cycle=1`.
+- `match_crew` now calls `hook_crew_full()` (was missing entirely).
+- `sentinel_loop.py`: passes `cycle=self.state.cycle_count` to every crew factory call.
+- `main.py`: daemon pre-sets `flow.state.cycle_count = cycle - 1` so `start_cycle()` increments to the correct number.
+
+**Bug 3 - Agent feed repeats messages from previous cycles:**
+- `dashboard_state.py`: added `clear_agent_messages()` that resets the messages file to `[]`.
+- `sentinel_loop.py`: calls `clear_agent_messages()` at the start of each new cycle in `start_cycle()`.
+
+**Tests:** 239 passed (+11 new), 0 failed. Coverage 77%.
+
 ## 2026-04-25 · e93372e — Fix builds stuck/looping: stale flow state + missing error handling
 
 **What changed:**
