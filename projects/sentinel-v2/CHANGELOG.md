@@ -5,6 +5,16 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-25 · 4d06341 — Feedback loop + deploy validation
+
+- **New `validated` status**: `deployed` stays in the pipeline for user verification. Only `validated` moves to history. Prevents marking apps as done without confirming they work.
+- **Request Changes button**: available on `built`, `deployed`, and `failed` stages. Sends revision notes back to the build crew which re-queues the draft with surgical change instructions.
+- **Validate button**: on `deployed` stage, user confirms the app works and marks it `validated`.
+- **revision_notes flow-through**: `start_cycle` reads notes from queued draft, `run_build` passes them to crew inputs, `build_crew` plan_task instructs agents to make surgical changes (not rebuild from scratch).
+- **Deploy URL validation**: `run_deploy` no longer invents fallback URLs (`f"https://{slug}.erslabs.net"`). If deploy crew returns no real `frontend_url`, the draft is marked `failed`.
+- **Flask backend**: new `request_changes` and `validate_draft` socket handlers + REST actions.
+- **Tests**: 8 new tests for feedback loop (revision_notes propagation, deploy URL validation). Fixed pre-existing deploy test mocks missing `go_no_go: "GO"`.
+
 ## 2026-04-25 · 67676bb — Derive subdomain from app name only
 
 - `_make_slug()`: rewrote to extract the product name from the opportunity title. "ComplianceDesk HIPAA Compliance" now produces `compliancedesk` (not `draft-c1-compliancedesk-hipaa`). No hyphens, just clean app name. Concatenates tokens until >= 4 chars.
