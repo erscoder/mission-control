@@ -395,6 +395,16 @@ def get_agent_messages() -> list[dict]:
         return []
 
 
+def clear_agent_messages() -> None:
+    """Clear all agent messages. Called at the start of each new cycle."""
+    try:
+        _safe_path(AGENT_MESSAGES_FILE)
+        with open(AGENT_MESSAGES_FILE, "w") as f:
+            json.dump([], f)
+    except Exception:
+        pass
+
+
 def read_flow_breakdown() -> dict:
     """Read the current flow breakdown."""
     try:

@@ -155,6 +155,13 @@ class SentinelLoopFlow(Flow[SentinelState]):
         log.info("=== Sentinel Loop Cycle #%d ===", self.state.cycle_count)
         print(f"\n{'='*50}\nCycle #{self.state.cycle_count}\n{'='*50}")
 
+        # Clear agent messages from previous cycle
+        try:
+            from sentinel_v2.dashboard_state import clear_agent_messages
+            clear_agent_messages()
+        except Exception:
+            pass
+
         # Before spawning new research, pick up any draft that was already approved
         # for build (status="queued") in a previous cycle — typically from the retry
         # button or from a rejected approval gate leaving an orphan behind.
@@ -246,7 +253,7 @@ class SentinelLoopFlow(Flow[SentinelState]):
             },
         )
 
-        crew = research_crew()
+        crew = research_crew(cycle=self.state.cycle_count)
         result = crew.kickoff(
             inputs={
                 "trend_signals": self._get_trend_signals(),
@@ -395,7 +402,7 @@ class SentinelLoopFlow(Flow[SentinelState]):
         )
 
         try:
-            crew = match_crew()
+            crew = match_crew(cycle=self.state.cycle_count)
             result = crew.kickoff(
                 inputs={
                     "opportunity": self.state.top_opportunity,
@@ -515,7 +522,7 @@ class SentinelLoopFlow(Flow[SentinelState]):
         slug = _make_slug(self.state.draft_id or f"cycle-{self.state.cycle_count}")
 
         try:
-            crew = build_crew()
+            crew = build_crew(cycle=self.state.cycle_count)
             result = crew.kickoff(
                 inputs={
                     "opportunity": self.state.top_opportunity,
@@ -629,7 +636,7 @@ class SentinelLoopFlow(Flow[SentinelState]):
         build_ok = False
         for i in range(1, max_iter + 1):
             log.info("Security remediation iteration %d/%d", i, max_iter)
-            crew = security_remediation_crew()
+            crew = security_remediation_crew(cycle=self.state.cycle_count)
             try:
                 result = crew.kickoff(inputs={
                     "workspace_dir": self.state.workspace_dir,
@@ -839,7 +846,7 @@ class SentinelLoopFlow(Flow[SentinelState]):
         )
 
         try:
-            crew = deploy_crew()
+            crew = deploy_crew(cycle=self.state.cycle_count)
             result = crew.kickoff(
                 inputs={
                     "draft": self.state.build_output,

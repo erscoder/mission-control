@@ -24,7 +24,7 @@ from sentinel_v2.tools import (
 )
 
 
-def security_remediation_crew() -> Crew:
+def security_remediation_crew(cycle: int = 1) -> Crew:
     """Create the remediation crew — one iteration of scan → plan → apply."""
 
     minimax = get_minimax_llm()
@@ -191,5 +191,5 @@ def security_remediation_crew() -> Crew:
         memory=memory,
     )
 
-    crew = hook_crew_full(crew, phase="security", cycle=1)
+    crew = hook_crew_full(crew, phase="security", cycle=cycle)
     return crew

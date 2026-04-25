@@ -9,6 +9,7 @@ from sentinel_v2.dashboard_state import (
     write_state,
     add_agent_message,
     get_agent_messages,
+    clear_agent_messages,
     STATE_FILE,
     AGENT_MESSAGES_FILE,
 )
@@ -237,6 +238,43 @@ class TestGetAgentMessages:
             result = get_agent_messages()
 
         assert result == []
+
+
+class TestClearAgentMessages:
+    """Test clear_agent_messages function."""
+
+    def test_clear_empties_existing_messages(self, monkeypatch, tmp_path):
+        """clear_agent_messages resets the file to an empty list."""
+        msgs_file = tmp_path / "messages.json"
+        msgs_file.write_text(json.dumps([
+            {"agent_id": "a1", "message": "m1", "metadata": {}, "cycle": 1, "timestamp": "t"},
+            {"agent_id": "a2", "message": "m2", "metadata": {}, "cycle": 1, "timestamp": "t"},
+        ]))
+        monkeypatch.setattr("sentinel_v2.dashboard_state.AGENT_MESSAGES_FILE", msgs_file)
+
+        clear_agent_messages()
+
+        msgs = json.loads(msgs_file.read_text())
+        assert msgs == []
+
+    def test_clear_creates_empty_file_when_missing(self, monkeypatch, tmp_path):
+        """clear_agent_messages creates an empty-list file if none exists."""
+        msgs_file = tmp_path / "messages.json"
+        monkeypatch.setattr("sentinel_v2.dashboard_state.AGENT_MESSAGES_FILE", msgs_file)
+
+        clear_agent_messages()
+
+        assert msgs_file.exists()
+        msgs = json.loads(msgs_file.read_text())
+        assert msgs == []
+
+    def test_clear_does_not_crash_on_error(self, monkeypatch, tmp_path):
+        """clear_agent_messages swallows exceptions."""
+        msgs_file = tmp_path / "messages.json"
+        monkeypatch.setattr("sentinel_v2.dashboard_state.AGENT_MESSAGES_FILE", msgs_file)
+
+        with patch("builtins.open", side_effect=OSError("disk full")):
+            clear_agent_messages()  # should not raise
 
 
 class TestFilesPaths:

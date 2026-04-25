@@ -18,7 +18,7 @@ from sentinel_v2.tools import (
 )
 
 
-def build_crew() -> Crew:
+def build_crew(cycle: int = 1) -> Crew:
     """Create the professional build crew with dashboard streaming hooks."""
 
     minimax = get_minimax_llm()
@@ -68,6 +68,13 @@ def build_crew() -> Crew:
             "for typed server actions, Zod for form validation, and react-hook-form for complex forms. "
             "You ship dark-mode-by-default, responsive, accessible (WCAG AA). PostHog or Plausible wired "
             "for funnel telemetry.\n\n"
+            "DESIGN SYSTEM: The plan includes a `design_template` slug. Before writing any component, "
+            "fetch the full design system by running:\n"
+            "  run_shell: curl -sL https://getdesign.md/<slug>/design-md\n"
+            "This returns a DESIGN.md with color palette, typography, spacing, shadows, and component "
+            "styles. Save it to `<workspace_dir>/frontend/DESIGN.md` with write_file. Then use those "
+            "exact tokens (colors, fonts, spacing scale, border-radius, shadows) in your Tailwind config "
+            "and components. Never hardcode visual values — always derive from the design system.\n\n"
             "HOW YOU WORK: you materialize every file to disk using the `write_file` tool under "
             "`<workspace_dir>/frontend/`. Never return code as chat — always write it. The API URL is "
             "injected at deploy time via `NEXT_PUBLIC_API_URL`; use that env var everywhere. The Stripe "
@@ -195,14 +202,18 @@ def build_crew() -> Crew:
             "3. Primary user journey in 5-7 steps, from landing page to first paid action.\n"
             "4. MVP feature list (max 8 items). Mark each: [core | nice-to-have | cut].\n"
             "5. Tech stack decision with one-line justification per choice.\n"
-            "6. PostgreSQL schema: tables + columns + indexes + FK relationships (keep it tight).\n"
-            "7. API surface: endpoints, methods, auth, request/response shapes (Zod/DTO pseudocode).\n"
-            "8. Pricing: one paid tier + trial length + Stripe product/price IDs as env vars.\n"
-            "9. Telemetry plan: event names for every funnel step.\n"
-            "10. Risk list: 3 things that could break the ship-in-2-weeks timeline, with mitigations.\n"
+            "6. **Design template slug** — pick ONE slug from the design template index at "
+            "   `src/sentinel_v2/data/design_templates.md`. Match the app domain to the table. "
+            "   If unsure, use `linear.app`. Output the slug as `design_template: <slug>`.\n"
+            "7. PostgreSQL schema: tables + columns + indexes + FK relationships (keep it tight).\n"
+            "8. API surface: endpoints, methods, auth, request/response shapes (Zod/DTO pseudocode).\n"
+            "9. Pricing: one paid tier + trial length + Stripe product/price IDs as env vars.\n"
+            "10. Telemetry plan: event names for every funnel step.\n"
+            "11. Risk list: 3 things that could break the ship-in-2-weeks timeline, with mitigations.\n"
         ),
         expected_output=(
-            "A concrete shipping plan in structured markdown (or JSON) with the 10 sections above. "
+            "A concrete shipping plan in structured markdown (or JSON) with the 11 sections above. "
+            "MUST include `design_template: <slug>` with a valid slug from the index. "
             "The Feature list MUST be <= 8 items. The schema MUST be in DDL or Prisma schema syntax. "
             "The API surface MUST be in OpenAPI-style YAML or a terse table."
         ),
@@ -213,6 +224,13 @@ def build_crew() -> Crew:
         description=(
             "Implement the Next.js 14 (App Router) frontend per the plan. Write every file to disk "
             "under `{workspace_dir}/frontend/` using the `write_file` tool (never return code as chat).\n\n"
+            "STEP 0 — DESIGN SYSTEM (do this FIRST):\n"
+            "The plan contains a `design_template` slug. Fetch the design system:\n"
+            "  run_shell: curl -sL https://getdesign.md/<slug>/design-md\n"
+            "Save the output to `{workspace_dir}/frontend/DESIGN.md` with write_file. Extract the color "
+            "palette, font family, font scale, spacing, shadows, and border-radius tokens. Wire them into "
+            "tailwind.config.ts `theme.extend`. All components MUST use these tokens — no hardcoded hex "
+            "values, font names, or spacing values outside the design system.\n\n"
             "HARD REQUIREMENTS:\n"
             "- TypeScript strict (no `any`, no `@ts-ignore` without a comment justifying it).\n"
             "- Tailwind + Radix UI primitives (Dialog, Dropdown, Toast). No custom CSS files.\n"
@@ -381,5 +399,5 @@ def build_crew() -> Crew:
         manager_llm=minimax_smart,
     )
 
-    crew = hook_crew_full(crew, phase="build", cycle=1)
+    crew = hook_crew_full(crew, phase="build", cycle=cycle)
     return crew

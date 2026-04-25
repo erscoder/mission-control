@@ -180,6 +180,37 @@ class TestDeployCrew:
             assert len(task.expected_output) > 10
 
 
+# ─── Cycle Parameter Acceptance ──────────────────────────────────────────────
+
+class TestCrewCycleParameter:
+    """All crew factories accept a cycle parameter for dashboard hook propagation."""
+
+    def test_research_crew_accepts_cycle(self):
+        from sentinel_v2.crews.research_crew.research_crew import research_crew
+        crew = research_crew(cycle=5)
+        assert crew is not None
+
+    def test_match_crew_accepts_cycle(self):
+        from sentinel_v2.crews.match_crew.match_crew import match_crew
+        crew = match_crew(cycle=3)
+        assert crew is not None
+
+    def test_build_crew_accepts_cycle(self):
+        from sentinel_v2.crews.build_crew.build_crew import build_crew
+        crew = build_crew(cycle=7)
+        assert crew is not None
+
+    def test_security_remediation_crew_accepts_cycle(self):
+        from sentinel_v2.crews.security_remediation_crew.security_remediation_crew import security_remediation_crew
+        crew = security_remediation_crew(cycle=2)
+        assert crew is not None
+
+    def test_deploy_crew_accepts_cycle(self):
+        from sentinel_v2.crews.deploy_crew.deploy_crew import deploy_crew
+        crew = deploy_crew(cycle=10)
+        assert crew is not None
+
+
 # ─── Flow Smoke Tests ────────────────────────────────────────────────────────
 
 class TestFlowSmoke:

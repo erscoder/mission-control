@@ -147,12 +147,16 @@ def run_daemon():
         while not _shutdown:
             cycle += 1
             flow = SentinelLoopFlow()  # fresh state each cycle
-            log.info("=== Cycle #%d ===", cycle)
-            print(f"\n{'='*50}\nCycle #{cycle}\n{'='*50}")
 
             resumable = _load_resumable_state()
             if resumable:
                 object.__setattr__(flow, "_state", resumable)
+            else:
+                # Pre-set cycle so start_cycle() increments to the right number
+                flow.state.cycle_count = cycle - 1
+
+            log.info("=== Cycle #%d ===", cycle)
+            print(f"\n{'='*50}\nCycle #{cycle}\n{'='*50}")
 
             try:
                 kickoff_result = flow.kickoff()

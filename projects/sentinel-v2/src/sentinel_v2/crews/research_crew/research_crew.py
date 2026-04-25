@@ -14,7 +14,7 @@ from sentinel_v2.config.embedder_config import get_memory_for_crew_full
 from sentinel_v2.crew_hooks import hook_crew_full
 
 
-def research_crew() -> Crew:
+def research_crew(cycle: int = 1) -> Crew:
     """Create the demand-research crew with dashboard streaming hooks."""
 
     minimax = get_minimax_llm()
@@ -150,5 +150,5 @@ def research_crew() -> Crew:
         memory=memory,
     )
 
-    crew = hook_crew_full(crew, phase="research", cycle=1)
+    crew = hook_crew_full(crew, phase="research", cycle=cycle)
     return crew

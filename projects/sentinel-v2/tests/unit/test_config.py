@@ -235,3 +235,86 @@ class TestGetMemoryForCrewFull:
         llm = get_minimax_llm()
         memory = get_memory_for_crew_full(llm)
         assert memory is not None
+
+
+# ---------------------------------------------------------------------------
+# llm_config — _patch_litellm_system_messages
+# ---------------------------------------------------------------------------
+
+class TestPatchLitellmSystemMessages:
+    """Tests for the global litellm system->user message rewrite."""
+
+    def setup_method(self):
+        _reset_llm_cache()
+        # Reset the global patch flag so each test can exercise the patch.
+        mod = sys.modules.get("sentinel_v2.config.llm_config")
+        if mod is not None:
+            mod._litellm_patched = False
+
+    def teardown_method(self):
+        _reset_llm_cache()
+        mod = sys.modules.get("sentinel_v2.config.llm_config")
+        if mod is not None:
+            mod._litellm_patched = False
+
+    def test_patch_rewrites_system_to_user_in_completion(self):
+        """litellm.completion messages with role=system are rewritten to user."""
+        from sentinel_v2.config.llm_config import _patch_litellm_system_messages
+
+        # Create a fake litellm module if not installed
+        fake_litellm = MagicMock()
+        captured = {}
+
+        def fake_completion(*args, **kwargs):
+            captured["messages"] = kwargs.get("messages", [])
+            return MagicMock()
+
+        async def fake_acompletion(*args, **kwargs):
+            return MagicMock()
+
+        fake_litellm.completion = fake_completion
+        fake_litellm.acompletion = fake_acompletion
+
+        with patch.dict("sys.modules", {"litellm": fake_litellm}):
+            _patch_litellm_system_messages()
+            fake_litellm.completion(model="test", messages=[
+                {"role": "system", "content": "You are helpful"},
+                {"role": "user", "content": "Hello"},
+            ])
+            assert captured["messages"][0]["role"] == "user"
+            assert captured["messages"][1]["role"] == "user"
+
+    def test_patch_is_idempotent(self):
+        """Calling _patch_litellm_system_messages twice does not double-wrap."""
+        from sentinel_v2.config import llm_config
+        from sentinel_v2.config.llm_config import _patch_litellm_system_messages
+
+        fake_litellm = MagicMock()
+        call_count = {"n": 0}
+
+        def fake_completion(*args, **kwargs):
+            call_count["n"] += 1
+            return MagicMock()
+
+        async def fake_acompletion(*args, **kwargs):
+            return MagicMock()
+
+        fake_litellm.completion = fake_completion
+        fake_litellm.acompletion = fake_acompletion
+
+        with patch.dict("sys.modules", {"litellm": fake_litellm}):
+            llm_config._litellm_patched = False
+            _patch_litellm_system_messages()
+            _patch_litellm_system_messages()  # second call should be a no-op
+            fake_litellm.completion(model="test", messages=[{"role": "user", "content": "hi"}])
+            assert call_count["n"] == 1  # not wrapped twice
+
+    def test_get_minimax_llm_triggers_litellm_patch(self, monkeypatch):
+        """get_minimax_llm calls _patch_litellm_system_messages."""
+        monkeypatch.setenv("MINIMAX_API_KEY", "test-key-patch")
+        from sentinel_v2.config import llm_config
+        llm_config._litellm_patched = False
+
+        with patch.object(llm_config, "_patch_litellm_system_messages") as mock_patch:
+            llm_config.get_minimax_llm("PatchTestModel")
+            mock_patch.assert_called_once()

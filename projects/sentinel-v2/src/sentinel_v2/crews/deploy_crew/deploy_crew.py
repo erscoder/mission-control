@@ -24,7 +24,7 @@ from sentinel_v2.tools import (
 )
 
 
-def deploy_crew() -> Crew:
+def deploy_crew(cycle: int = 1) -> Crew:
     """Create the deploy crew with dashboard streaming hooks."""
 
     minimax = get_minimax_llm()
@@ -174,5 +174,5 @@ def deploy_crew() -> Crew:
         memory=memory,
     )
 
-    crew = hook_crew_full(crew, phase="deploy", cycle=1)
+    crew = hook_crew_full(crew, phase="deploy", cycle=cycle)
     return crew

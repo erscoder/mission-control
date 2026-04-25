@@ -11,9 +11,10 @@ from crewai import Agent, Crew, Process, Task
 
 from sentinel_v2.config.llm_config import get_minimax_llm
 from sentinel_v2.config.embedder_config import get_memory_for_crew_full
+from sentinel_v2.crew_hooks import hook_crew_full
 
 
-def match_crew() -> Crew:
+def match_crew(cycle: int = 1) -> Crew:
     """Create the commercial qualification crew."""
 
     minimax = get_minimax_llm()
@@ -114,10 +115,13 @@ def match_crew() -> Crew:
         agent=qualifier,
     )
 
-    return Crew(
+    crew = Crew(
         agents=[customer_intel, qualifier],
         tasks=[icp_task, qualify_task],
         process=Process.sequential,
         verbose=True,
         memory=memory,
     )
+
+    crew = hook_crew_full(crew, phase="match", cycle=cycle)
+    return crew

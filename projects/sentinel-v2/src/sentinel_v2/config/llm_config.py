@@ -8,6 +8,68 @@ from crewai import LLM
 # Cached LLM instances per model name
 _llm_cache: dict[str, LLM] = {}
 
+# Global litellm patch flag
+_litellm_patched: bool = False
+
+
+def _patch_litellm_system_messages() -> None:
+    """Monkey-patch litellm.completion and litellm.acompletion to convert
+    ``system`` role messages to ``user`` before they hit the API.
+
+    MiniMax rejects ``system`` role (error 2013). The per-LLM patch in
+    ``_patch_system_messages`` covers most paths, but CrewAI hierarchical
+    process and litellm internals can bypass it. This global patch is a
+    safety net that catches ALL calls.
+
+    Idempotent — guarded by ``_litellm_patched`` module flag.
+    """
+    global _litellm_patched
+    if _litellm_patched:
+        return
+    _litellm_patched = True
+
+    try:
+        import litellm
+    except ImportError:
+        return
+
+    def _rewrite_system(messages):
+        if not messages:
+            return messages
+        for msg in messages:
+            if isinstance(msg, dict) and msg.get("role") == "system":
+                msg["role"] = "user"
+        return messages
+
+    _original_completion = litellm.completion
+
+    def _patched_completion(*args, **kwargs):
+        if "messages" in kwargs:
+            kwargs["messages"] = _rewrite_system(kwargs["messages"])
+        elif args:
+            args = list(args)
+            # litellm.completion(model, messages, ...)
+            if len(args) >= 2 and isinstance(args[1], list):
+                args[1] = _rewrite_system(args[1])
+            args = tuple(args)
+        return _original_completion(*args, **kwargs)
+
+    litellm.completion = _patched_completion
+
+    _original_acompletion = litellm.acompletion
+
+    async def _patched_acompletion(*args, **kwargs):
+        if "messages" in kwargs:
+            kwargs["messages"] = _rewrite_system(kwargs["messages"])
+        elif args:
+            args = list(args)
+            if len(args) >= 2 and isinstance(args[1], list):
+                args[1] = _rewrite_system(args[1])
+            args = tuple(args)
+        return await _original_acompletion(*args, **kwargs)
+
+    litellm.acompletion = _patched_acompletion
+
 
 def get_minimax_llm(model: str = "MiniMax-M2.7") -> LLM:
     """
@@ -24,6 +86,8 @@ def get_minimax_llm(model: str = "MiniMax-M2.7") -> LLM:
     if model in _llm_cache:
         return _llm_cache[model]
 
+    _patch_litellm_system_messages()
+
     api_key = os.environ.get("MINIMAX_API_KEY")
     if not api_key:
         raise RuntimeError(
@@ -39,7 +103,33 @@ def get_minimax_llm(model: str = "MiniMax-M2.7") -> LLM:
         base_url=base_url,
         api_key=api_key,
     )
+    _patch_system_messages(llm)
     _llm_cache[model] = llm
+    return llm
+
+
+def _patch_system_messages(llm: LLM) -> LLM:
+    """Rewrite ``system`` role messages to ``user`` before calling the API.
+
+    MiniMax rejects ``system`` role (error 2013). CrewAI sends agent
+    backstory/role as system messages. This mirrors the O1 conversion
+    already in crewai/llm.py lines 1711-1716.
+
+    Idempotent — safe to call multiple times on the same instance.
+    """
+    if getattr(llm, "_system_patched", False):
+        return llm
+
+    original_call = llm.call
+
+    def _patched_call(messages, *args, **kwargs):
+        for msg in messages:
+            if isinstance(msg, dict) and msg.get("role") == "system":
+                msg["role"] = "user"
+        return original_call(messages, *args, **kwargs)
+
+    llm.call = _patched_call  # type: ignore[method-assign]
+    llm._system_patched = True  # type: ignore[attr-defined]
     return llm
 
 
