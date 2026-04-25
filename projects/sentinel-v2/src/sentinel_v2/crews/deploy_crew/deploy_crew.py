@@ -151,10 +151,11 @@ def deploy_crew(cycle: int = 1) -> Crew:
     verify_task = Task(
         description=(
             "Verify the live deployment for slug={slug} under {erslabs_root}:\n\n"
-            "1. `curl -fsSL -o /dev/null -w '%{{http_code}}' https://{slug}.{erslabs_root}/` — "
-            "   expect 200.\n"
-            "2. `curl -fsSL https://{slug}-api.fly.dev/api/health` — expect JSON with "
-            "   `status: 'ok'` or equivalent.\n"
+            "1. Use `run_shell` to curl the frontend at https://{slug}.{erslabs_root}/ and "
+            "   confirm it returns HTTP 200 (use curl -o /dev/null -s -w with the status code "
+            "   format specifier).\n"
+            "2. Use `run_shell` to curl https://{slug}-api.fly.dev/api/health and confirm "
+            "   the JSON response contains status 'ok' or equivalent.\n"
             "3. `fly_status(app_name='{slug}-api')` — expect running state, zero crash loops.\n"
             "4. Check the Stripe webhook endpoint id reported by the deployer is present on Stripe.\n\n"
             "Return GO if all checks pass, else ROLLBACK with the failing check and its output."
