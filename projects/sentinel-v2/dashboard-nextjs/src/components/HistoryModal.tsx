@@ -27,7 +27,8 @@ export default function HistoryModal({ drafts, children }: HistoryModalProps) {
   }, [drafts])
 
   const validatedCount = items.filter((x) => x.status === 'validated').length
-  const rejectedCount = items.length - validatedCount
+  const failedCount = items.filter((x) => x.status === 'failed').length
+  const rejectedCount = items.length - validatedCount - failedCount
   const total = items.length
 
   return (
@@ -47,7 +48,7 @@ export default function HistoryModal({ drafts, children }: HistoryModalProps) {
                   History
                 </Dialog.Title>
                 <Dialog.Description className="text-[11px] text-muted-foreground">
-                  {total} total · {validatedCount} validated · {rejectedCount} rejected
+                  {total} total · {validatedCount} validated · {failedCount} failed · {rejectedCount} rejected
                 </Dialog.Description>
               </div>
             </div>
@@ -71,7 +72,7 @@ export default function HistoryModal({ drafts, children }: HistoryModalProps) {
                   <HistoryItem
                     key={d.id}
                     draft={d}
-                    variant={d.status === 'validated' ? 'validated' : 'rejected'}
+                    variant={d.status === 'validated' ? 'validated' : d.status === 'failed' ? 'failed' : 'rejected'}
                   />
                 ))}
               </ul>
@@ -88,14 +89,15 @@ function HistoryItem({
   variant,
 }: {
   draft: Draft
-  variant: 'validated' | 'rejected'
+  variant: 'validated' | 'rejected' | 'failed'
 }) {
-  const isDeployed = variant === 'validated'
+  const isValidated = variant === 'validated'
+  const isFailed = variant === 'failed'
   return (
     <li
       className={cn(
         'group relative flex items-start gap-3 overflow-hidden rounded-lg border bg-surface-muted/40 px-4 py-3 transition-colors hover:bg-surface-muted/60',
-        isDeployed ? 'border-emerald-500/20' : 'border-rose-500/20',
+        isValidated ? 'border-emerald-500/20' : 'border-rose-500/20',
       )}
     >
       {/* stripe */}
@@ -103,9 +105,11 @@ function HistoryItem({
         aria-hidden
         className={cn(
           'pointer-events-none absolute inset-y-0 left-0 w-[2px]',
-          isDeployed
+          isValidated
             ? 'bg-gradient-to-b from-emerald-400 to-green-500'
-            : 'bg-gradient-to-b from-rose-400 to-red-500',
+            : isFailed
+              ? 'bg-gradient-to-b from-orange-400 to-rose-500'
+              : 'bg-gradient-to-b from-rose-400 to-red-500',
         )}
       />
       <div className="min-w-0 flex-1">
@@ -116,12 +120,14 @@ function HistoryItem({
           <span
             className={cn(
               'chip font-mono uppercase tracking-wider',
-              isDeployed
+              isValidated
                 ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-                : 'border-rose-500/30 bg-rose-500/10 text-rose-300',
+                : isFailed
+                  ? 'border-orange-500/30 bg-orange-500/10 text-orange-300'
+                  : 'border-rose-500/30 bg-rose-500/10 text-rose-300',
             )}
           >
-            {isDeployed ? 'Validated' : 'Rejected at draft'}
+            {isValidated ? 'Validated' : isFailed ? 'Failed' : 'Rejected'}
           </span>
           {draft.cycle ? (
             <span className="chip bg-background/60">Cycle #{draft.cycle}</span>
@@ -141,7 +147,7 @@ function HistoryItem({
             {draft.description}
           </p>
         )}
-        {!isDeployed && draft.revision_notes && (
+        {!isValidated && draft.revision_notes && (
           <div className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2">
             <p className="text-[10px] font-mono uppercase tracking-wider text-amber-300">
               Reason
@@ -150,7 +156,7 @@ function HistoryItem({
           </div>
         )}
       </div>
-      {isDeployed && draft.deployment_url && (
+      {isValidated && draft.deployment_url && (
         <a
           href={draft.deployment_url}
           target="_blank"

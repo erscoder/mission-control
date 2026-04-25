@@ -454,8 +454,10 @@ def api_drafts_action():
         _unblock_daemon_for_retry(draft_id)
         ok = update_draft_status(draft_id, "queued", revision_notes="retry requested")
     elif action == "request_changes":
+        if not notes.strip():
+            return jsonify({"success": False, "error": "notes required for request_changes"}), 400
         _unblock_daemon_for_retry(draft_id)
-        ok = update_draft_status(draft_id, "queued", revision_notes=notes)
+        ok = update_draft_status(draft_id, "queued", revision_notes=notes.strip())
     elif action == "validate":
         ok = update_draft_status(draft_id, "validated")
     else:
