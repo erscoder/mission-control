@@ -5,6 +5,10 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-25 · b3404d4 — Fix deploy phase crash: CrewAI template variable collision
+
+- `deploy_crew.py`: verify_task description contained `%{{http_code}}` which CrewAI's template engine resolved to `{http_code}` and then failed with "Missing required template variable 'http_code'". Rewrote the curl verification instructions to describe the check without brace-delimited tokens. Deploy was never executing; it crashed at task initialization every time.
+
 ## 2026-04-25 · 65ad362 — Fix BUILD error 400, dashboard cycle#1 stuck, agent feed cross-cycle bleed
 
 **Bug 1 - BUILD fails with MiniMax "invalid message role: system":**
