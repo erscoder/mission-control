@@ -5,6 +5,11 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-25 · cce6ba9 — Fix history modal failed variant + REST validation
+
+- `HistoryModal`: added `failed` variant with distinct orange stripe and label. Fixed `rejectedCount` to exclude failed items from rejected total.
+- REST `/api/drafts/action`: `request_changes` now validates non-empty `notes`, matching socket handler behavior.
+
 ## 2026-04-25 · 4d06341 — Feedback loop + deploy validation
 
 - **New `validated` status**: `deployed` stays in the pipeline for user verification. Only `validated` moves to history. Prevents marking apps as done without confirming they work.
