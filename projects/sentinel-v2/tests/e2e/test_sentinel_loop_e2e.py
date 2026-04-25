@@ -114,6 +114,10 @@ class TestFlowEventChain:
         flow.start_cycle()
 
         mock_result = Mock()
+        # Force _extract_raw to fall through to .raw — without these, the auto-Mock
+        # for .pydantic / .json_dict shadows the real payload and parsers see Mock objects.
+        mock_result.pydantic = None
+        mock_result.json_dict = None
         mock_result.raw = [
             {
                 "title": "AI Code Review Tool",
@@ -155,6 +159,8 @@ class TestFlowEventChain:
         flow.state.cycle_count = 1
 
         mock_result = Mock()
+        mock_result.pydantic = None
+        mock_result.json_dict = None
         mock_result.raw = {
             "profile": {"name": "Kike", "skills": ["Python", "TypeScript"]},
             "score": 0.82,
@@ -210,6 +216,8 @@ class TestFlowEventChain:
         flow.state.cycle_count = 1
 
         mock_result = Mock()
+        mock_result.pydantic = None
+        mock_result.json_dict = None
         mock_result.raw = {"url": "https://myapp.onrender.com", "deployment_id": "xyz"}
 
         with patch(

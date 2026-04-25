@@ -253,11 +253,15 @@ class TestOrphanRecovery:
     """Tests for _recover_orphaned_drafts on daemon startup."""
 
     def test_marks_inflight_drafts_as_failed(self, isolated_db):
-        """queued/building/review/built drafts become failed after restart."""
+        """building/review/built drafts become failed after restart.
+
+        `queued` is intentionally NOT in the orphan-recovery set — it means
+        "approved, awaiting daemon pickup" and is preserved across restarts
+        so the retry flow can re-enter the cycle via start_cycle.
+        """
         from sentinel_v2.main import _recover_orphaned_drafts
 
         for draft_id, status in [
-            ("d-q", "queued"),
             ("d-b", "building"),
             ("d-r", "review"),
             ("d-built", "built"),
@@ -266,8 +270,16 @@ class TestOrphanRecovery:
 
         _recover_orphaned_drafts()
 
-        for draft_id in ("d-q", "d-b", "d-r", "d-built"):
+        for draft_id in ("d-b", "d-r", "d-built"):
             assert db.get(draft_id)["status"] == "failed"
+
+    def test_preserves_queued_drafts(self, isolated_db):
+        """queued drafts (approved, awaiting pickup) survive a daemon restart."""
+        from sentinel_v2.main import _recover_orphaned_drafts
+
+        db.upsert_draft("d-q", cycle=1, title="T", status="queued")
+        _recover_orphaned_drafts()
+        assert db.get("d-q")["status"] == "queued"
 
     def test_preserves_terminal_states(self, isolated_db):
         """pending/deployed/failed/rejected drafts are left alone."""
@@ -292,13 +304,13 @@ class TestOrphanRecovery:
             assert db.get(draft_id)["status"] == status
 
     def test_writes_revision_notes(self, isolated_db):
-        """Recovered drafts get a revision_notes explaining why."""
+        """Recovered (in-flight) drafts get a revision_notes explaining why."""
         from sentinel_v2.main import _recover_orphaned_drafts
 
-        db.upsert_draft("d-q", cycle=1, title="T", status="queued")
+        db.upsert_draft("d-b", cycle=1, title="T", status="building")
         _recover_orphaned_drafts()
 
-        draft = db.get("d-q")
+        draft = db.get("d-b")
         assert draft["status"] == "failed"
         assert "restart" in (draft["revision_notes"] or "").lower()
 

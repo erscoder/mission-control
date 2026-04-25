@@ -20,6 +20,30 @@ if str(_SRC) not in sys.path:
 
 
 @pytest.fixture(autouse=True)
+def _isolated_sentinel_db(tmp_path, monkeypatch):
+    """Point SENTINEL_DB_PATH at a per-test temp SQLite so tests never write
+    to the production sentinel.db. Without this, fixture data like
+    `[{"title": "Op A"}, {"title": "Op B"}]` leaks into the running daemon's
+    drafts table.
+
+    Also resets ``db._initialized`` (the module-level "schema already created"
+    flag) before and after each test, otherwise the schema-creation
+    short-circuit in ``_ensure_schema`` keeps the new tmp DB empty and tests
+    explode with "no such table: drafts".
+    """
+    db_path = tmp_path / "sentinel_test.db"
+    monkeypatch.setenv("SENTINEL_DB_PATH", str(db_path))
+    try:
+        from sentinel_v2 import db as _db
+        _db._initialized = False
+    except Exception:
+        _db = None
+    yield db_path
+    if _db is not None:
+        _db._initialized = False
+
+
+@pytest.fixture(autouse=True)
 def _allow_pytest_tmp_paths(monkeypatch):
     """Extend the allowed path prefix for the duration of a test so monkeypatched
     STATE_FILE / AGENT_MESSAGES_FILE pointing at pytest tmp_path are accepted by

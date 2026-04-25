@@ -5,6 +5,17 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-25 · TBD — Tests no longer leak into prod sentinel.db; full suite green
+
+**What changed:**
+- `tests/conftest.py`: new autouse `_isolated_sentinel_db` fixture that points `SENTINEL_DB_PATH` at a per-test temp SQLite and resets `db._initialized` (the module-level "schema already created" flag) before and after each test. Previously, fixture data like `[{"title": "Op A"}, {"title": "Op B"}]` from `test_crews_integration.py` leaked into the running daemon's `drafts` table → spurious "Op A / Op B" cards in the dashboard.
+- `tests/unit/test_main.py`: updated `TestOrphanRecovery` to match the corrected behavior (`queued` is no longer marked `failed` on restart). Added `test_preserves_queued_drafts` covering the new contract.
+- `tests/unit/test_config.py`, `tests/integration/test_crews_integration.py`: aligned with `get_memory_for_crew_full` returning None by default.
+- `tests/e2e/test_sentinel_loop_e2e.py`: explicitly set `mock_result.pydantic = None` and `mock_result.json_dict = None` so `_extract_raw` falls through to `.raw`. Without this, `Mock()` auto-generated those attributes as further Mocks, shadowing the real payload and causing 3 "pre-existing" e2e failures going back several sessions.
+- DB cleanup: removed the `Op A` (and any leftover `Op B`) stub drafts from production `sentinel.db`.
+
+**Result:** 228 passed, 0 failed (was 211 passed + 3-10 failing depending on what got dragged in).
+
 ## 2026-04-25 · TBD — Disable broken memory, surgical retry, all candidates → drafts, markdown feed
 
 **What changed:**
