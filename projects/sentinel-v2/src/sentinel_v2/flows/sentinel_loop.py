@@ -285,6 +285,14 @@ class SentinelLoopFlow(Flow[SentinelState]):
         )
 
         self.state.opportunities = self._parse_opportunities(result)
+
+        # ── Cross-cycle dedup ─────────────────────────────────────────────
+        from sentinel_v2.dedup import filter_duplicates
+        unique, dupes = filter_duplicates(self.state.opportunities)
+        if dupes:
+            log.info("Filtered %d duplicate(s): %s", len(dupes), [d.get("title", "?") for d in dupes])
+        self.state.opportunities = unique
+
         self.state.top_opportunity = (
             self.state.opportunities[0] if self.state.opportunities else None
         )
@@ -313,6 +321,10 @@ class SentinelLoopFlow(Flow[SentinelState]):
                     tags=opp.get("tags") or [],
                     status="pending",
                 )
+                # Persist source URLs for social response after validation
+                if opp.get("source_urls"):
+                    from sentinel_v2 import db as _db
+                    _db.patch_phase(draft_id, "opportunity", {"source_urls": opp["source_urls"]})
 
         # Update state after research
         opp_title = self.state.top_opportunity.get("title", "?") if self.state.top_opportunity else None

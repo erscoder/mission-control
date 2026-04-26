@@ -141,6 +141,31 @@ class TestSentinelLoopFlowKickoff:
         assert len(flow.state.opportunities) == 2
         assert flow.state.top_opportunity["title"] == "Op A"
 
+    def test_source_urls_stored_in_opportunity_blob(self, flow):
+        """run_research() persists source_urls via db.patch_phase."""
+        mock_result = Mock(spec=["raw"])
+        mock_result.raw = [
+            {"title": "Op A", "problem_statement": "A", "source_urls": ["https://reddit.com/r/test"]},
+        ]
+
+        with patch(
+            "sentinel_v2.crews.research_crew.research_crew.research_crew"
+        ) as mock_crew_cls, \
+             patch("sentinel_v2.dedup.filter_duplicates", side_effect=lambda c, **kw: (c, [])), \
+             patch("sentinel_v2.db.patch_phase") as mock_patch:
+            mock_crew = MagicMock()
+            mock_crew.kickoff.return_value = mock_result
+            mock_crew_cls.return_value = mock_crew
+
+            with patch.object(flow, "remember"):
+                flow.run_research()
+
+            mock_patch.assert_called_once_with(
+                flow.state.draft_id,
+                "opportunity",
+                {"source_urls": ["https://reddit.com/r/test"]},
+            )
+
     def test_run_match_stores_score(self, flow):
         """run_match() updates user_profile and match_score."""
         flow.state.top_opportunity = {"title": "DeFi Tracker"}

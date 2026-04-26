@@ -108,6 +108,99 @@ def compute_build_queue(drafts: list[dict]) -> list[dict]:
     return queue
 
 
+def _trigger_post_validation(draft_id: str) -> None:
+    """Background: run social response crew + portfolio update after validation.
+
+    Failures are logged but never propagated — validation status is already committed.
+    """
+    try:
+        from sentinel_v2 import db as _db
+        draft = _db.get(draft_id)
+        if not draft:
+            return
+
+        source_urls = draft.get("source_urls") or []
+        deployment_url = draft.get("deployment_url") or draft.get("frontend_url") or draft.get("url") or ""
+
+        # ── Social responses ──────────────────────────────────────────────
+        if source_urls and deployment_url:
+            try:
+                from sentinel_v2.crews.social_response_crew import social_response_crew
+                crew = social_response_crew()
+                result = crew.kickoff(inputs={
+                    "app_title": draft.get("title", ""),
+                    "app_url": deployment_url,
+                    "problem": draft.get("problem", ""),
+                    "solution": draft.get("solution", ""),
+                    "source_urls": source_urls,
+                })
+                raw = getattr(result, "raw", None)
+                if raw:
+                    import json as _json
+                    responses = _json.loads(raw) if isinstance(raw, str) else raw
+                    _db.patch_phase(draft_id, "deploy_info", {"social_responses": responses})
+                    log.info("Social responses stored for %s", draft_id)
+            except Exception as exc:
+                log.warning("Social response crew failed for %s: %s", draft_id, exc)
+
+        # ── Portfolio update ──────────────────────────────────────────────
+        if deployment_url:
+            try:
+                from sentinel_v2.crews.portfolio_crew import portfolio_crew
+                crew = portfolio_crew()
+                crew.kickoff(inputs={
+                    "title": draft.get("title", ""),
+                    "tagline": draft.get("tagline", ""),
+                    "problem": draft.get("problem", ""),
+                    "url": deployment_url,
+                    "tags": draft.get("tags") or [],
+                    "deployed_at": draft.get("updated_at", ""),
+                    "slug": draft_id,
+                })
+                log.info("Portfolio updated for %s", draft_id)
+
+                # Rebuild and deploy landing
+                _rebuild_landing()
+            except Exception as exc:
+                log.warning("Portfolio crew failed for %s: %s", draft_id, exc)
+
+    except Exception as exc:
+        log.error("Post-validation trigger failed for %s: %s", draft_id, exc)
+
+
+def _rebuild_landing() -> None:
+    """Build and deploy erslabs-landing to Cloudflare Pages."""
+    import subprocess
+    landing_dir = Path(__file__).parent.parent / "erslabs-landing"
+    if not landing_dir.exists():
+        log.warning("erslabs-landing directory not found, skipping deploy")
+        return
+    try:
+        subprocess.run(
+            ["npm", "run", "build"],
+            cwd=str(landing_dir),
+            check=True,
+            capture_output=True,
+            timeout=120,
+        )
+        log.info("Landing build succeeded")
+        # Deploy via wrangler if available
+        subprocess.run(
+            ["npx", "wrangler", "pages", "deploy", "out", "--project-name=erslabs"],
+            cwd=str(landing_dir),
+            check=True,
+            capture_output=True,
+            timeout=120,
+        )
+        log.info("Landing deployed to Cloudflare Pages")
+    except FileNotFoundError:
+        log.warning("npm/wrangler not found, skipping landing deploy")
+    except subprocess.CalledProcessError as exc:
+        log.warning("Landing build/deploy failed: %s", exc.stderr[:500] if exc.stderr else exc)
+    except subprocess.TimeoutExpired:
+        log.warning("Landing build/deploy timed out")
+
+
 def read_flow_breakdown() -> dict:
     """Read granular flow breakdown from file."""
     default = {
@@ -363,12 +456,17 @@ def handle_request_changes(data):
 
 @socketio.on("validate_draft", namespace="/dashboard")
 def handle_validate_draft(data):
-    """Mark a deployed draft as validated — moves it to history."""
+    """Mark a deployed draft as validated — moves it to history.
+
+    Also triggers social response composition + portfolio update in the background.
+    """
     draft_id = (data or {}).get("id", "")
     if not draft_id:
         emit("action_response", {"success": False, "action": "validate_draft", "error": "missing id"}, namespace="/dashboard")
         return
     ok = update_draft_status(draft_id, "validated")
+    if ok:
+        threading.Thread(target=_trigger_post_validation, args=(draft_id,), daemon=True).start()
     emit("action_response", {"success": ok, "action": "validate_draft", "id": draft_id}, namespace="/dashboard")
 
 
@@ -460,6 +558,8 @@ def api_drafts_action():
         ok = update_draft_status(draft_id, "queued", revision_notes=notes.strip())
     elif action == "validate":
         ok = update_draft_status(draft_id, "validated")
+        if ok:
+            threading.Thread(target=_trigger_post_validation, args=(draft_id,), daemon=True).start()
     else:
         ok = update_draft_status(draft_id, "rejected")
     return jsonify({"success": ok, "action": action, "id": draft_id})

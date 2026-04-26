@@ -108,11 +108,13 @@ def research_crew(cycle: int = 1) -> Crew:
             "  - distribution_hypothesis: 1-2 channels a solo operator could reach 1000 ICPs in 90 days\n"
             "  - complexity: 1-5 (1 = one weekend, 5 = 3+ months)\n"
             "  - tech_stack_fit: how well this fits Next.js + Postgres + Stripe delivery in ~1-2 weeks (0-1)\n"
+            "  - source_urls: list of 1-5 actual URLs of posts/threads where the pain was discovered\n"
         ),
         expected_output=(
             "A JSON list of 8 opportunity candidates, each with the fields above. Each demand_signal "
             "entry MUST include a source type (reddit|twitter|producthunt|hn|upwork|g2|hiring|other) "
-            "and a short quoted pain statement or stat."
+            "and a short quoted pain statement or stat. "
+            "Each candidate MUST include source_urls with real URLs."
         ),
         agent=demand_hunter,
     )
@@ -137,7 +139,8 @@ def research_crew(cycle: int = 1) -> Crew:
             "JSON list of exactly 3 opportunities (top ranked by commercial_score). Each has: "
             "title, tagline, problem, solution, description, icp, demand_signals, willingness_to_pay, "
             "suggested_price, distribution_hypothesis, complexity (int 1-5), tech_fit (float 0-1), "
-            "commercial_score (float 0-1), estimated_hours (int), kill_risks (list), tags (list)."
+            "commercial_score (float 0-1), estimated_hours (int), kill_risks (list), tags (list), "
+            "source_urls (list of real URLs)."
         ),
         agent=commercial_validator,
     )
