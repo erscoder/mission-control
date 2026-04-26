@@ -9,6 +9,7 @@ from crewai import Agent, Crew, Task, Process
 from sentinel_v2.config.llm_config import get_minimax_llm
 from sentinel_v2.config.embedder_config import get_memory_for_crew_full
 from sentinel_v2.crew_hooks import hook_crew_full
+from sentinel_v2.data.deploy_templates import load_templates as _load_deploy_templates
 from sentinel_v2.tools import (
     ListFilesTool,
     RunShellTool,
@@ -24,6 +25,7 @@ def build_crew(cycle: int = 1) -> Crew:
     minimax = get_minimax_llm()
     minimax_smart = get_minimax_llm("MiniMax-M2.7")
     memory = get_memory_for_crew_full(minimax)
+    deploy_templates = _load_deploy_templates()
 
     # Shared tool instances
     write_file = WriteFileTool()
@@ -104,7 +106,8 @@ def build_crew(cycle: int = 1) -> Crew:
             "1. You materialize every file to disk with `write_file` under `<workspace_dir>/backend/`. "
             "   Never return code as chat.\n"
             "2. The backend ships to fly.io, so you MUST produce a Dockerfile and fly.toml in "
-            "   `<workspace_dir>/backend/` matching the chosen stack.\n"
+            "   `<workspace_dir>/backend/` matching the chosen stack. Use the DEPLOY TEMPLATES "
+            "   below as a starting point — adapt to the actual stack but keep the structure.\n"
             "3. When the plan calls for paid tiers, you CREATE the real Stripe products using "
             "   `stripe_create_product` (idempotent via draft_id metadata). Then you embed the returned "
             "   `price_ids` directly in your code — no placeholders like `price_XXX`. Before creating, "
@@ -114,7 +117,12 @@ def build_crew(cycle: int = 1) -> Crew:
             "   once the app URL is known.\n"
             "5. Read `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` from env at runtime. List them in "
             "   `.env.example` but never hardcode.\n"
-            "6. Tests only on the risky slices: auth, Stripe webhook, core business rule."
+            "6. Tests only on the risky slices: auth, Stripe webhook, core business rule.\n\n"
+            "## DEPLOY TEMPLATES\n"
+            "Pick the template closest to your stack, copy it into `<workspace_dir>/backend/`, "
+            "and adapt. Replace `{{SLUG}}` in fly.toml with the actual slug. "
+            "DO NOT write Dockerfiles from scratch — always start from these templates.\n\n"
+            f"{deploy_templates}"
         ),
         tools=[write_file, list_files, run_shell, stripe_create_product, stripe_list_products],
         llm=minimax,
@@ -273,9 +281,10 @@ def build_crew(cycle: int = 1) -> Crew:
             "  plan (free trial, paid monthly, paid yearly — whatever the plan calls for).\n"
             "- Embed the returned `price_ids` directly in your checkout code. No `price_XXX` placeholders.\n\n"
             "DEPLOY ARTIFACTS (required for fly.io):\n"
-            "- `Dockerfile` — multi-stage build that produces a small runtime image.\n"
-            "- `fly.toml` — with app name `{slug}-api`, primary region, health check on /api/health, "
-            "  internal_port matching the HTTP server, [env] minimum, secrets via flyctl (not committed).\n\n"
+            "- `Dockerfile` — COPY from the deploy templates in your backstory instructions. "
+            "  Adapt the template to the chosen stack. DO NOT write from scratch.\n"
+            "- `fly.toml` — COPY from the deploy templates. Replace `{{SLUG}}` with `{slug}`. "
+            "  Must have app name `{slug}-api`, health check on /api/health, internal_port 8080.\n\n"
             "HARD REQUIREMENTS:\n"
             "- Strict TypeScript throughout.\n"
             "- Zod (or class-validator if NestJS) on every input, including query params.\n"
