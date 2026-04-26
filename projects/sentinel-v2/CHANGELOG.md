@@ -5,6 +5,10 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-26 · b8b7b4a — Register new crews in package init
+
+- `crews/__init__.py`: added `social_response_crew` and `portfolio_crew` to eager imports and `__all__`, matching existing pattern for all other crews.
+
 ## 2026-04-26 · be7e9cf — Dedup + Social Response + ErsLabs Landing
 
 - **Cross-cycle dedup** (`dedup.py`): filters duplicate opportunities against existing drafts using `SequenceMatcher` on title+problem text. Threshold configurable via `SENTINEL_DEDUP_THRESHOLD` env var (default 0.7).
