@@ -5,6 +5,13 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-26 · 43a4959 — Deploy templates for build crew
+
+- Added proven Dockerfile + fly.toml templates for three stacks: **Python/FastAPI**, **Node/NestJS**, **Rust/Axum**.
+- Templates injected into `backend_lead` agent backstory so the LLM copies from working multi-stage builds instead of generating from scratch.
+- `backend_task` description updated to reference templates explicitly.
+- Template loader in `data/deploy_templates/__init__.py` auto-discovers stack directories.
+
 ## 2026-04-26 · b8b7b4a — Register new crews in package init
 
 - `crews/__init__.py`: added `social_response_crew` and `portfolio_crew` to eager imports and `__all__`, matching existing pattern for all other crews.
