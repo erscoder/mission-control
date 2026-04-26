@@ -5,6 +5,18 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-26 · be7e9cf — Dedup + Social Response + ErsLabs Landing
+
+- **Cross-cycle dedup** (`dedup.py`): filters duplicate opportunities against existing drafts using `SequenceMatcher` on title+problem text. Threshold configurable via `SENTINEL_DEDUP_THRESHOLD` env var (default 0.7).
+- **Source URL tracking**: research crew now outputs `source_urls` per opportunity. Persisted in opportunity blob via `db.patch_phase`.
+- **Social response crew**: new crew that composes platform-adapted replies (Reddit casual, Twitter concise, HN technical) for source communities after validation. Compose-only — user posts manually.
+- **Portfolio crew**: new crew that maintains `erslabs-landing/data/portfolio.json` with validated apps.
+- **Post-validation trigger**: on draft validation, background thread runs social response + portfolio update + landing rebuild/deploy.
+- **ErsLabs landing page** (`erslabs-landing/`): Next.js 14 App Router, static export, Tailwind CSS, Lucide icons. Sections: Hero, How It Works, Portfolio grid, About, Footer. Cloudflare Pages ready.
+- **ErsLabs branding**: logo.svg, favicon.svg, og-image.svg with hexagonal neural-network icon + blue accent.
+- **deploy.sh**: initial Cloudflare Pages deployment script.
+- 22 new unit tests (230 total, all passing).
+
 ## 2026-04-25 · cce6ba9 — Fix history modal failed variant + REST validation
 
 - `HistoryModal`: added `failed` variant with distinct orange stripe and label. Fixed `rejectedCount` to exclude failed items from rejected total.
