@@ -5,6 +5,15 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-26 · 86dcb35 — Automatic retry loop for build/deploy + error display
+
+- **Build retry loop**: on crew failure, feeds the error back as `revision_notes` and re-runs the build crew (up to `SENTINEL_MAX_BUILD_RETRIES`, default 3). Dashboard shows `[Auto-retry N/M]` status.
+- **Deploy retry loop**: on crew exception or QA ROLLBACK, feeds the failing step back to the deploy crew and retries (up to `SENTINEL_MAX_DEPLOY_RETRIES`, default 2).
+- **Error visibility**: failed pipeline cards now show `revision_notes` (error reason) always visible below the title in a red mono-font banner — no need to expand the card.
+- State model: added `build_attempts` and `deploy_attempts` counters to `SentinelState`.
+- Deploy crew: added `deploy_feedback` input to `deploy_task` description for retry context.
+- 5 new unit tests covering retry success, retry exhaustion, and first-attempt success paths.
+
 ## 2026-04-26 · 43a4959 — Deploy templates for build crew
 
 - Added proven Dockerfile + fly.toml templates for three stacks: **Python/FastAPI**, **Node/NestJS**, **Rust/Axum**.
