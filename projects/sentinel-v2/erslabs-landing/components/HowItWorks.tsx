@@ -5,7 +5,9 @@ const steps = [
     icon: Ear,
     num: '01',
     title: 'Listen',
-    accent: 'accent-cyan',
+    iconWrap: 'bg-accent-cyan/10 border-accent-cyan/20',
+    iconColor: 'text-accent-cyan',
+    labelColor: 'text-accent-cyan',
     description:
       'Our agents continuously scan Reddit, Twitter, Hacker News, and 50+ forums for genuine complaints — not trends, not hype. Real people describing real friction, with evidence they would pay for a solution.',
     detail: '847 sources monitored',
@@ -14,7 +16,9 @@ const steps = [
     icon: Hammer,
     num: '02',
     title: 'Build',
-    accent: 'brand-400',
+    iconWrap: 'bg-brand-400/10 border-brand-400/20',
+    iconColor: 'text-brand-400',
+    labelColor: 'text-brand-400',
     description:
       'A crew of 6 specialized AI agents — product manager, frontend engineer, backend engineer, code reviewer, security auditor, and QA lead — collaborate to ship a complete, tested MVP with Stripe payments from day one.',
     detail: '6 agents per build',
@@ -23,7 +27,9 @@ const steps = [
     icon: Rocket,
     num: '03',
     title: 'Ship',
-    accent: 'brand-300',
+    iconWrap: 'bg-brand-300/10 border-brand-300/20',
+    iconColor: 'text-brand-300',
+    labelColor: 'text-brand-300',
     description:
       'Auto-deployed to production: backend on Fly.io, frontend on Cloudflare Pages, custom domain under erslabs.net, Stripe webhooks wired, SSL certificates provisioned. Zero manual intervention.',
     detail: '< 4 hours end-to-end',
@@ -59,11 +65,11 @@ export function HowItWorks() {
               <div className="p-6 rounded-xl border border-surface-600/50 bg-surface-900/60 backdrop-blur-sm hover:border-brand-500/30 transition-all duration-300 h-full">
                 {/* Top row */}
                 <div className="flex items-center gap-4 mb-5">
-                  <div className={`w-14 h-14 rounded-2xl bg-${step.accent}/10 border border-${step.accent}/20 flex items-center justify-center`}>
-                    <step.icon className={`w-6 h-6 text-${step.accent}`} />
+                  <div className={`w-14 h-14 rounded-2xl ${step.iconWrap} border flex items-center justify-center`}>
+                    <step.icon className={`w-6 h-6 ${step.iconColor}`} />
                   </div>
                   <div>
-                    <span className={`text-${step.accent} font-mono text-xs tracking-wider`}>
+                    <span className={`${step.labelColor} font-mono text-xs tracking-wider`}>
                       STEP {step.num}
                     </span>
                     <h3 className="text-2xl font-bold tracking-tight">{step.title}</h3>
