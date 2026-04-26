@@ -5,6 +5,19 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-26 · 7d2ec27 — Fix CSS purging in ErsLabs landing
+
+- Dynamic Tailwind class interpolation (`bg-${accent}/10`) invisible to JIT scanner. Replaced with explicit pre-composed class strings in `HowItWorks.tsx`.
+
+## 2026-04-26 · d8b050a — Redesign ErsLabs landing — dark theme with agent pipeline showcase
+
+- Complete visual overhaul: void-black canvas, emerald accent (#10B981), terminal-native aesthetic.
+- New **Pipeline** section showcasing 6 named agents (Nova, Atlas, Echo, Forge, Sentinel, Hermes) with gradient icons and phase badges.
+- New **CaseStudy** section: ComplianceDesk end-to-end story from Reddit discovery to live deploy in 3h49m.
+- Enhanced Hero with terminal preview, status badge, and radial glows.
+- Custom Tailwind theme: surface palette, accent colors, animations (float, glow, scan-line, slide-up).
+- CSS utilities: `.text-gradient`, `.border-glow`, `.card-shine`, `.grid-bg`, `.noise`, `.pipeline-flow`.
+
 ## 2026-04-26 · 54ed188 — Process queued drafts continuously
 
 - Daemon loop now checks for remaining queued drafts after each cycle. If any exist, starts the next cycle immediately instead of sleeping `SENTINEL_LOOP_INTERVAL_HOURS`. Only sleeps when the queue is empty.
