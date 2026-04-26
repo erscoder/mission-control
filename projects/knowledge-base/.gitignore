@@ -1,0 +1,23 @@
+# Byte-compiled
+__pycache__/
+*.py[cod]
+.venv/
+
+# Session/cookies (contain auth tokens)
+session.json
+
+# Raw data
+raw/x-bookmarks/bookmarks.json
+raw/x-bookmarks/*.json
+raw/linkedin-saved/*.json
+raw/voice-notes/*.md
+
+# Outputs
+outputs/*.md
+
+# Environment
+.env
+.env.local
+
+# OS
+.DS_Store
