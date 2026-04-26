@@ -5,6 +5,10 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-26 · 54ed188 — Process queued drafts continuously
+
+- Daemon loop now checks for remaining queued drafts after each cycle. If any exist, starts the next cycle immediately instead of sleeping `SENTINEL_LOOP_INTERVAL_HOURS`. Only sleeps when the queue is empty.
+
 ## 2026-04-26 · 86dcb35 — Automatic retry loop for build/deploy + error display
 
 - **Build retry loop**: on crew failure, feeds the error back as `revision_notes` and re-runs the build crew (up to `SENTINEL_MAX_BUILD_RETRIES`, default 3). Dashboard shows `[Auto-retry N/M]` status.
