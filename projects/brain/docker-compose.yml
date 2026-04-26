@@ -1,0 +1,15 @@
+# Docker compose for Brain's LinkedIn scraper
+# Usage: docker compose up -d chromium
+
+services:
+  chromium:
+    image: browserless/chrome:latest
+    environment:
+      - MAX_CONCURRENT_SESSIONS=1
+      - CONNECTION_TIMEOUT=60000
+      - MAX_QUEUE_LENGTH=10
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    # Or use puppeteer container for CDP:
+    # image: ghcr.io/browserless/puppeteer:latest

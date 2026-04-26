@@ -2,24 +2,16 @@
 
 > Actualizado: 2026-04-26
 
-## Estadísticas
+## Crons activos
 
-| Wiki | Artículos | Fuentes raw |
-|------|-----------|-------------|
-| ai-llm.md | — | — |
-| ai-agents.md | — | — |
-| javascript-typescript.md | — | — |
-| react-nextjs.md | — | — |
-| backend-databases.md | — | — |
-| dev-tools.md | — | — |
-| architecture.md | — | — |
-| content-creation.md | — | — |
-| career.md | — | — |
-| css-design.md | — | — |
-| linux-devops.md | — | — |
-| business.md | — | — |
+| Cron | Schedule | Script | Estado |
+|------|----------|--------|--------|
+| X bookmarks | `0 */6 * * *` | `sync_x_bookmarks.sh` | ⏸ pendiente |
+| LinkedIn sync | `0 9 * * 0` | `scrape_linkedin.py` | ⏸ pendiente |
+| Health check | `0 9 1-7 * 0` | `health_check.sh` | ⏸ pendiente |
+| Linting | `0 10 * * 1` | `lint_wiki.py` | ⏸ pendiente |
 
-## Raw entries (sin procesar)
+## Raw entries
 
 | Fuente | Count | Última fecha |
 |--------|-------|-------------|
@@ -31,20 +23,11 @@
 
 | Fecha | Output | Wiki actualizada |
 |-------|--------|-----------------|
-| — | — | — |
-
-## Crons activos
-
-| Cron | Schedule | Script | Estado |
-|------|----------|--------|--------|
-| X bookmarks sync | `0 */6 * * *` | `scripts/sync_x_bookmarks.sh` | ⏸ pendiente |
-| LinkedIn sync | `0 9 * * 0` | `scripts/sync_linkedin.sh` | ⏸ pendiente |
-| Health check | `0 9 1-7 * 0` | `scripts/health_check.sh` | ⏸ pendiente |
 
 ## Próximos pasos
 
-- [ ] Configurar scraping de X con Playwright
-- [ ] Configurar scraping de LinkedIn con CDP
-- [ ] Integrar notas de voz via Telegram
-- [ ] Primer sync completo
+- [ ] Instalar dependencias: `pip install -r requirements.txt`
+- [ ] Login X: `python3 scripts/login_x.py`
+- [ ] Probar primer sync: `python3 scripts/scrape_x_bookmarks.py --visible`
 - [ ] Configurar crons en producción
+- [ ] Docker LinkedIn: `docker compose up -d chromium`
