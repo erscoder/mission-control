@@ -131,6 +131,10 @@ def deploy_crew(cycle: int = 1) -> Crew:
         description=(
             "INPUT: workspace_dir={workspace_dir}; slug={slug}; draft_id={draft_id}; "
             "erslabs_root={erslabs_root}; stripe_publishable={stripe_publishable}.\n\n"
+            "PREVIOUS ATTEMPT FEEDBACK (if any): {deploy_feedback}\n"
+            "If feedback is provided, this is a RETRY. Read the error carefully, diagnose the root "
+            "cause using `list_files` and `run_shell`, fix the underlying issue (e.g. fix Dockerfile, "
+            "fly.toml, missing deps), then re-deploy. Do NOT repeat the same mistake.\n\n"
             "Deploy the build that lives in `{workspace_dir}/` to production. Follow the EXACT sequence "
             "in your backstory — do not skip steps, do not reorder.\n\n"
             "At the end, report:\n"

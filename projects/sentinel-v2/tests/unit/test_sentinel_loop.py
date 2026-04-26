@@ -756,3 +756,130 @@ class TestModuleLevelKickoff:
             plot()
 
             mock_flow.plot.assert_called_once()
+
+
+class TestBuildRetryLoop:
+    """Tests for the automatic build retry feedback loop."""
+
+    def test_build_retries_on_failure_then_succeeds(self, flow):
+        """Build fails once, then succeeds on second attempt."""
+        flow.state.top_opportunity = {"title": "SaaS Tool"}
+        flow.state.user_profile = {"name": "Kike"}
+
+        mock_result = Mock(spec=["raw"])
+        mock_result.raw = "Built: app"
+
+        mock_crew = MagicMock()
+        mock_crew.kickoff.side_effect = [RuntimeError("npm ci failed"), mock_result]
+
+        with patch(
+            "sentinel_v2.crews.build_crew.build_crew.build_crew",
+            return_value=mock_crew,
+        ):
+            with patch.object(flow, "remember"):
+                flow.run_build()
+
+        assert flow.state.build_output is not None
+        assert flow.state.build_attempts == 2
+        assert mock_crew.kickoff.call_count == 2
+        # Second call should include error feedback in revision_notes
+        second_call_inputs = mock_crew.kickoff.call_args_list[1].kwargs["inputs"]
+        assert "npm ci failed" in second_call_inputs["revision_notes"]
+
+    def test_build_exhausts_retries_marks_failed(self, flow):
+        """Build fails all retries and marks draft as failed."""
+        flow.state.top_opportunity = {"title": "Broken App"}
+        flow.state.draft_id = "draft_test_retry"
+
+        mock_crew = MagicMock()
+        mock_crew.kickoff.side_effect = RuntimeError("persistent failure")
+
+        with patch(
+            "sentinel_v2.crews.build_crew.build_crew.build_crew",
+            return_value=mock_crew,
+        ), patch("sentinel_v2.dashboard_state.update_draft") as mock_update:
+            with patch.object(flow, "remember"):
+                flow.run_build()
+
+        assert flow.state.build_output is None
+        assert flow.state.error is not None
+        assert "persistent failure" in flow.state.error
+        # Should have tried MAX_BUILD_RETRIES times
+        from sentinel_v2.flows.sentinel_loop import MAX_BUILD_RETRIES
+        assert flow.state.build_attempts == MAX_BUILD_RETRIES
+        # Last update_draft should set status=failed
+        final_call = mock_update.call_args_list[-1]
+        assert final_call.kwargs.get("status") == "failed"
+        assert "persistent failure" in final_call.kwargs.get("revision_notes", "")
+
+    def test_build_first_attempt_succeeds_no_retry(self, flow):
+        """Build succeeds on first try — no retry needed."""
+        flow.state.top_opportunity = {"title": "Good App"}
+
+        mock_result = Mock(spec=["raw"])
+        mock_result.raw = "Built: good app"
+        mock_crew = MagicMock()
+        mock_crew.kickoff.return_value = mock_result
+
+        with patch(
+            "sentinel_v2.crews.build_crew.build_crew.build_crew",
+            return_value=mock_crew,
+        ):
+            with patch.object(flow, "remember"):
+                flow.run_build()
+
+        assert flow.state.build_attempts == 1
+        assert flow.state.build_output is not None
+        assert mock_crew.kickoff.call_count == 1
+
+
+class TestDeployRetryLoop:
+    """Tests for the automatic deploy retry feedback loop."""
+
+    def test_deploy_retries_on_rollback_then_succeeds(self, flow):
+        """Deploy gets ROLLBACK, retries, then succeeds."""
+        flow.state.approved = True
+        flow.state.build_output = "Built: app"
+        flow.state.top_opportunity = {"title": "Opportunity"}
+
+        rollback_result = Mock(spec=["raw"])
+        rollback_result.raw = {"go_no_go": "ROLLBACK", "failing_step": "health check"}
+
+        success_result = Mock(spec=["raw"])
+        success_result.raw = {"url": "https://example.com", "deployment_id": "xyz", "go_no_go": "GO"}
+
+        mock_crew = MagicMock()
+        mock_crew.kickoff.side_effect = [rollback_result, success_result]
+
+        with patch(
+            "sentinel_v2.crews.deploy_crew.deploy_crew.deploy_crew",
+            return_value=mock_crew,
+        ):
+            with patch.object(flow, "remember"):
+                flow.run_deploy()
+
+        assert flow.state.deployed is True
+        assert flow.state.deploy_attempts == 2
+
+    def test_deploy_exhausts_retries_marks_failed(self, flow):
+        """Deploy fails all retries."""
+        flow.state.approved = True
+        flow.state.build_output = "Built: app"
+        flow.state.top_opportunity = {"title": "Opportunity"}
+        flow.state.draft_id = "draft_deploy_retry"
+
+        mock_crew = MagicMock()
+        mock_crew.kickoff.side_effect = RuntimeError("fly deploy failed")
+
+        with patch(
+            "sentinel_v2.crews.deploy_crew.deploy_crew.deploy_crew",
+            return_value=mock_crew,
+        ), patch("sentinel_v2.dashboard_state.update_draft") as mock_update:
+            with patch.object(flow, "remember"):
+                flow.run_deploy()
+
+        assert flow.state.deployed is False
+        from sentinel_v2.flows.sentinel_loop import MAX_DEPLOY_RETRIES
+        assert flow.state.deploy_attempts == MAX_DEPLOY_RETRIES
+        final_call = mock_update.call_args_list[-1]
+        assert final_call.kwargs.get("status") == "failed"

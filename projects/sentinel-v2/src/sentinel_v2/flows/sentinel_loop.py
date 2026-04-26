@@ -51,6 +51,10 @@ def _make_slug(title: str) -> str:
 
 # ── State ────────────────────────────────────────────────────────────────────
 
+MAX_BUILD_RETRIES = int(os.getenv("SENTINEL_MAX_BUILD_RETRIES", "3"))
+MAX_DEPLOY_RETRIES = int(os.getenv("SENTINEL_MAX_DEPLOY_RETRIES", "2"))
+
+
 class SentinelState(BaseModel):
     """Flow state — lives inside the Flow, serialized on kickoff/resume."""
 
@@ -58,6 +62,10 @@ class SentinelState(BaseModel):
     current_phase: str = "research"
     last_update: str = ""
     error: Optional[str] = None
+
+    # Retry counters (for automatic feedback loops)
+    build_attempts: int = 0
+    deploy_attempts: int = 0
 
     # Research
     opportunities: list[dict] = []
@@ -559,30 +567,60 @@ class SentinelLoopFlow(Flow[SentinelState]):
             or f"cycle-{self.state.cycle_count}"
         )
 
-        try:
-            crew = build_crew(cycle=self.state.cycle_count)
-            result = crew.kickoff(
-                inputs={
-                    "opportunity": self.state.top_opportunity,
-                    "operator_capacity": self._get_operator_capacity(),
-                    "workspace_dir": self.state.workspace_dir,
-                    "slug": slug,
-                    "draft_id": self.state.draft_id or "unknown",
-                    "revision_notes": self.state.revision_notes or "",
-                }
-            )
-        except Exception as e:
-            log.error("Build crew failed: %s", e)
-            if self.state.draft_id:
-                try:
-                    from sentinel_v2.dashboard_state import update_draft
-                    update_draft(self.state.draft_id, status="failed",
-                                 revision_notes=f"Build failed: {e}")
-                except Exception as db_err:
-                    log.warning("Could not mark draft failed: %s", db_err)
-            self.state.error = str(e)
-            self._save_checkpoint()
-            return
+        # ── Build with automatic retry loop ──────────────────────────────
+        feedback = self.state.revision_notes or ""
+        result = None
+
+        while self.state.build_attempts < MAX_BUILD_RETRIES:
+            self.state.build_attempts += 1
+            attempt = self.state.build_attempts
+            log.info("Build attempt %d/%d", attempt, MAX_BUILD_RETRIES)
+
+            if self.state.draft_id and attempt > 1:
+                from sentinel_v2.dashboard_state import update_draft
+                update_draft(
+                    self.state.draft_id,
+                    status="building",
+                    build_progress=0.1,
+                    revision_notes=f"[Auto-retry {attempt}/{MAX_BUILD_RETRIES}] {feedback}",
+                )
+
+            try:
+                crew = build_crew(cycle=self.state.cycle_count)
+                result = crew.kickoff(
+                    inputs={
+                        "opportunity": self.state.top_opportunity,
+                        "operator_capacity": self._get_operator_capacity(),
+                        "workspace_dir": self.state.workspace_dir,
+                        "slug": slug,
+                        "draft_id": self.state.draft_id or "unknown",
+                        "revision_notes": feedback,
+                    }
+                )
+                # Success — break out of retry loop
+                break
+            except Exception as e:
+                error_msg = str(e)
+                log.error("Build attempt %d/%d failed: %s", attempt, MAX_BUILD_RETRIES, error_msg)
+                feedback = f"Build attempt {attempt} failed with error:\n{error_msg}\n\nFix the issues and try again."
+
+                if attempt >= MAX_BUILD_RETRIES:
+                    log.error("Build exhausted all %d retries", MAX_BUILD_RETRIES)
+                    if self.state.draft_id:
+                        try:
+                            from sentinel_v2.dashboard_state import update_draft
+                            update_draft(
+                                self.state.draft_id,
+                                status="failed",
+                                revision_notes=f"Build failed after {MAX_BUILD_RETRIES} attempts. Last error: {error_msg}",
+                            )
+                        except Exception as db_err:
+                            log.warning("Could not mark draft failed: %s", db_err)
+                    self.state.error = error_msg
+                    self._save_checkpoint()
+                    return
+
+                self._save_checkpoint()
 
         self.state.build_output = str(result.raw) if hasattr(result, "raw") else str(result)
 
@@ -888,51 +926,97 @@ class SentinelLoopFlow(Flow[SentinelState]):
             )
         )
 
-        try:
-            crew = deploy_crew(cycle=self.state.cycle_count)
-            result = crew.kickoff(
-                inputs={
-                    "draft": self.state.build_output,
-                    "opportunity": self.state.top_opportunity,
-                    "workspace_dir": workspace_dir,
-                    "slug": slug,
-                    "draft_id": self.state.draft_id or "unknown",
-                    "erslabs_root": ERSLABS_ROOT_DOMAIN,
-                    "stripe_publishable": os.environ.get("STRIPE_API_KEY", ""),
-                }
-            )
-        except Exception as e:
-            log.error("Deploy crew failed: %s", e)
-            if self.state.draft_id:
-                try:
-                    from sentinel_v2.dashboard_state import update_draft
-                    update_draft(self.state.draft_id, status="failed",
-                                 revision_notes=f"Deploy failed: {e}")
-                except Exception as db_err:
-                    log.warning("Could not mark draft failed: %s", db_err)
-            self.state.error = str(e)
-            self._save_checkpoint()
-            return
+        # ── Deploy with automatic retry loop ─────────────────────────────
+        deploy_feedback = ""
+        result = None
+        parsed = None
+        deploy_success = False
 
-        parsed = self._parse_deploy_result(result)
+        while self.state.deploy_attempts < MAX_DEPLOY_RETRIES:
+            self.state.deploy_attempts += 1
+            attempt = self.state.deploy_attempts
+            log.info("Deploy attempt %d/%d", attempt, MAX_DEPLOY_RETRIES)
 
-        # Check whether the QA verifier said GO or ROLLBACK
-        raw_text = str(getattr(result, "raw", result)).upper()
-        go_no_go = parsed.get("go_no_go", "").upper() if isinstance(parsed, dict) else ""
-        is_go = go_no_go == "GO" or ("GO" in raw_text and "ROLLBACK" not in raw_text)
-
-        if not is_go:
-            failing_step = parsed.get("failing_step", "unknown") if isinstance(parsed, dict) else "unknown"
-            log.error("Deploy verification ROLLBACK: failing_step=%s", failing_step)
-            self.state.error = f"Deploy verification failed: {failing_step}"
-            if self.state.draft_id:
+            if self.state.draft_id and attempt > 1:
                 from sentinel_v2.dashboard_state import update_draft
                 update_draft(
                     self.state.draft_id,
-                    status="failed",
-                    revision_notes=f"Deploy verification ROLLBACK: {failing_step}",
+                    status="deploying",
+                    revision_notes=f"[Auto-retry {attempt}/{MAX_DEPLOY_RETRIES}] {deploy_feedback}",
                 )
-            self._save_checkpoint()
+
+            try:
+                crew = deploy_crew(cycle=self.state.cycle_count)
+                result = crew.kickoff(
+                    inputs={
+                        "draft": self.state.build_output,
+                        "opportunity": self.state.top_opportunity,
+                        "workspace_dir": workspace_dir,
+                        "slug": slug,
+                        "draft_id": self.state.draft_id or "unknown",
+                        "erslabs_root": ERSLABS_ROOT_DOMAIN,
+                        "stripe_publishable": os.environ.get("STRIPE_API_KEY", ""),
+                        "deploy_feedback": deploy_feedback,
+                    }
+                )
+            except Exception as e:
+                error_msg = str(e)
+                log.error("Deploy attempt %d/%d failed: %s", attempt, MAX_DEPLOY_RETRIES, error_msg)
+                deploy_feedback = f"Deploy attempt {attempt} failed with error:\n{error_msg}\n\nFix the issues and retry."
+
+                if attempt >= MAX_DEPLOY_RETRIES:
+                    log.error("Deploy exhausted all %d retries", MAX_DEPLOY_RETRIES)
+                    if self.state.draft_id:
+                        try:
+                            from sentinel_v2.dashboard_state import update_draft
+                            update_draft(
+                                self.state.draft_id,
+                                status="failed",
+                                revision_notes=f"Deploy failed after {MAX_DEPLOY_RETRIES} attempts. Last error: {error_msg}",
+                            )
+                        except Exception as db_err:
+                            log.warning("Could not mark draft failed: %s", db_err)
+                    self.state.error = error_msg
+                    self._save_checkpoint()
+                    return
+
+                self._save_checkpoint()
+                continue
+
+            parsed = self._parse_deploy_result(result)
+
+            # Check whether the QA verifier said GO or ROLLBACK
+            raw_text = str(getattr(result, "raw", result)).upper()
+            go_no_go = parsed.get("go_no_go", "").upper() if isinstance(parsed, dict) else ""
+            is_go = go_no_go == "GO" or ("GO" in raw_text and "ROLLBACK" not in raw_text)
+
+            if is_go:
+                deploy_success = True
+                break
+            else:
+                failing_step = parsed.get("failing_step", "unknown") if isinstance(parsed, dict) else "unknown"
+                log.error("Deploy verification ROLLBACK (attempt %d): %s", attempt, failing_step)
+                deploy_feedback = (
+                    f"Deploy attempt {attempt} verification ROLLBACK. Failing step: {failing_step}.\n"
+                    "Fix the deployment issues and retry."
+                )
+
+                if attempt >= MAX_DEPLOY_RETRIES:
+                    log.error("Deploy exhausted all %d retries after ROLLBACK", MAX_DEPLOY_RETRIES)
+                    self.state.error = f"Deploy verification failed: {failing_step}"
+                    if self.state.draft_id:
+                        from sentinel_v2.dashboard_state import update_draft
+                        update_draft(
+                            self.state.draft_id,
+                            status="failed",
+                            revision_notes=f"Deploy failed after {MAX_DEPLOY_RETRIES} attempts. Last: ROLLBACK on {failing_step}",
+                        )
+                    self._save_checkpoint()
+                    return
+
+                self._save_checkpoint()
+
+        if not deploy_success:
             return
 
         frontend_url = parsed.get("frontend_url") or parsed.get("url") if isinstance(parsed, dict) else None

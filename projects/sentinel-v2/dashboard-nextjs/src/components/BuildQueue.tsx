@@ -354,6 +354,12 @@ function PipelineRow({
               {draft.tagline}
             </p>
           )}
+          {/* Always-visible error reason on failed cards */}
+          {failed && draft.revision_notes && (
+            <p className="mt-1 line-clamp-2 rounded bg-rose-500/10 px-2 py-1 text-[11px] font-mono text-rose-300/90">
+              {draft.revision_notes}
+            </p>
+          )}
         </button>
 
         {/* Right-side metrics / actions */}
