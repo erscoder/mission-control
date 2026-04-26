@@ -1,62 +1,84 @@
-import { Ear, Hammer, Rocket } from 'lucide-react'
+import { Ear, Hammer, Rocket, ArrowRight } from 'lucide-react'
 
 const steps = [
   {
     icon: Ear,
+    num: '01',
     title: 'Listen',
+    accent: 'accent-cyan',
     description:
-      'We scan communities — Reddit, Twitter, Hacker News, forums — for real complaints, pain points, and unmet needs with evidence of willingness to pay.',
+      'Our agents continuously scan Reddit, Twitter, Hacker News, and 50+ forums for genuine complaints — not trends, not hype. Real people describing real friction, with evidence they would pay for a solution.',
+    detail: '847 sources monitored',
   },
   {
     icon: Hammer,
+    num: '02',
     title: 'Build',
+    accent: 'brand-400',
     description:
-      'Our AI-powered agent swarm designs, builds, and tests an MVP in days, not months. Focused on solving the exact problem people described.',
+      'A crew of 6 specialized AI agents — product manager, frontend engineer, backend engineer, code reviewer, security auditor, and QA lead — collaborate to ship a complete, tested MVP with Stripe payments from day one.',
+    detail: '6 agents per build',
   },
   {
     icon: Rocket,
+    num: '03',
     title: 'Ship',
+    accent: 'brand-300',
     description:
-      'We deploy the solution and share it back with the communities where we found the problem. Real solutions for real people.',
+      'Auto-deployed to production: backend on Fly.io, frontend on Cloudflare Pages, custom domain under erslabs.net, Stripe webhooks wired, SSL certificates provisioned. Zero manual intervention.',
+    detail: '< 4 hours end-to-end',
   },
 ]
 
 export function HowItWorks() {
   return (
-    <section id="how-it-works" className="py-24 md:py-32">
-      <div className="max-w-6xl mx-auto px-6">
-        <div className="text-center mb-16">
+    <section id="how-it-works" className="py-24 md:py-32 bg-surface-800/30 relative">
+      <div className="absolute inset-0 noise" />
+
+      <div className="relative max-w-6xl mx-auto px-6">
+        <div className="text-center mb-20">
           <p className="text-brand-400 font-mono text-sm tracking-wider uppercase mb-3">
             Process
           </p>
-          <h2 className="text-3xl md:text-4xl font-bold tracking-tight">
-            From pain point to product
+          <h2 className="text-4xl md:text-5xl font-black tracking-tight">
+            From pain point to{' '}
+            <span className="text-gradient">product</span>
           </h2>
         </div>
 
-        <div className="grid md:grid-cols-3 gap-8 md:gap-12">
+        <div className="space-y-8 md:space-y-0 md:grid md:grid-cols-3 md:gap-8">
           {steps.map((step, i) => (
             <div key={step.title} className="relative group">
-              {/* Connector line */}
+              {/* Connector */}
               {i < steps.length - 1 && (
-                <div className="hidden md:block absolute top-10 left-[calc(50%+40px)] w-[calc(100%-80px)] h-px bg-gradient-to-r from-brand-500/40 to-brand-500/10" />
+                <div className="hidden md:flex absolute top-12 left-[calc(100%-8px)] w-8 items-center justify-center z-10">
+                  <ArrowRight className="w-4 h-4 text-surface-600 group-hover:text-brand-500/50 transition-colors" />
+                </div>
               )}
 
-              <div className="flex flex-col items-center text-center">
-                {/* Icon */}
-                <div className="w-20 h-20 rounded-2xl bg-brand-500/10 border border-brand-500/20 flex items-center justify-center mb-6 group-hover:bg-brand-500/15 transition-colors">
-                  <step.icon className="w-8 h-8 text-brand-400" />
+              <div className="p-6 rounded-xl border border-surface-600/50 bg-surface-900/60 backdrop-blur-sm hover:border-brand-500/30 transition-all duration-300 h-full">
+                {/* Top row */}
+                <div className="flex items-center gap-4 mb-5">
+                  <div className={`w-14 h-14 rounded-2xl bg-${step.accent}/10 border border-${step.accent}/20 flex items-center justify-center`}>
+                    <step.icon className={`w-6 h-6 text-${step.accent}`} />
+                  </div>
+                  <div>
+                    <span className={`text-${step.accent} font-mono text-xs tracking-wider`}>
+                      STEP {step.num}
+                    </span>
+                    <h3 className="text-2xl font-bold tracking-tight">{step.title}</h3>
+                  </div>
                 </div>
 
-                {/* Step number */}
-                <span className="text-brand-500 font-mono text-sm mb-2">
-                  0{i + 1}
-                </span>
-
-                <h3 className="text-xl font-semibold mb-3">{step.title}</h3>
-                <p className="text-slate-400 leading-relaxed max-w-sm">
+                <p className="text-slate-400 leading-relaxed text-[15px] mb-4">
                   {step.description}
                 </p>
+
+                <div className="pt-4 border-t border-surface-700/50">
+                  <span className="font-mono text-xs text-surface-500">
+                    {step.detail}
+                  </span>
+                </div>
               </div>
             </div>
           ))}

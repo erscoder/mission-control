@@ -1,65 +1,64 @@
-import { Cpu, Users, Zap } from 'lucide-react'
+import { Cpu, Users, Zap, Brain, ArrowRight } from 'lucide-react'
 
-const highlights = [
-  {
-    icon: Cpu,
-    title: 'AI-Powered Discovery',
-    description: 'Our systems continuously scan communities, forums, and social platforms for genuine unmet needs.',
-  },
-  {
-    icon: Zap,
-    title: 'Rapid Execution',
-    description: 'From problem to deployed product in days. We build MVPs that solve the exact pain point discovered.',
-  },
-  {
-    icon: Users,
-    title: 'Community-First',
-    description: 'Every solution is shared with the community where we found the problem. We give back, not just sell.',
-  },
+const stats = [
+  { value: '6', label: 'AI Agents', icon: Brain },
+  { value: '50+', label: 'Sources Monitored', icon: Cpu },
+  { value: '<4h', label: 'Discovery to Deploy', icon: Zap },
+  { value: '24/7', label: 'Always Scanning', icon: Users },
 ]
 
 export function About() {
   return (
-    <section id="about" className="py-24 md:py-32">
-      <div className="max-w-6xl mx-auto px-6">
+    <section id="about" className="py-24 md:py-32 relative overflow-hidden">
+      <div className="absolute inset-0 noise" />
+      <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-accent-violet/[0.02] rounded-full blur-[120px]" />
+
+      <div className="relative max-w-6xl mx-auto px-6">
         <div className="grid lg:grid-cols-2 gap-16 items-center">
           {/* Left: Text */}
           <div>
             <p className="text-brand-400 font-mono text-sm tracking-wider uppercase mb-3">
               About
             </p>
-            <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-6">
-              A different kind of{' '}
-              <span className="text-gradient">software lab</span>
+            <h2 className="text-4xl md:text-5xl font-black tracking-tight mb-6 leading-tight">
+              Software that{' '}
+              <span className="text-gradient">starts</span>
+              <br />
+              with listening
             </h2>
-            <p className="text-slate-400 leading-relaxed mb-4">
-              ErsLabs is a solutions laboratory that starts every project the
-              same way: by listening. We believe the best software is born from
-              real frustrations — not brainstorming sessions.
+            <p className="text-slate-400 leading-relaxed text-lg mb-4">
+              ErsLabs is not a typical software company. We don&apos;t start with
+              ideas — we start with evidence. Our autonomous agents monitor
+              communities where people describe their daily frustrations.
             </p>
-            <p className="text-slate-400 leading-relaxed">
-              We monitor where people vent, ask for help, and describe their
-              daily friction. When we spot a pattern — a problem that enough
-              people share and would pay to solve — we build it. Fast,
-              focused, and functional.
+            <p className="text-slate-400 leading-relaxed text-lg mb-8">
+              When enough people share the same problem and show willingness to
+              pay for a solution, our pipeline kicks in. Design, build, test,
+              deploy — all automated, all in hours, not months.
             </p>
+
+            <a
+              href="#pipeline"
+              className="group inline-flex items-center gap-2 text-brand-400 hover:text-brand-300 font-medium transition-colors"
+            >
+              See the full pipeline
+              <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
+            </a>
           </div>
 
-          {/* Right: Highlights */}
-          <div className="space-y-6">
-            {highlights.map((h) => (
+          {/* Right: Stats */}
+          <div className="grid grid-cols-2 gap-4">
+            {stats.map((stat) => (
               <div
-                key={h.title}
-                className="flex gap-5 p-5 rounded-xl border border-surface-600 hover:border-brand-500/30 transition-colors"
+                key={stat.label}
+                className="p-6 rounded-xl border border-surface-600/50 bg-surface-900/60 backdrop-blur-sm card-shine text-center hover:border-brand-500/20 transition-all"
               >
-                <div className="w-12 h-12 rounded-lg bg-brand-500/10 flex items-center justify-center flex-shrink-0">
-                  <h.icon className="w-5 h-5 text-brand-400" />
+                <stat.icon className="w-6 h-6 text-brand-400 mx-auto mb-3" />
+                <div className="text-3xl md:text-4xl font-black text-white mb-1 tracking-tight">
+                  {stat.value}
                 </div>
-                <div>
-                  <h3 className="font-semibold mb-1">{h.title}</h3>
-                  <p className="text-slate-400 text-sm leading-relaxed">
-                    {h.description}
-                  </p>
+                <div className="text-xs font-mono text-surface-500 uppercase tracking-wider">
+                  {stat.label}
                 </div>
               </div>
             ))}
