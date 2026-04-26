@@ -165,9 +165,23 @@ def run_daemon():
                 log.error("Cycle #%d failed: %s", cycle, e)
                 continue
 
-            # Wait before next cycle
+            # Skip sleep if there are still queued drafts to process
             if not _shutdown:
-                log.info("Sleeping %.1fh before next cycle", interval_hours)
+                try:
+                    from sentinel_v2.dashboard_state import list_drafts_by_status
+                    remaining = list_drafts_by_status({"queued"})
+                    if remaining:
+                        log.info(
+                            "%d queued draft(s) remaining — starting next cycle immediately",
+                            len(remaining),
+                        )
+                        continue
+                except Exception:
+                    pass  # fallback to normal sleep
+
+            # Wait before next cycle (no queued drafts)
+            if not _shutdown:
+                log.info("No queued drafts — sleeping %.1fh before next cycle", interval_hours)
                 await asyncio.sleep(interval_seconds)
 
             # Update env if shutdown requested
