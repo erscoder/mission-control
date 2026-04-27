@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Housing Edge API - FastAPI backend."""
 
 import os
@@ -47,7 +48,7 @@ class PropertyDB(Base):
     province = Column(String)
     price = Column(Float)
     deposit_required = Column(Float)
-    estimated_market_value = Column(Float, nullable=True)
+    estimated_market_value = Optional[Float]
     sqm = Column(String, nullable=True)
     occupation_risk_percent = Column(Float, default=50.0)
     occupation_risk = Column(Float, default=5.0)
@@ -67,7 +68,7 @@ class PropertyDB(Base):
 class UserProfileDB(Base):
     __tablename__ = "user_profile"
 
-    id = Column(String, primary_key=True, default="default")
+    id = Column(String, primary_key=True)
     budget_min = Column(Float, default=0)
     budget_max = Column(Float, default=500000)
     risk_tolerance = Column(Float, default=5.0)
@@ -291,7 +292,7 @@ class RefreshResponse(BaseModel):
 
 @app.post("/api/properties/refresh", response_model=RefreshResponse)
 def refresh_properties():
-    """Trigger a full refresh of BOE auctions from all provinces."""
+    """Trigger a full refresh of BOE auctions from all provinces using the BOE API."""
     import logging
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
@@ -312,9 +313,8 @@ def refresh_properties():
     client = httpx.Client(timeout=30, follow_redirects=True)
     headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept": "application/json",
         "Accept-Language": "es-ES,es;q=0.9",
-        "Content-Type": "application/x-www-form-urlencoded",
     }
 
     properties_found = 0
@@ -323,17 +323,21 @@ def refresh_properties():
     try:
         for province in PROVINCES:
             try:
-                data = {
-                    "campo[0]": "SUBASTA.ORIGEN", "dato[0]": "",
-                    "campo[2]": "SUBASTA.ESTADO.CODIGO", "dato[2]": "",
-                    "campo[3]": "BIEN.TIPO", "dato[3]": "I",
-                    "campo[4]": "BIEN.SUBTIPO", "dato[4]": "",
-                    "campo[5]": "BIEN.PROVINCIA", "dato[5]": province,
+                # Use GET request with search parameters
+                params = {
                     "accion": "Buscar",
+                    "campo[3]": "BIEN.TIPO",
+                    "dato[3]": "I",
+                    "campo[5]": "BIEN.PROVINCIA",
+                    "dato[5]": province,
+                    "page_hits": "50",
+                    "sort_field": "SUBASTA.FECHA_FIN",
                 }
-                resp = client.post(SEARCH_URL, data=data, headers=headers)
+
+                resp = client.get(SEARCH_URL, params=params, headers=headers)
                 soup = BeautifulSoup(resp.text, "lxml")
 
+                # Find all auction links
                 links = soup.find_all("a", href=True)
                 for link in links:
                     href = link.get("href", "")
@@ -350,6 +354,7 @@ def refresh_properties():
                     if existing:
                         continue
 
+                    # Extract price from parent table cell
                     price_text = link.find_parent("td").get_text() if link.find_parent("td") else ""
                     price = None
                     price_match = re.search(r"(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)\s*€?", price_text)
@@ -377,6 +382,8 @@ def refresh_properties():
                     )
                     db.add(prop)
                     properties_found += 1
+
+                    logger.info(f"Added property from {province}: {text[:50]}...")
 
             except Exception as e:
                 logger.warning(f"Failed province {province}: {e}")
