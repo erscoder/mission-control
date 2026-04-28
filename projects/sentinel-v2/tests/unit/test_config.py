@@ -107,6 +107,67 @@ class TestGetMiniMaxLLM:
 
 
 # ---------------------------------------------------------------------------
+# llm_config — _patch_empty_response_retry
+# ---------------------------------------------------------------------------
+
+
+class _StubLLM:
+    """Plain-object LLM stub. MagicMock-based stubs don't honor function
+    assignment to `.call` cleanly — the retry wrapper's `llm.call = wrapped`
+    gets shadowed by MagicMock's child-mock auto-creation."""
+
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.calls = 0
+
+    def call(self, *args, **kwargs):
+        self.calls += 1
+        return self._responses.pop(0)
+
+
+class TestPatchEmptyResponseRetry:
+    """Regression tests for the MiniMax empty-response retry wrapper."""
+
+    def test_returns_first_non_empty_response(self):
+        from sentinel_v2.config.llm_config import _patch_empty_response_retry
+        llm = _StubLLM(["valid output"])
+        _patch_empty_response_retry(llm, max_retries=3, base_delay=0)
+        assert llm.call() == "valid output"
+        assert llm.calls == 1
+
+    def test_retries_on_empty_string_then_succeeds(self):
+        from sentinel_v2.config.llm_config import _patch_empty_response_retry
+        llm = _StubLLM(["", "  ", "finally"])
+        _patch_empty_response_retry(llm, max_retries=3, base_delay=0)
+        assert llm.call() == "finally"
+        assert llm.calls == 3
+
+    def test_retries_on_none_then_succeeds(self):
+        from sentinel_v2.config.llm_config import _patch_empty_response_retry
+        llm = _StubLLM([None, "ok"])
+        _patch_empty_response_retry(llm, max_retries=3, base_delay=0)
+        assert llm.call() == "ok"
+        assert llm.calls == 2
+
+    def test_raises_runtimeerror_after_exhausting_retries(self):
+        from sentinel_v2.config.llm_config import _patch_empty_response_retry
+        llm = _StubLLM(["", None, "   "])
+        _patch_empty_response_retry(llm, max_retries=3, base_delay=0)
+        with pytest.raises(RuntimeError, match="empty after 3 retries"):
+            llm.call()
+        assert llm.calls == 3
+
+    def test_idempotent_patch(self):
+        """Patching twice does not double-wrap."""
+        from sentinel_v2.config.llm_config import _patch_empty_response_retry
+        llm = _StubLLM(["ok"])
+        _patch_empty_response_retry(llm, max_retries=3, base_delay=0)
+        first_call = llm.call
+        _patch_empty_response_retry(llm, max_retries=3, base_delay=0)
+        assert llm.call is first_call
+
+
+# ---------------------------------------------------------------------------
 # llm_config — get_ollama_embedder_config
 # ---------------------------------------------------------------------------
 

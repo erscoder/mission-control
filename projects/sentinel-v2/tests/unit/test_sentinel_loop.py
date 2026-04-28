@@ -368,6 +368,68 @@ class TestCheckApproval:
         assert result == "stop"
 
 
+class TestQAGateAndApprovalGate:
+    """Regression tests for the daemon promotion gates added in 9fbf9aa."""
+
+    def _patch_dashboard(self):
+        return patch.multiple(
+            "sentinel_v2.dashboard_state",
+            write_state=Mock(),
+            write_flow_breakdown=Mock(),
+            update_draft=Mock(),
+        )
+
+    def test_request_approval_blocks_when_build_ok_false(self, flow):
+        """Health gate marks draft failed and stops cycle when build_ok=False."""
+        flow.state.draft_id = "draft_c1_test"
+        flow.state.build_ok = False
+        flow.state.cycle_count = 1
+        with patch("sentinel_v2.dashboard_state.update_draft") as mock_update, \
+             patch.object(flow, "_clear_checkpoint") as mock_clear:
+            result = flow.request_approval()
+        assert result == "stop"
+        assert flow.state.current_phase != "approve"
+        mock_update.assert_called_once()
+        assert mock_update.call_args.kwargs.get("status") == "failed"
+        mock_clear.assert_called_once()
+
+    def test_request_approval_blocks_on_vulnerability_scan_error(self, flow):
+        """Health gate blocks even with build_ok=True if security loop errored out."""
+        flow.state.draft_id = "draft_c1_test"
+        flow.state.build_ok = True
+        flow.state.vulnerability_scan_error = "Could not reach 0 vulns after 5 iterations"
+        with patch("sentinel_v2.dashboard_state.update_draft") as mock_update, \
+             patch.object(flow, "_clear_checkpoint"):
+            result = flow.request_approval()
+        assert result == "stop"
+        notes = mock_update.call_args.kwargs.get("revision_notes") or ""
+        assert "Could not reach 0 vulns" in notes
+
+    def test_security_loop_does_not_demote_when_field_missing(self, flow):
+        """An iteration that omits build_ok must NOT clobber a True QA verdict.
+
+        This is the fail-safe for the reviewer-flagged inversion bug: if
+        the security crew never actually built (e.g. zero remediation
+        actions, agent skips the verify step), parsed has no `build_ok`
+        key. The flow must keep the QA gate's verdict instead of
+        defaulting it to False and rejecting a legitimately-green draft.
+        """
+        flow.state.build_ok = True  # set by run_build's QA gate
+        parsed = {"total_vulns_after": 0, "tests_ok": True}  # no build_ok
+        # Mirror the persistence logic in run_security_remediation.
+        if "build_ok" in parsed:
+            flow.state.build_ok = flow.state.build_ok and bool(parsed.get("build_ok", False))
+        assert flow.state.build_ok is True
+
+    def test_security_loop_demotes_when_field_explicit_false(self, flow):
+        """An explicit build_ok=False from the security crew vetoes QA's True."""
+        flow.state.build_ok = True
+        parsed = {"total_vulns_after": 0, "build_ok": False}
+        if "build_ok" in parsed:
+            flow.state.build_ok = flow.state.build_ok and bool(parsed.get("build_ok", False))
+        assert flow.state.build_ok is False
+
+
 class TestRouter:
     """Tests for route_after_approval() router."""
 

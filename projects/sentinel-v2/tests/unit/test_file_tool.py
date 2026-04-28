@@ -137,3 +137,46 @@ def test_run_shell_echo_works(workspace):
     result = tool._run(workspace_dir=str(workspace), command="echo hello")
     assert "exit=0" in result
     assert "hello" in result
+
+
+def test_run_shell_rejects_double_ampersand(workspace):
+    """Shell chains via && must be rejected.
+
+    Regression for the npm `EINVALIDTAGNAME "&&"` daemon failures: agents
+    were calling `run_shell('npm install foo && npm install bar')` which
+    `shlex.split` turned into `['npm', 'install', 'foo', '&&', 'npm', ...]`.
+    npm then read `&&` as a tag name and crashed every install.
+    """
+    tool = RunShellTool()
+    result = tool._run(
+        workspace_dir=str(workspace),
+        command="echo a && echo b",
+    )
+    assert "shell-error" in result
+    assert "&&" in result
+
+
+def test_run_shell_rejects_semicolon(workspace):
+    tool = RunShellTool()
+    result = tool._run(workspace_dir=str(workspace), command="echo a ; echo b")
+    assert "shell-error" in result
+    assert ";" in result
+
+
+def test_run_shell_rejects_pipe(workspace):
+    tool = RunShellTool()
+    result = tool._run(workspace_dir=str(workspace), command="echo a | echo b")
+    assert "shell-error" in result
+    assert "|" in result
+
+
+def test_run_shell_allows_leading_cd_chain(workspace):
+    """The 'cd <subdir> && <cmd>' prefix is the one allowed chain."""
+    (workspace / "frontend").mkdir()
+    tool = RunShellTool()
+    result = tool._run(
+        workspace_dir=str(workspace),
+        command="cd frontend && echo here",
+    )
+    assert "exit=0" in result
+    assert "here" in result

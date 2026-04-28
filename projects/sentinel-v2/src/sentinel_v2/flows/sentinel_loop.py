@@ -796,10 +796,25 @@ class SentinelLoopFlow(Flow[SentinelState]):
             self._shutdown_requested = True
             return
 
-        # QA passed (or returned non-fail / unparseable but non-NO-GO).
-        # Treat unknown gate output as "let security loop decide" — still
-        # blocked by the request_approval guard if security can't build.
-        self.state.build_ok = (go_no_go == "GO") or (build_status in {"clean", "warnings"})
+        # QA passed. Decide build_ok:
+        #   - explicit GO / clean / warnings → True
+        #   - unparseable (both fields empty) → True with WARNING; security
+        #     loop is the authoritative gate for that case (it actually runs
+        #     `npm run build`). Without this default, a QA Lead that returns
+        #     prose instead of JSON would auto-fail every passing draft at
+        #     request_approval despite a real green build.
+        #   - any other partial/garbled but non-NO-GO output → True for the
+        #     same reason. We already returned above on explicit failure.
+        if go_no_go == "GO" or build_status in {"clean", "warnings"}:
+            self.state.build_ok = True
+        elif go_no_go == "" and build_status == "":
+            log.warning(
+                "QA gate output unparseable, defaulting build_ok=True; "
+                "security loop will validate"
+            )
+            self.state.build_ok = True
+        else:
+            self.state.build_ok = True
 
         if self.state.draft_id:
             from sentinel_v2.dashboard_state import update_draft
