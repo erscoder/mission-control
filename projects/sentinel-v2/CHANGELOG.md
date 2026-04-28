@@ -5,6 +5,27 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-28 · 9fbf9aa - Daemon promotion gates: stop shipping broken drafts
+
+User reported: daemon log showed `Build status: FAIL` from the QA Lead, hourly `awaiting_approval` heartbeats on drafts whose `npm run build` never compiled, and Pydantic `string_type` validation errors crashing the security remediation crew. Five cooperating fixes, in order.
+
+**Fix 1: programmatic QA gate in `run_build`.** The hierarchical build crew's QA Lead narrated `go_no_go: NO-GO` in its task output, but `run_build` saved `result.raw` and called `update_draft(status="built")` regardless. Anything an LLM wrote in chat was treated as success. Now we reuse `_parse_deploy_result` (which already JSON-coerces with markdown-fence tolerance) to extract `go_no_go` and `build_status`, and fail the draft when either says no. Cuts the flow there — no security loop, no approval queue.
+
+**Fix 2: `build_ok` field on `SentinelState` + `request_approval` health gate.** Added `build_ok: bool = False`. `run_security_remediation` now persists the developer agent's `build_ok` JSON field (only when the field is present — silently missing means the security crew didn't actually build, so we keep the QA-gate verdict). `request_approval` rejects upfront if `vulnerability_scan_error` is set or `build_ok` is False, marks the draft `failed`, clears the checkpoint, and ends the cycle. Eliminates the daily heartbeat log of broken drafts sitting in the approval queue.
+
+**Fix 3: empty-response retry on MiniMax.** MiniMax (especially `MiniMax-M2.7`) periodically streams empty responses, which CrewAI hands to Pydantic `TaskOutput` as `None`, raising `1 validation error for TaskOutput ... string_type`. New `_patch_empty_response_retry` in `llm_config.py` wraps `llm.call`, retries on `None`/empty/whitespace with exponential backoff (1s/2s/4s), and raises a clean `RuntimeError` after 3 attempts so the existing crew-kickoff `try/except` can mark the draft failed without a Pydantic stack trace. Logs `WARNING ... MiniMax empty response, retry N/3`.
+
+**Fix 4: shell-operator rejection in `RunShellTool`.** Build-crew agents kept calling `run_shell('npm install foo && npm install bar')` as a single string. `subprocess.run` with `shell=False` and `shlex.split` gave npm `&&` as a literal package name → `npm error EINVALIDTAGNAME "&&"`. We refused to enable `shell=True` (agents emit unsanitized strings; injection risk). Instead, after `shlex.split`, any bare `&&`, `||`, `;`, `|` token is rejected with a message telling the agent to make separate calls. Updated tool description so the LLM knows up-front. Existing `cd <subdir> && <cmd>` prefix still works (handled before the `shlex.split` step).
+
+**Fix 5: peer-dep alignment guidance in build-crew prompts.** Recurring `npm ERESOLVE: @eslint/js@10.0.1 vs eslint@9.39.4`. There are no static `package.json` templates — agents generate them per cycle — so the fix lives in the frontend/backend task descriptions in `build_crew.py`: explicit "when you add `eslint` and `@eslint/js`, both must share a major; same for `@typescript-eslint/*`". Plus a `npm ls eslint` post-install check.
+
+Test fixes (pre-existing failures discovered during verification):
+- `TestRequestApproval`: 2 tests now seed `build_ok=True` to clear the new health gate.
+- `TestCheckApproval::test_check_approval_approved_via_dashboard`: mock now returns `pending_deploy` (the user-intent status the wait actually targets), not `deployed`.
+- 6 deploy tests (`TestSentinelLoopFlowKickoff::test_run_deploy_runs_when_approved`, `TestFeedbackLoop::test_run_deploy_*`, `TestDeployRetryLoop`): patched `_prebake_deploy_files` so they don't blow up on missing `~/Sentinel/<draft_id>` directories, and updated URL assertions to match the slug-derived canonical URL contract introduced in commit `0932492`.
+
+51 / 51 sentinel_loop unit tests passing; 235 / 235 unit-suite total. Coverage 74% (pre-existing project baseline; uncovered modules — security_remediation_crew, build_crew, deploy_crew — are integration-tested via the daemon, not unit-mocked).
+
 ## 2026-04-28 · pending - Retry from dashboard now actually starts fresh
 
 User reported: clicking Retry kept resurrecting drafts already exhausted, with the message "Deploy exhausted all 2 attempts in a prior cycle and the resumed state had no deployed=True." Two cooperating bugs:
