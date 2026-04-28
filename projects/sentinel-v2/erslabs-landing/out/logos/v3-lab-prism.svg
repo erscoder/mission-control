@@ -1,0 +1,26 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g" x1="50%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" stop-color="#06B6D4"/>
+      <stop offset="100%" stop-color="#10B981"/>
+    </linearGradient>
+  </defs>
+  <!-- Droplet shape -->
+  <path d="M 50 8 C 50 8, 18 48, 18 64 A 32 32 0 0 0 82 64 C 82 48, 50 8, 50 8 Z" fill="url(#g)"/>
+  <!-- Inner circuit network (dark cutouts) -->
+  <g fill="#0A0A0F" stroke="#0A0A0F" stroke-linecap="round">
+    <line x1="40" y1="60" x2="50" y2="42" stroke-width="2.5"/>
+    <line x1="60" y1="60" x2="50" y2="42" stroke-width="2.5"/>
+    <line x1="40" y1="60" x2="60" y2="60" stroke-width="2.5"/>
+    <circle cx="50" cy="42" r="4.5"/>
+    <circle cx="40" cy="60" r="4"/>
+    <circle cx="60" cy="60" r="4"/>
+    <!-- Extra connections -->
+    <line x1="50" y1="42" x2="50" y2="30" stroke-width="2"/>
+    <circle cx="50" cy="30" r="2.5"/>
+    <line x1="40" y1="60" x2="32" y2="70" stroke-width="2"/>
+    <circle cx="32" cy="70" r="2.5"/>
+    <line x1="60" y1="60" x2="68" y2="70" stroke-width="2"/>
+    <circle cx="68" cy="70" r="2.5"/>
+  </g>
+</svg>

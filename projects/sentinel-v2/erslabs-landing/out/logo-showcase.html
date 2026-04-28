@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ErsLabs — Logo v3</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600&family=JetBrains+Mono:wght@300;400&display=swap" rel="stylesheet">
+    <style>
+        body { font-family:'Inter',sans-serif; background:#0A0A0F; color:#E2E8F0; -webkit-font-smoothing:antialiased; }
+        .font-mono { font-family:'JetBrains Mono',monospace; }
+        .card { transition:all .5s cubic-bezier(.16,1,.3,1); border:1px solid rgba(255,255,255,.06); border-radius:16px; background:rgba(255,255,255,.02); }
+        .card:hover { transform:translateY(-8px); border-color:rgba(16,185,129,.35); box-shadow:0 30px 60px -15px rgba(16,185,129,.18); }
+        .logo-wrap { transition:transform .5s cubic-bezier(.16,1,.3,1); }
+        .card:hover .logo-wrap { transform:scale(1.12); }
+        .aura { position:absolute;inset:0;background:radial-gradient(circle,rgba(16,185,129,.25) 0%,transparent 70%);border-radius:50%;transform:scale(.3);opacity:0;transition:all .8s cubic-bezier(.16,1,.3,1);filter:blur(35px);pointer-events:none; }
+        .card:hover .aura { transform:scale(1.3);opacity:1; }
+        .tg { background:linear-gradient(135deg,#10B981,#06B6D4);-webkit-background-clip:text;-webkit-text-fill-color:transparent; }
+    </style>
+</head>
+<body>
+<div class="min-h-screen flex flex-col items-center py-20 px-6">
+    <div class="text-center mb-20 max-w-3xl">
+        <h1 class="text-6xl md:text-7xl font-extralight tracking-wider mb-6 tg">ErsLabs</h1>
+        <p class="font-mono text-xs opacity-40 uppercase" style="letter-spacing:.2em">Logo Exploration v3 — Bold & Original</p>
+        <div class="w-12 h-px bg-emerald-500/30 mx-auto mt-8"></div>
+    </div>
+
+    <div class="max-w-7xl w-full grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10 mb-20">
+
+        <!-- V1: Waveform Block -->
+        <div class="card p-8 flex flex-col items-center">
+            <div class="w-52 h-52 mb-8 flex items-center justify-center relative">
+                <div class="aura"></div>
+                <div class="w-36 h-36 relative z-10 logo-wrap">
+                    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                      <defs>
+                        <linearGradient id="g1" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#10B981"/><stop offset="100%" stop-color="#06B6D4"/></linearGradient>
+                        <mask id="wm1"><rect width="100" height="100" fill="white"/><polyline points="6,50 26,50 32,30 39,70 46,34 53,66 60,38 67,62 73,50 94,50" fill="none" stroke="black" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/></mask>
+                      </defs>
+                      <rect x="6" y="16" width="88" height="68" rx="16" fill="url(#g1)" mask="url(#wm1)"/>
+                    </svg>
+                </div>
+            </div>
+            <h2 class="text-lg font-semibold tracking-wider uppercase">Waveform Block</h2>
+            <h3 class="text-[10px] font-mono text-emerald-400 opacity-70 tracking-widest mb-3">V1 — NEGATIVE SPACE PULSE</h3>
+            <p class="text-sm leading-relaxed opacity-45 font-light">Solid gradient block with a heartbeat pulse carved out as negative space. The mass IS the lab. The void IS the signal. Bold, heavy, unmistakable at any size.</p>
+        </div>
+
+        <!-- V2: Bracket Wave {~} -->
+        <div class="card p-8 flex flex-col items-center">
+            <div class="w-52 h-52 mb-8 flex items-center justify-center relative">
+                <div class="aura"></div>
+                <div class="w-36 h-36 relative z-10 logo-wrap">
+                    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                      <defs><linearGradient id="g2" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#10B981"/><stop offset="100%" stop-color="#06B6D4"/></linearGradient></defs>
+                      <g fill="none" stroke="url(#g2)" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M 30 16 C 20 16, 18 24, 18 34 L 18 42 C 18 47, 12 50, 12 50 C 12 50, 18 53, 18 58 L 18 66 C 18 76, 20 84, 30 84" stroke-width="6"/>
+                        <path d="M 36 50 C 41 38, 48 38, 50 50 C 52 62, 59 62, 64 50" stroke-width="6"/>
+                        <path d="M 70 16 C 80 16, 82 24, 82 34 L 82 42 C 82 47, 88 50, 88 50 C 88 50, 82 53, 82 58 L 82 66 C 82 76, 80 84, 70 84" stroke-width="6"/>
+                      </g>
+                    </svg>
+                </div>
+            </div>
+            <h2 class="text-lg font-semibold tracking-wider uppercase">Bracket Wave</h2>
+            <h3 class="text-[10px] font-mono text-emerald-400 opacity-70 tracking-widest mb-3">V2 — CODE MEETS SIGNAL {~}</h3>
+            <p class="text-sm leading-relaxed opacity-45 font-light">Curly braces embracing a signal wave. Code syntax meets analog frequency. Developers instantly get it: this is where software listens to the real world.</p>
+        </div>
+
+        <!-- V3: Droplet Lab -->
+        <div class="card p-8 flex flex-col items-center">
+            <div class="w-52 h-52 mb-8 flex items-center justify-center relative">
+                <div class="aura"></div>
+                <div class="w-36 h-36 relative z-10 logo-wrap">
+                    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                      <defs><linearGradient id="g3" x1="50%" y1="0%" x2="50%" y2="100%"><stop offset="0%" stop-color="#06B6D4"/><stop offset="100%" stop-color="#10B981"/></linearGradient></defs>
+                      <path d="M 50 8 C 50 8, 18 48, 18 64 A 32 32 0 0 0 82 64 C 82 48, 50 8, 50 8 Z" fill="url(#g3)"/>
+                      <g fill="#0A0A0F" stroke="#0A0A0F" stroke-linecap="round">
+                        <line x1="40" y1="60" x2="50" y2="42" stroke-width="2.5"/>
+                        <line x1="60" y1="60" x2="50" y2="42" stroke-width="2.5"/>
+                        <line x1="40" y1="60" x2="60" y2="60" stroke-width="2.5"/>
+                        <circle cx="50" cy="42" r="4.5"/><circle cx="40" cy="60" r="4"/><circle cx="60" cy="60" r="4"/>
+                        <line x1="50" y1="42" x2="50" y2="30" stroke-width="2"/><circle cx="50" cy="30" r="2.5"/>
+                        <line x1="40" y1="60" x2="32" y2="70" stroke-width="2"/><circle cx="32" cy="70" r="2.5"/>
+                        <line x1="60" y1="60" x2="68" y2="70" stroke-width="2"/><circle cx="68" cy="70" r="2.5"/>
+                      </g>
+                    </svg>
+                </div>
+            </div>
+            <h2 class="text-lg font-semibold tracking-wider uppercase">Droplet Lab</h2>
+            <h3 class="text-[10px] font-mono text-emerald-400 opacity-70 tracking-widest mb-3">V3 — DISTILLED INTELLIGENCE</h3>
+            <p class="text-sm leading-relaxed opacity-45 font-light">A droplet of pure insight with a neural circuit carved inside. Raw noise enters, intelligence is distilled. The circuit nodes are the agents processing within.</p>
+        </div>
+
+        <!-- V4: The Notch -->
+        <div class="card p-8 flex flex-col items-center">
+            <div class="w-52 h-52 mb-8 flex items-center justify-center relative">
+                <div class="aura"></div>
+                <div class="w-36 h-36 relative z-10 logo-wrap">
+                    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                      <defs>
+                        <linearGradient id="g4" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#10B981"/><stop offset="100%" stop-color="#06B6D4"/></linearGradient>
+                        <mask id="nm4"><circle cx="50" cy="50" r="36" fill="white"/><circle cx="76" cy="24" r="16" fill="black"/></mask>
+                      </defs>
+                      <circle cx="50" cy="50" r="36" fill="url(#g4)" mask="url(#nm4)"/>
+                      <g fill="none" stroke="#06B6D4" stroke-linecap="round">
+                        <path d="M 84 16 A 10 10 0 0 1 88 26" stroke-width="3"/>
+                        <path d="M 88 10 A 18 18 0 0 1 94 28" stroke-width="2.5" opacity="0.5"/>
+                        <path d="M 92 4 A 26 26 0 0 1 98 24" stroke-width="2" opacity="0.2"/>
+                      </g>
+                    </svg>
+                </div>
+            </div>
+            <h2 class="text-lg font-semibold tracking-wider uppercase">The Notch</h2>
+            <h3 class="text-[10px] font-mono text-emerald-400 opacity-70 tracking-widest mb-3">V4 — SIGNAL APERTURE</h3>
+            <p class="text-sm leading-relaxed opacity-45 font-light">A solid gradient sphere with a circular bite — the aperture through which signals enter. The arcs show active reception. Mass meets void, presence meets listening.</p>
+        </div>
+
+        <!-- V5: Broken Ring -->
+        <div class="card p-8 flex flex-col items-center">
+            <div class="w-52 h-52 mb-8 flex items-center justify-center relative">
+                <div class="aura"></div>
+                <div class="w-36 h-36 relative z-10 logo-wrap">
+                    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                      <defs><linearGradient id="g5" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#10B981"/><stop offset="100%" stop-color="#06B6D4"/></linearGradient></defs>
+                      <g fill="none" stroke="url(#g5)" stroke-linecap="round">
+                        <path d="M 72 24 A 32 32 0 1 1 76 36" stroke-width="9"/>
+                      </g>
+                      <g stroke="#06B6D4" stroke-linecap="round">
+                        <line x1="76" y1="28" x2="90" y2="14" stroke-width="4"/>
+                        <line x1="78" y1="22" x2="94" y2="8" stroke-width="2.5" opacity="0.35"/>
+                        <line x1="73" y1="20" x2="85" y2="6" stroke-width="2" opacity="0.15"/>
+                      </g>
+                      <circle cx="90" cy="14" r="3.5" fill="#06B6D4"/>
+                    </svg>
+                </div>
+            </div>
+            <h2 class="text-lg font-semibold tracking-wider uppercase">Broken Ring</h2>
+            <h3 class="text-[10px] font-mono text-emerald-400 opacity-70 tracking-widest mb-3">V5 — RELEASE BEAM</h3>
+            <p class="text-sm leading-relaxed opacity-45 font-light">A thick ring breaks open and releases a focused beam of light. The gap is intentional — it's where the insight escapes. Tension between containment and discovery.</p>
+        </div>
+
+        <!-- V6: Signal E -->
+        <div class="card p-8 flex flex-col items-center">
+            <div class="w-52 h-52 mb-8 flex items-center justify-center relative">
+                <div class="aura"></div>
+                <div class="w-36 h-36 relative z-10 logo-wrap">
+                    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                      <defs><linearGradient id="g6" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#10B981"/><stop offset="100%" stop-color="#06B6D4"/></linearGradient></defs>
+                      <g fill="none" stroke="url(#g6)" stroke-linecap="round">
+                        <line x1="24" y1="18" x2="24" y2="82" stroke-width="9"/>
+                        <path d="M 28 22 C 44 14, 58 18, 76 26" stroke-width="7"/>
+                        <path d="M 28 50 C 40 43, 50 45, 64 50" stroke-width="7"/>
+                        <path d="M 28 78 C 44 86, 58 82, 76 74" stroke-width="7"/>
+                      </g>
+                    </svg>
+                </div>
+            </div>
+            <h2 class="text-lg font-semibold tracking-wider uppercase">Signal E</h2>
+            <h3 class="text-[10px] font-mono text-emerald-400 opacity-70 tracking-widest mb-3">V6 — WAVE LETTERFORM</h3>
+            <p class="text-sm leading-relaxed opacity-45 font-light">The letter E rebuilt with wave-curved bars instead of straight lines. The letterform IS the signal. Three frequencies — Listen, Build, Ship — anchored by a bold stem.</p>
+        </div>
+
+    </div>
+    <p class="font-mono text-xs opacity-15 uppercase" style="letter-spacing:.2em">ErsLabs &middot; 2026</p>
+</div>
+</body>
+</html>

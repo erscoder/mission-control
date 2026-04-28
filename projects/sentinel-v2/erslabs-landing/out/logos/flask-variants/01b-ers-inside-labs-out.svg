@@ -1,0 +1,18 @@
+<svg viewBox="0 0 440 160" xmlns="http://www.w3.org/2000/svg" fill="none">
+  <!-- 01b: "Ers" dentro del liquido, "Labs" fuera grande, alineado a la base -->
+  <g stroke="#10B981" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 50 18 L 86 18 M 56 18 L 56 52 L 22 124 Q 18 138 32 138 L 110 138 Q 124 138 120 124 L 86 52 L 86 18"/>
+    <path d="M 36 96 Q 48 90 70 92 T 106 96" stroke-width="1.8"/>
+  </g>
+  <path d="M 36 96 Q 48 90 70 92 T 106 96 L 114 124 Q 114 134 104 134 L 38 134 Q 28 134 28 124 Z" fill="#10B981" fill-opacity="0.22"/>
+  <!-- Ers dentro -->
+  <text x="71" y="120" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="16" font-weight="700" fill="#10B981" letter-spacing="2">Ers</text>
+  <!-- Bubbles -->
+  <circle cx="48" cy="80" r="2.4" fill="#10B981" fill-opacity="0.7"/>
+  <circle cx="68" cy="62" r="1.8" fill="#10B981" fill-opacity="0.6"/>
+  <circle cx="62" cy="44" r="1.4" fill="#10B981" fill-opacity="0.5"/>
+  <circle cx="78" cy="32" r="1.2" fill="#10B981" fill-opacity="0.4"/>
+  <circle cx="74" cy="14" r="1.4" fill="#10B981" fill-opacity="0.35"/>
+  <!-- Labs fuera grande -->
+  <text x="148" y="138" font-family="Inter, sans-serif" font-size="80" font-weight="200" fill="#F9FAFB" letter-spacing="-3">Labs</text>
+</svg>

@@ -1,0 +1,36 @@
+<svg viewBox="0 0 320 120" xmlns="http://www.w3.org/2000/svg" fill="none">
+  <defs>
+    <linearGradient id="liquid6" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#34D399"/>
+      <stop offset="50%" stop-color="#10B981"/>
+      <stop offset="100%" stop-color="#047857"/>
+    </linearGradient>
+    <linearGradient id="text6" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#F9FAFB"/>
+      <stop offset="100%" stop-color="#A7F3D0"/>
+    </linearGradient>
+  </defs>
+  <!-- Ultra-thin elegant flask outline -->
+  <g stroke="#A7F3D0" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" opacity="0.9">
+    <path d="M 42 16 L 66 16 M 46 16 L 46 40 L 22 92 Q 20 100 28 100 L 80 100 Q 88 100 86 92 L 62 40 L 62 16"/>
+    <!-- Measurement marks -->
+    <line x1="46" y1="24" x2="50" y2="24" stroke-width="0.8"/>
+    <line x1="46" y1="32" x2="50" y2="32" stroke-width="0.8"/>
+    <line x1="42" y1="50" x2="46" y2="50" stroke-width="0.8"/>
+    <line x1="38" y1="60" x2="42" y2="60" stroke-width="0.8"/>
+  </g>
+  <!-- Gradient liquid -->
+  <path d="M 32 70 Q 40 66 54 68 T 76 70 L 80 92 Q 80 98 74 98 L 34 98 Q 28 98 28 92 Z" fill="url(#liquid6)"/>
+  <!-- Liquid surface highlight -->
+  <path d="M 34 70 Q 42 67 54 69 T 75 71" stroke="#D1FAE5" stroke-width="0.8" fill="none" opacity="0.6"/>
+  <!-- ERS engraved in liquid -->
+  <text x="54" y="89" text-anchor="middle" font-family="Inter, sans-serif" font-size="12" font-weight="700" fill="#030712" letter-spacing="2" opacity="0.85">ERS</text>
+  <!-- Delicate bubbles -->
+  <circle cx="40" cy="58" r="1.8" fill="none" stroke="#34D399" stroke-width="1"/>
+  <circle cx="52" cy="48" r="1.4" fill="none" stroke="#34D399" stroke-width="0.8"/>
+  <circle cx="46" cy="36" r="1.1" fill="none" stroke="#34D399" stroke-width="0.7"/>
+  <circle cx="56" cy="26" r="0.9" fill="none" stroke="#34D399" stroke-width="0.6"/>
+  <circle cx="50" cy="14" r="0.7" fill="none" stroke="#34D399" stroke-width="0.5"/>
+  <!-- Labs wordmark, thin elegant -->
+  <text x="110" y="74" font-family="Inter, sans-serif" font-size="42" font-weight="100" fill="url(#text6)" letter-spacing="0">Labs</text>
+</svg>

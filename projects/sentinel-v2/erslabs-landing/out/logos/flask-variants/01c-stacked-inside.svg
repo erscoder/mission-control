@@ -1,0 +1,17 @@
+<svg viewBox="0 0 360 200" xmlns="http://www.w3.org/2000/svg" fill="none">
+  <!-- 01c: matraz extra grande con Ers + Labs apilados dentro -->
+  <g stroke="#10B981" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 130 20 L 200 20 M 142 20 L 142 60 L 60 168 Q 52 186 78 186 L 264 186 Q 290 186 282 168 L 200 60 L 200 20"/>
+    <path d="M 80 122 Q 110 114 170 116 T 262 122" stroke-width="1.8"/>
+  </g>
+  <path d="M 80 122 Q 110 114 170 116 T 262 122 L 280 168 Q 280 180 264 180 L 78 180 Q 62 180 62 168 Z" fill="#10B981" fill-opacity="0.22"/>
+  <!-- Ers + Labs stacked inside liquid -->
+  <text x="171" y="156" text-anchor="middle" font-family="Inter, sans-serif" font-size="34" font-weight="700" fill="#10B981" letter-spacing="-1">Ers</text>
+  <text x="171" y="178" text-anchor="middle" font-family="Inter, sans-serif" font-size="18" font-weight="300" fill="#10B981" letter-spacing="3">LABS</text>
+  <!-- Bubbles -->
+  <circle cx="120" cy="100" r="3" fill="#10B981" fill-opacity="0.7"/>
+  <circle cx="160" cy="80" r="2.4" fill="#10B981" fill-opacity="0.6"/>
+  <circle cx="195" cy="60" r="2" fill="#10B981" fill-opacity="0.5"/>
+  <circle cx="170" cy="40" r="1.6" fill="#10B981" fill-opacity="0.4"/>
+  <circle cx="180" cy="14" r="1.4" fill="#10B981" fill-opacity="0.35"/>
+</svg>

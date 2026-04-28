@@ -1,0 +1,18 @@
+<svg viewBox="0 0 320 220" xmlns="http://www.w3.org/2000/svg" fill="none">
+  <!-- 01e: ErsLabs vertical dentro del cuerpo del matraz -->
+  <g stroke="#10B981" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 110 20 L 180 20 M 122 20 L 122 64 L 40 188 Q 32 206 58 206 L 244 206 Q 270 206 262 188 L 180 64 L 180 20"/>
+    <path d="M 60 132 Q 90 124 150 126 T 242 132" stroke-width="1.8"/>
+  </g>
+  <path d="M 60 132 Q 90 124 150 126 T 242 132 L 260 188 Q 260 200 244 200 L 58 200 Q 42 200 42 188 Z" fill="#10B981" fill-opacity="0.22"/>
+  <!-- ErsLabs en vertical dentro del liquido -->
+  <text x="151" y="172" text-anchor="middle" font-family="Inter, sans-serif" font-size="38" font-weight="800" letter-spacing="-1.5">
+    <tspan fill="#10B981">Ers</tspan><tspan fill="#F9FAFB">Labs</tspan>
+  </text>
+  <!-- Bubbles -->
+  <circle cx="100" cy="108" r="3" fill="#10B981" fill-opacity="0.7"/>
+  <circle cx="140" cy="86" r="2.4" fill="#10B981" fill-opacity="0.6"/>
+  <circle cx="170" cy="62" r="2" fill="#10B981" fill-opacity="0.5"/>
+  <circle cx="148" cy="42" r="1.6" fill="#10B981" fill-opacity="0.4"/>
+  <circle cx="160" cy="14" r="1.4" fill="#10B981" fill-opacity="0.35"/>
+</svg>

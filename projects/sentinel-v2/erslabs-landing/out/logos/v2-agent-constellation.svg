@@ -1,0 +1,16 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10B981"/>
+      <stop offset="100%" stop-color="#06B6D4"/>
+    </linearGradient>
+  </defs>
+  <g fill="none" stroke="url(#g)" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Left curly brace { -->
+    <path d="M 30 16 C 20 16, 18 24, 18 34 L 18 42 C 18 47, 12 50, 12 50 C 12 50, 18 53, 18 58 L 18 66 C 18 76, 20 84, 30 84" stroke-width="6"/>
+    <!-- Tilde wave between braces -->
+    <path d="M 36 50 C 41 38, 48 38, 50 50 C 52 62, 59 62, 64 50" stroke-width="6"/>
+    <!-- Right curly brace } -->
+    <path d="M 70 16 C 80 16, 82 24, 82 34 L 82 42 C 82 47, 88 50, 88 50 C 88 50, 82 53, 82 58 L 82 66 C 82 76, 80 84, 70 84" stroke-width="6"/>
+  </g>
+</svg>

@@ -2,46 +2,60 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&family=Manrope:wght@200;300;500&family=Caveat:wght@400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 html {
   scroll-behavior: smooth;
 }
 
 body {
-  background-color: #030712;
+  background-color: #05080F;
   color: #E2E8F0;
 }
 
 @layer utilities {
-  .text-gradient {
-    @apply bg-clip-text text-transparent bg-gradient-to-r from-brand-400 via-brand-300 to-accent-cyan;
+  .text-gradient-swarm {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-swarm-300 via-swarm-400 to-swarm-500;
   }
 
-  .text-gradient-warm {
-    @apply bg-clip-text text-transparent bg-gradient-to-r from-accent-amber via-accent-rose to-accent-violet;
+  .text-gradient-human {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-human-300 via-human-400 to-human-500;
   }
 
-  .border-glow {
-    box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.15),
-                0 0 20px -5px rgba(16, 185, 129, 0.1);
+  .border-glow-swarm {
+    box-shadow: 0 0 0 1px rgba(0, 212, 255, 0.2),
+                0 0 20px -5px rgba(0, 212, 255, 0.15);
   }
 
-  .card-shine {
+  .border-glow-human {
+    box-shadow: 0 0 0 1px rgba(255, 107, 53, 0.2),
+                0 0 20px -5px rgba(255, 107, 53, 0.15);
+  }
+
+  .card-shine-swarm {
     background: linear-gradient(
       135deg,
-      rgba(16, 185, 129, 0.05) 0%,
+      rgba(0, 212, 255, 0.05) 0%,
       transparent 50%,
-      rgba(34, 211, 238, 0.03) 100%
+      rgba(0, 170, 204, 0.03) 100%
+    );
+  }
+
+  .card-shine-human {
+    background: linear-gradient(
+      135deg,
+      rgba(255, 107, 53, 0.05) 0%,
+      transparent 50%,
+      rgba(229, 90, 38, 0.03) 100%
     );
   }
 }
 
-/* Grid background pattern */
+/* Grid background — Mission Control */
 .grid-bg {
   background-image:
-    linear-gradient(rgba(16, 185, 129, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(16, 185, 129, 0.04) 1px, transparent 1px);
+    linear-gradient(rgba(0, 212, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 212, 255, 0.04) 1px, transparent 1px);
   background-size: 60px 60px;
 }
 
@@ -50,24 +64,40 @@ body {
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
 }
 
-/* Terminal cursor blink */
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
-}
-
-.cursor-blink {
-  animation: blink 1s step-end infinite;
-}
-
-/* Pipeline connector animation */
-@keyframes flow {
+/* Pipeline flow animation */
+@keyframes pipeline-flow {
   0% { background-position: 0% 50%; }
   100% { background-position: 200% 50%; }
 }
 
 .pipeline-flow {
-  background: linear-gradient(90deg, transparent, rgba(16,185,129,0.6), transparent);
+  background: linear-gradient(90deg, transparent, rgba(0, 212, 255, 0.6), transparent);
   background-size: 200% 100%;
-  animation: flow 2s linear infinite;
+  animation: pipeline-flow 2s linear infinite;
+}
+
+/* Swarm pulse */
+@keyframes swarm-pulse {
+  0%, 100% { 
+    opacity: 0.4;
+    box-shadow: 0 0 10px rgba(0, 212, 255, 0.2);
+  }
+  50% { 
+    opacity: 1;
+    box-shadow: 0 0 20px rgba(0, 212, 255, 0.4), 0 0 40px rgba(0, 212, 255, 0.2);
+  }
+}
+
+.swarm-pulse {
+  animation: swarm-pulse 2s ease-in-out infinite;
+}
+
+/* Human approval indicator */
+@keyframes human-pulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
+.human-pulse {
+  animation: human-pulse 1.5s ease-in-out infinite;
 }

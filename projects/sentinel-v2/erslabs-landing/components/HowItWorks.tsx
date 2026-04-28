@@ -1,93 +1,139 @@
-import { Ear, Hammer, Rocket, ArrowRight } from 'lucide-react'
+import { Search, Target, Code2, UserCheck, Rocket } from 'lucide-react'
 
 const steps = [
   {
-    icon: Ear,
+    icon: Search,
     num: '01',
-    title: 'Listen',
-    iconWrap: 'bg-accent-cyan/10 border-accent-cyan/20',
-    iconColor: 'text-accent-cyan',
-    labelColor: 'text-accent-cyan',
+    label: 'RESEARCH',
+    color: 'swarm',
     description:
-      'Our agents continuously scan Reddit, Twitter, Hacker News, and 50+ forums for genuine complaints, not trends, not hype. Real people describing real friction, with evidence they would pay for a solution.',
-    detail: '847 sources monitored',
+      'Scout agents continuously scan Reddit, Twitter, HN, and 50+ communities. Hunter agents filter signal from noise — real pain points, not trends.',
+    detail: '847 sources monitored 24/7',
   },
   {
-    icon: Hammer,
+    icon: Target,
     num: '02',
-    title: 'Build',
-    iconWrap: 'bg-brand-400/10 border-brand-400/20',
-    iconColor: 'text-brand-400',
-    labelColor: 'text-brand-400',
+    label: 'MATCH',
+    color: 'swarm',
     description:
-      'A crew of 6 specialized AI agents (product manager, frontend engineer, backend engineer, code reviewer, security auditor, and QA lead) collaborate to ship a complete, tested MVP with Stripe payments from day one.',
-    detail: '6 agents per build',
+      'Profile agent researches the target user. Matcher confirms fit: market size, competition, your skill adjacency. No gut feelings — data.',
+    detail: '92% match threshold',
+  },
+  {
+    icon: Code2,
+    num: '03',
+    label: 'BUILD',
+    color: 'swarm',
+    description:
+      'Build crew ships the MVP: PM, frontend, backend, reviewer, security, QA. Full-stack, tested, Stripe wired. You stay hands-off.',
+    detail: '6 specialized agents',
+  },
+  {
+    icon: UserCheck,
+    num: '04',
+    label: 'APPROVE',
+    color: 'human',
+    description:
+      'The swarm stops here. Nothing moves forward without your explicit approval. You review the business plan, the spec, the economics.',
+    detail: 'you are in control',
   },
   {
     icon: Rocket,
-    num: '03',
-    title: 'Ship',
-    iconWrap: 'bg-brand-300/10 border-brand-300/20',
-    iconColor: 'text-brand-300',
-    labelColor: 'text-brand-300',
+    num: '05',
+    label: 'DEPLOY',
+    color: 'terminal-green',
     description:
-      'Auto-deployed to production: backend on Fly.io, frontend on Cloudflare Pages, custom domain under erslabs.net, Stripe webhooks wired, SSL certificates provisioned. Zero manual intervention.',
-    detail: '< 4 hours end-to-end',
+      'Once you approve, Deploy crew launches: Fly.io backend, Cloudflare Pages frontend, custom domain, Stripe webhooks, SSL.',
+    detail: 'production in < 4h',
   },
 ]
 
 export function HowItWorks() {
   return (
-    <section id="how-it-works" className="py-24 md:py-32 bg-surface-800/30 relative">
+    <section id="pipeline" className="py-24 md:py-32 bg-space-900/30 relative">
       <div className="absolute inset-0 noise" />
 
       <div className="relative max-w-6xl mx-auto px-6">
         <div className="text-center mb-20">
-          <p className="text-brand-400 font-mono text-sm tracking-wider uppercase mb-3">
-            Process
+          <p className="text-swarm-400 font-mono text-sm tracking-wider uppercase mb-3">
+            Pipeline
           </p>
-          <h2 className="text-4xl md:text-5xl font-black tracking-tight">
-            From pain to{' '}
-            <span className="text-gradient">product</span>
+          <h2 className="text-4xl md:text-5xl font-black tracking-tight text-white">
+            The loop that runs{' '}
+            <span className="text-gradient-swarm">24/7</span>
           </h2>
         </div>
 
-        <div className="space-y-8 md:space-y-0 md:grid md:grid-cols-3 md:gap-8">
+        <div className="space-y-6 md:space-y-0 md:grid md:grid-cols-5 md:gap-4">
           {steps.map((step, i) => (
-            <div key={step.title} className="relative group">
-              {/* Connector */}
+            <div
+              key={step.label}
+              className={`
+                relative p-5 rounded-xl border backdrop-blur-sm transition-all duration-300
+                ${step.color === 'human'
+                  ? 'border-human-500/30 bg-human-500/5 hover:border-human-500/50'
+                  : step.color === 'terminal-green'
+                  ? 'border-terminal-green/20 bg-terminal-green/5 hover:border-terminal-green/40'
+                  : 'border-swarm-900/50 bg-swarm-900/20 hover:border-swarm-500/30'
+                }
+              `}
+            >
+              {/* Step number + label */}
+              <div className="flex items-center gap-2 mb-4">
+                <span className={`
+                  font-mono text-xs px-2 py-0.5 rounded
+                  ${step.color === 'human' ? 'bg-human-500/20 text-human-400' : step.color === 'terminal-green' ? 'bg-terminal-green/20 text-terminal-green' : 'bg-swarm-500/20 text-swarm-400'}
+                `}>
+                  {step.num}
+                </span>
+                <span className={`
+                  font-mono text-xs tracking-wider font-semibold
+                  ${step.color === 'human' ? 'text-human-400' : step.color === 'terminal-green' ? 'text-terminal-green' : 'text-swarm-300'}
+                `}>
+                  {step.label}
+                </span>
+              </div>
+
+              {/* Icon */}
+              <div className={`
+                w-10 h-10 rounded-lg mb-4 flex items-center justify-center
+                ${step.color === 'human' ? 'bg-human-500/10 text-human-400' : step.color === 'terminal-green' ? 'bg-terminal-green/10 text-terminal-green' : 'bg-swarm-500/10 text-swarm-400'}
+              `}>
+                <step.icon className="w-5 h-5" />
+              </div>
+
+              {/* Description */}
+              <p className="text-slate-400 text-sm leading-relaxed mb-4">
+                {step.description}
+              </p>
+
+              {/* Detail */}
+              <div className="pt-3 border-t border-space-700/50">
+                <span className="font-mono text-xs text-slate-500">
+                  {step.detail}
+                </span>
+              </div>
+
+              {/* Arrow connector */}
               {i < steps.length - 1 && (
-                <div className="hidden md:flex absolute top-12 left-[calc(100%-8px)] w-8 items-center justify-center z-10">
-                  <ArrowRight className="w-4 h-4 text-surface-600 group-hover:text-brand-500/50 transition-colors" />
+                <div className="hidden md:flex absolute top-1/2 -right-3 transform -translate-y-1/2 z-10">
+                  <div className="w-6 h-0.5 bg-space-700 relative overflow-hidden">
+                    <div className="absolute inset-y-0 left-0 w-1/2 bg-swarm-500/40 pipeline-flow" />
+                  </div>
                 </div>
               )}
-
-              <div className="p-6 rounded-xl border border-surface-600/50 bg-surface-900/60 backdrop-blur-sm hover:border-brand-500/30 transition-all duration-300 h-full">
-                {/* Top row */}
-                <div className="flex items-center gap-4 mb-5">
-                  <div className={`w-14 h-14 rounded-2xl ${step.iconWrap} border flex items-center justify-center`}>
-                    <step.icon className={`w-6 h-6 ${step.iconColor}`} />
-                  </div>
-                  <div>
-                    <span className={`${step.labelColor} font-mono text-xs tracking-wider`}>
-                      STEP {step.num}
-                    </span>
-                    <h3 className="text-2xl font-bold tracking-tight">{step.title}</h3>
-                  </div>
-                </div>
-
-                <p className="text-slate-400 leading-relaxed text-[15px] mb-4">
-                  {step.description}
-                </p>
-
-                <div className="pt-4 border-t border-surface-700/50">
-                  <span className="font-mono text-xs text-surface-500">
-                    {step.detail}
-                  </span>
-                </div>
-              </div>
             </div>
           ))}
+        </div>
+
+        {/* Human control callout */}
+        <div className="mt-12 text-center">
+          <div className="inline-flex items-center gap-3 px-5 py-3 rounded-full border border-human-500/20 bg-human-500/5">
+            <span className="w-3 h-3 rounded-full bg-human-500 human-pulse" />
+            <span className="font-mono text-sm text-human-400">
+              You approve at step 04 — the swarm never spends money without your say
+            </span>
+          </div>
         </div>
       </div>
     </section>

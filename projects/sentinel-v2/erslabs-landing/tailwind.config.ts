@@ -8,29 +8,39 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        brand: {
-          50: '#ECFDF5',
-          100: '#D1FAE5',
-          200: '#A7F3D0',
-          300: '#6EE7B7',
-          400: '#34D399',
-          500: '#10B981',
-          600: '#059669',
-          700: '#047857',
+        space: {
+          950: '#05080F',  // Deep space black — el vacío es el canvas
+          900: '#0A0F1A',
+          800: '#111827',
+          700: '#1A2332',
+          600: '#243044',
+          500: '#2E4058',
         },
-        surface: {
-          950: '#030712',
-          900: '#0A0A0F',
-          800: '#111118',
-          700: '#1A1A24',
-          600: '#2A2A3A',
-          500: '#3A3A4E',
+        swarm: {
+          DEFAULT: '#00D4FF',  // Primary cyan — el swarm, electrificado
+          400: '#00D4FF',
+          300: '#4DE8FF',
+          200: '#80F0FF',
+          100: '#B0F8FF',
+          500: '#00A8CC',
+          600: '#007A99',
+          700: '#004C66',
+          800: '#003344',
+          900: '#001A22',
         },
-        accent: {
-          cyan: '#22D3EE',
-          violet: '#A78BFA',
-          amber: '#FBBF24',
-          rose: '#FB7185',
+        human: {
+          DEFAULT: '#FF6B35',  // Tertiary coral — puntos de control/approval
+          400: '#FF6B35',
+          300: '#FF8F66',
+          200: '#FFB399',
+          100: '#FFD4C2',
+          500: '#E55A26',
+          600: '#CC4918',
+        },
+        terminal: {
+          green: '#10FF88',  // Terminal green para elementos de estado
+          amber: '#FFB800',
+          red: '#FF4757',
         },
       },
       fontFamily: {
@@ -44,6 +54,8 @@ const config: Config = {
         'slide-up': 'slide-up 0.6s ease-out',
         'fade-in': 'fade-in 0.8s ease-out',
         'scan-line': 'scan-line 3s linear infinite',
+        'pulse-swarm': 'pulse-swarm 2s ease-in-out infinite',
+        'blink': 'blink 1s step-end infinite',
       },
       keyframes: {
         float: {
@@ -51,8 +63,8 @@ const config: Config = {
           '50%': { transform: 'translateY(-10px)' },
         },
         glow: {
-          '0%': { opacity: '0.4' },
-          '100%': { opacity: '1' },
+          '0%': { opacity: '0.4', filter: 'blur(8px)' },
+          '100%': { opacity: '1', filter: 'blur(12px)' },
         },
         'slide-up': {
           '0%': { opacity: '0', transform: 'translateY(20px)' },
@@ -64,8 +76,26 @@ const config: Config = {
         },
         'scan-line': {
           '0%': { transform: 'translateY(-100%)' },
-          '100%': { transform: 'translateY(100%)' },
+          '100%': { transform: 'translateY(100vh)' },
         },
+        'pulse-swarm': {
+          '0%, 100%': { opacity: '0.6', transform: 'scale(1)' },
+          '50%': { opacity: '1', transform: 'scale(1.05)' },
+        },
+        blink: {
+          '0%, 100%': { opacity: '1' },
+          '50%': { opacity: '0' },
+        },
+      },
+      backgroundImage: {
+        'grid-space': 'linear-gradient(rgba(0, 212, 255, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 212, 255, 0.03) 1px, transparent 1px)',
+        'gradient-swarm': 'linear-gradient(135deg, #00D4FF 0%, #007A99 100%)',
+        'gradient-human': 'linear-gradient(135deg, #FF6B35 0%, #CC4918 100%)',
+      },
+      boxShadow: {
+        'swarm-glow': '0 0 20px rgba(0, 212, 255, 0.3), 0 0 40px rgba(0, 212, 255, 0.1)',
+        'human-glow': '0 0 20px rgba(255, 107, 53, 0.3), 0 0 40px rgba(255, 107, 53, 0.1)',
+        'terminal-glow': '0 0 10px rgba(16, 255, 136, 0.2)',
       },
     },
   },
