@@ -219,17 +219,26 @@ class TestSentinelLoopFlowKickoff:
             mock_crew_cls.assert_not_called()
 
     def test_run_deploy_runs_when_approved(self, flow):
-        """run_deploy() runs crew when approved."""
+        """run_deploy() runs crew when approved.
+
+        URL is now derived deterministically from slug (`<slug>.erslabs.net`),
+        not from whatever the deploy crew reports — keeps the contract stable
+        even if the agent invents a URL.
+        """
         flow.state.approved = True
         flow.state.build_output = "Built: SaaS app"
         flow.state.top_opportunity = {"title": "Opportunity"}
 
         mock_result = Mock(spec=["raw"])
-        mock_result.raw = {"url": "https://example.com", "deployment_id": "xyz", "go_no_go": "GO"}
+        mock_result.raw = {"frontend_url": "https://opportunity.erslabs.net",
+                           "deployment_id": "xyz", "go_no_go": "GO"}
 
         with patch(
             "sentinel_v2.crews.deploy_crew.deploy_crew.deploy_crew"
-        ) as mock_crew_cls:
+        ) as mock_crew_cls, patch(
+            "sentinel_v2.flows.sentinel_loop._prebake_deploy_files",
+            return_value={},
+        ):
             mock_crew = MagicMock()
             mock_crew.kickoff.return_value = mock_result
             mock_crew_cls.return_value = mock_crew
@@ -239,7 +248,7 @@ class TestSentinelLoopFlowKickoff:
 
             mock_crew.kickoff.assert_called_once()
         assert flow.state.deployed is True
-        assert flow.state.deployed_url == "https://example.com"
+        assert flow.state.deployed_url == "https://opportunity.erslabs.net"
 
 
 class TestFlowLifecycle:
@@ -289,6 +298,7 @@ class TestRequestApproval:
         flow.state.cycle_count = 3
         flow.state.top_opportunity = {"title": "Test Opportunity"}
         flow.state.build_output = "Test build output"
+        flow.state.build_ok = True  # required to pass health gate
 
         with patch.object(flow, "remember"):
             result = flow.request_approval()
@@ -303,6 +313,7 @@ class TestRequestApproval:
         flow.state.top_opportunity = {"title": "Op"}
         flow.state.build_output = "output"
         flow.state.pending_since = "2026-04-23T10:00:00Z"
+        flow.state.build_ok = True  # required to pass health gate
 
         with patch.object(flow, "remember") as mock_remember:
             flow.request_approval()
@@ -334,11 +345,15 @@ class TestCheckApproval:
         assert flow.state.approved is True
 
     def test_check_approval_approved_via_dashboard(self, flow):
-        """check_approval() returns 'approved' when draft reaches 'deployed' status."""
+        """check_approval() returns 'approved' when user clicks Approve deploy.
+
+        The wait now blocks on the user's intent statuses (pending_deploy /
+        queued / rejected_deploy), not the runtime's terminal state.
+        """
         flow.state.draft_id = "draft_c1_test"
         with patch("sentinel_v2.dashboard_state.write_state"), \
              patch("sentinel_v2.dashboard_state.write_flow_breakdown"), \
-             patch("sentinel_v2.dashboard_state.wait_for_draft_status", return_value="deployed"):
+             patch("sentinel_v2.dashboard_state.wait_for_draft_status", return_value="pending_deploy"):
             result = flow.check_approval()
         assert result == "approved"
         assert flow.state.approved is True
@@ -617,7 +632,7 @@ class TestFeedbackLoop:
             assert inputs["revision_notes"] == ""
 
     def test_run_deploy_fails_without_frontend_url(self, flow):
-        """run_deploy() marks draft as failed when no frontend_url is returned."""
+        """run_deploy() marks draft as failed when crew returns no frontend_url."""
         flow.state.approved = True
         flow.state.build_output = "Built: app"
         flow.state.top_opportunity = {"title": "Op"}
@@ -628,7 +643,10 @@ class TestFeedbackLoop:
 
         with patch(
             "sentinel_v2.crews.deploy_crew.deploy_crew.deploy_crew"
-        ) as mock_crew_cls:
+        ) as mock_crew_cls, patch(
+            "sentinel_v2.flows.sentinel_loop._prebake_deploy_files",
+            return_value={},
+        ):
             mock_crew = MagicMock()
             mock_crew.kickoff.return_value = mock_result
             mock_crew_cls.return_value = mock_crew
@@ -640,22 +658,29 @@ class TestFeedbackLoop:
             assert flow.state.deployed is False
             assert "did not return a real frontend URL" in (flow.state.error or "")
             mock_update.assert_called()
-            # Last call should mark draft as failed
             last_call = mock_update.call_args_list[-1]
             assert last_call.kwargs.get("status") == "failed"
 
     def test_run_deploy_succeeds_with_frontend_url(self, flow):
-        """run_deploy() succeeds when frontend_url is returned."""
+        """run_deploy() succeeds when crew confirms a frontend_url.
+
+        deployed_url is the slug-derived canonical URL (`op.erslabs.net`),
+        not whatever string the crew returned — keeps DNS predictable.
+        """
         flow.state.approved = True
         flow.state.build_output = "Built: app"
         flow.state.top_opportunity = {"title": "Op"}
 
         mock_result = Mock(spec=["raw"])
-        mock_result.raw = {"frontend_url": "https://myapp.erslabs.net", "deployment_id": "abc", "go_no_go": "GO"}
+        mock_result.raw = {"frontend_url": "https://op.erslabs.net",
+                           "deployment_id": "abc", "go_no_go": "GO"}
 
         with patch(
             "sentinel_v2.crews.deploy_crew.deploy_crew.deploy_crew"
-        ) as mock_crew_cls:
+        ) as mock_crew_cls, patch(
+            "sentinel_v2.flows.sentinel_loop._prebake_deploy_files",
+            return_value={},
+        ):
             mock_crew = MagicMock()
             mock_crew.kickoff.return_value = mock_result
             mock_crew_cls.return_value = mock_crew
@@ -664,7 +689,7 @@ class TestFeedbackLoop:
                 flow.run_deploy()
 
         assert flow.state.deployed is True
-        assert flow.state.deployed_url == "https://myapp.erslabs.net"
+        assert flow.state.deployed_url == "https://op.erslabs.net"
 
     def test_run_deploy_succeeds_with_url_key(self, flow):
         """run_deploy() also accepts 'url' key as fallback for frontend_url."""
@@ -673,11 +698,15 @@ class TestFeedbackLoop:
         flow.state.top_opportunity = {"title": "Op"}
 
         mock_result = Mock(spec=["raw"])
-        mock_result.raw = {"url": "https://myapp.example.com", "deployment_id": "xyz", "go_no_go": "GO"}
+        mock_result.raw = {"url": "https://op.erslabs.net",
+                           "deployment_id": "xyz", "go_no_go": "GO"}
 
         with patch(
             "sentinel_v2.crews.deploy_crew.deploy_crew.deploy_crew"
-        ) as mock_crew_cls:
+        ) as mock_crew_cls, patch(
+            "sentinel_v2.flows.sentinel_loop._prebake_deploy_files",
+            return_value={},
+        ):
             mock_crew = MagicMock()
             mock_crew.kickoff.return_value = mock_result
             mock_crew_cls.return_value = mock_crew
@@ -686,7 +715,7 @@ class TestFeedbackLoop:
                 flow.run_deploy()
 
         assert flow.state.deployed is True
-        assert flow.state.deployed_url == "https://myapp.example.com"
+        assert flow.state.deployed_url == "https://op.erslabs.net"
 
 
 class TestParseExceptions:
@@ -846,7 +875,8 @@ class TestDeployRetryLoop:
         rollback_result.raw = {"go_no_go": "ROLLBACK", "failing_step": "health check"}
 
         success_result = Mock(spec=["raw"])
-        success_result.raw = {"url": "https://example.com", "deployment_id": "xyz", "go_no_go": "GO"}
+        success_result.raw = {"frontend_url": "https://opportunity.erslabs.net",
+                              "deployment_id": "xyz", "go_no_go": "GO"}
 
         mock_crew = MagicMock()
         mock_crew.kickoff.side_effect = [rollback_result, success_result]
@@ -854,6 +884,9 @@ class TestDeployRetryLoop:
         with patch(
             "sentinel_v2.crews.deploy_crew.deploy_crew.deploy_crew",
             return_value=mock_crew,
+        ), patch(
+            "sentinel_v2.flows.sentinel_loop._prebake_deploy_files",
+            return_value={},
         ):
             with patch.object(flow, "remember"):
                 flow.run_deploy()
@@ -874,6 +907,9 @@ class TestDeployRetryLoop:
         with patch(
             "sentinel_v2.crews.deploy_crew.deploy_crew.deploy_crew",
             return_value=mock_crew,
+        ), patch(
+            "sentinel_v2.flows.sentinel_loop._prebake_deploy_files",
+            return_value={},
         ), patch("sentinel_v2.dashboard_state.update_draft") as mock_update:
             with patch.object(flow, "remember"):
                 flow.run_deploy()

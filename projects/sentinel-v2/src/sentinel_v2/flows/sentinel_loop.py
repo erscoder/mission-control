@@ -130,6 +130,7 @@ class SentinelState(BaseModel):
     build_output: Optional[str] = None
     workspace_dir: Optional[str] = None          # ~/Sentinel/<draft_id>
     stripe_product_ids: list[str] = []
+    build_ok: bool = False                        # gate: QA GO + security build green
 
     # Security remediation (between build and approval)
     security_remediated: bool = False
@@ -759,6 +760,47 @@ class SentinelLoopFlow(Flow[SentinelState]):
 
         self.state.build_output = str(result.raw) if hasattr(result, "raw") else str(result)
 
+        # ── QA gate: refuse to promote a draft the QA Lead failed ────────
+        # Reads the QA Lead's structured output (go_no_go, build_status,
+        # blocking_issues). If the gate is NO-GO or build_status=='fail',
+        # mark the draft failed and stop the cycle here. Without this gate
+        # the loop sends broken builds through security/approval anyway.
+        qa_parsed = self._parse_deploy_result(result) or {}
+        go_no_go = str(qa_parsed.get("go_no_go") or "").strip().upper()
+        build_status = str(qa_parsed.get("build_status") or "").strip().lower()
+        blocking_issues = qa_parsed.get("blocking_issues") or []
+        qa_failed = (
+            (go_no_go and go_no_go != "GO")
+            or build_status == "fail"
+        )
+        if qa_failed:
+            self.state.build_ok = False
+            self.state.error = "build_failed_qa_gate"
+            reason = (
+                f"QA gate: go_no_go={go_no_go or 'unknown'}, "
+                f"build_status={build_status or 'unknown'}, "
+                f"blockers={blocking_issues!r}"
+            )
+            log.error("Build QA gate failed — %s", reason)
+            if self.state.draft_id:
+                from sentinel_v2.dashboard_state import update_draft
+                try:
+                    update_draft(
+                        self.state.draft_id,
+                        status="failed",
+                        revision_notes=f"Auto-rejected by QA gate. {reason}",
+                    )
+                except Exception as db_err:
+                    log.warning("Could not mark draft failed: %s", db_err)
+            self._clear_checkpoint()
+            self._shutdown_requested = True
+            return
+
+        # QA passed (or returned non-fail / unparseable but non-NO-GO).
+        # Treat unknown gate output as "let security loop decide" — still
+        # blocked by the request_approval guard if security can't build.
+        self.state.build_ok = (go_no_go == "GO") or (build_status in {"clean", "warnings"})
+
         if self.state.draft_id:
             from sentinel_v2.dashboard_state import update_draft
             # Move to review first (code-review + security-audit), then built with metrics.
@@ -869,6 +911,14 @@ class SentinelLoopFlow(Flow[SentinelState]):
             build_ok = bool(parsed.get("build_ok", False))
             tests_ok = bool(parsed.get("tests_ok", False))
             self.state.vulnerability_count = remaining
+            # Persist the security loop's build verdict so request_approval
+            # can gate on it. Only override if the apply_task explicitly
+            # reported build_ok — if the field is missing the crew never
+            # ran a real build and we keep the QA-gate verdict from
+            # run_build. An explicit False from security overrides True
+            # from QA (a passing QA agent + broken security build = NO-GO).
+            if "build_ok" in parsed:
+                self.state.build_ok = self.state.build_ok and build_ok
             if isinstance(parsed.get("findings"), list):
                 self.state.vulnerability_findings = parsed["findings"][:50]
 
@@ -930,6 +980,30 @@ class SentinelLoopFlow(Flow[SentinelState]):
         if self.state.approved:
             log.info("Resume: already approved, skipping request_approval gate")
             return "pending"
+
+        # ── Health gate: never park a broken draft in the approval queue ──
+        # Without this, drafts whose security loop exhausted retries (or
+        # whose build never went green) sat as "Built — awaiting deploy
+        # approval" indefinitely, polluting the dashboard.
+        if self.state.vulnerability_scan_error or not self.state.build_ok:
+            reason = (
+                self.state.vulnerability_scan_error
+                or f"build_ok={self.state.build_ok}"
+            )
+            log.error("Skipping approval gate — broken build/security: %s", reason)
+            if self.state.draft_id:
+                from sentinel_v2.dashboard_state import update_draft
+                try:
+                    update_draft(
+                        self.state.draft_id,
+                        status="failed",
+                        revision_notes=f"Auto-rejected before approval. {reason}",
+                    )
+                except Exception as db_err:
+                    log.warning("Could not mark draft failed: %s", db_err)
+            self._clear_checkpoint()
+            self._shutdown_requested = True
+            return "stop"
 
         self.state.current_phase = "approve"
         self.state.pending_since = datetime.now(timezone.utc).isoformat()

@@ -1,9 +1,14 @@
 """LLM configuration helpers — use MiniMax from environment."""
 from __future__ import annotations
 
+import logging
 import os
 import re
+import time
+
 from crewai import LLM
+
+log = logging.getLogger("sentinel_v2.llm")
 
 # Cached LLM instances per model name
 _llm_cache: dict[str, LLM] = {}
@@ -104,7 +109,57 @@ def get_minimax_llm(model: str = "MiniMax-M2.7") -> LLM:
         api_key=api_key,
     )
     _patch_system_messages(llm)
+    _patch_empty_response_retry(llm)
     _llm_cache[model] = llm
+    return llm
+
+
+def _patch_empty_response_retry(
+    llm: LLM,
+    max_retries: int = 3,
+    base_delay: float = 1.0,
+) -> LLM:
+    """Retry the LLM ``call`` when MiniMax returns ``None``/empty/whitespace.
+
+    Background: MiniMax (especially M2.7) periodically streams back an empty
+    body, surfacing as ``Invalid response from LLM call - None or empty.``
+    inside CrewAI. CrewAI then constructs a ``TaskOutput`` from ``None``,
+    which Pydantic rejects with ``string_type`` validation, crashing the
+    crew. Retrying with backoff is enough to recover most cases.
+
+    Idempotent — safe to call multiple times on the same instance.
+    """
+    if getattr(llm, "_empty_retry_patched", False):
+        return llm
+
+    original_call = llm.call
+
+    def _retrying_call(*args, **kwargs):
+        last: object | None = None
+        for attempt in range(1, max_retries + 1):
+            result = original_call(*args, **kwargs)
+            last = result
+            if result is None:
+                payload = ""
+            elif isinstance(result, str):
+                payload = result
+            else:
+                payload = str(result)
+            if payload.strip():
+                return result
+            if attempt < max_retries:
+                delay = base_delay * (2 ** (attempt - 1))
+                log.warning(
+                    "MiniMax empty response, retry %d/%d in %.1fs",
+                    attempt, max_retries, delay,
+                )
+                time.sleep(delay)
+        raise RuntimeError(
+            f"MiniMax returned empty after {max_retries} retries (last={last!r})"
+        )
+
+    llm.call = _retrying_call  # type: ignore[method-assign]
+    llm._empty_retry_patched = True  # type: ignore[attr-defined]
     return llm
 
 

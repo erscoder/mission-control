@@ -135,8 +135,10 @@ class RunShellInput(BaseModel):
     command: str = Field(
         ...,
         description=(
-            "Shell command. First token must be whitelisted. The 'cd <subdir> && <rest>' "
-            "pattern is supported and translated to subdir + rest automatically."
+            "Shell command. First token must be whitelisted. ONE COMMAND PER CALL — "
+            "shell operators &&, ||, ;, and | are rejected. Make separate run_shell "
+            "calls per command. The 'cd <subdir> && <rest>' pattern is the only "
+            "exception and is translated to subdir + rest automatically."
         ),
     )
     subdir: str = Field(
@@ -152,10 +154,12 @@ class RunShellInput(BaseModel):
 class RunShellTool(BaseTool):
     name: str = "run_shell"
     description: str = (
-        "Run a shell command inside the workspace (or a sub-directory via the "
-        "'subdir' parameter). The 'cd <path> && <cmd>' pattern is also accepted "
-        "and translated to subdir+cmd transparently. First token of the actual "
-        "command must be one of: "
+        "Run ONE shell command inside the workspace (or a sub-directory via the "
+        "'subdir' parameter). Do NOT chain commands: '&&', '||', ';', '|' are "
+        "rejected — issue a separate run_shell call per command. The 'cd <path> "
+        "&& <cmd>' prefix is the only allowed chain and is translated to "
+        "subdir+cmd transparently. First token of the actual command must be "
+        "one of: "
         + ", ".join(sorted(_SHELL_WHITELIST))
         + ". Returns combined stdout/stderr (truncated to 4000 chars) and exit code."
     )
@@ -194,6 +198,20 @@ class RunShellTool(BaseTool):
             return f"shell-parse-error: {e}"
         if not argv:
             return "shell-error: empty command"
+
+        # Reject shell operators surfaced as bare tokens after shlex.split.
+        # subprocess.run with shell=False would silently pass them as
+        # arguments (e.g. 'npm install foo && npm install bar' becomes a
+        # tag name '&&' to npm, causing EINVALIDTAGNAME). Force agents to
+        # make separate calls per command.
+        for tok in argv:
+            if tok in ("&&", "||", ";", "|"):
+                return (
+                    f"shell-error: shell operator {tok!r} not supported. "
+                    "Issue one run_shell call per command (no chaining). "
+                    "The only allowed chain is a leading 'cd <subdir> && <cmd>'."
+                )
+
         binary = os.path.basename(argv[0])
         if binary not in _SHELL_WHITELIST:
             return f"shell-error: {binary!r} not in whitelist"
