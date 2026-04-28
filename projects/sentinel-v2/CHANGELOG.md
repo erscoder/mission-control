@@ -26,6 +26,19 @@ Test fixes (pre-existing failures discovered during verification):
 
 51 / 51 sentinel_loop unit tests passing; 235 / 235 unit-suite total. Coverage 74% (pre-existing project baseline; uncovered modules — security_remediation_crew, build_crew, deploy_crew — are integration-tested via the daemon, not unit-mocked).
 
+## 2026-04-28 · daa96d5 - Follow-up: close QA-gate fail-open + regression tests
+
+Code review of 9fbf9aa surfaced one real bug and two gaps. Fixed in this follow-up.
+
+**Bug: unparseable QA output rejected legitimately-green drafts.** When `_parse_deploy_result` returned `{}` (QA Lead emits prose instead of JSON, or empties the response under load), `go_no_go` and `build_status` were both `""`, the gate did NOT fail (correct), but `state.build_ok` was assigned `(False) or (False) = False`. Then a security crew that reported `build_ok=True` could not lift the verdict because the AND-clamp only narrows. Net effect: any QA Lead that returned valid-but-unstructured success was auto-rejected at `request_approval`. Fix: when both QA fields are empty, default `state.build_ok=True` and emit a WARNING — the security loop is the authoritative gate for that case (it actually runs `npm run build`).
+
+**Gap: no regression tests for the new gates.** Added:
+- `TestQAGateAndApprovalGate` (tests/unit/test_sentinel_loop.py): four tests covering the build_ok=False rejection, the vulnerability_scan_error rejection, the security AND-clamp leaving QA's True intact when build_ok is missing, and demoting it when explicit False.
+- `test_run_shell_rejects_double_ampersand` / `_semicolon` / `_pipe` / `_allows_leading_cd_chain` (tests/unit/test_file_tool.py): covers the npm `EINVALIDTAGNAME "&&"` regression and confirms the legitimate `cd <subdir> && <cmd>` prefix still works.
+- `TestPatchEmptyResponseRetry` (tests/unit/test_config.py): five tests covering the happy path, retries on `""` / whitespace / None, exhaustion → `RuntimeError`, and idempotent patching. Uses a plain stub class instead of `MagicMock` because MagicMock's child-mock auto-creation shadows function assignment to `.call`.
+
+13 new test cases. Full unit suite: 248 / 248 green (was 235 pre-followup).
+
 ## 2026-04-28 · pending - Retry from dashboard now actually starts fresh
 
 User reported: clicking Retry kept resurrecting drafts already exhausted, with the message "Deploy exhausted all 2 attempts in a prior cycle and the resumed state had no deployed=True." Two cooperating bugs:
