@@ -14,12 +14,21 @@ body {
 }
 
 @layer utilities {
+  .text-gradient-brand {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-brand-300 via-brand-400 to-brand-500;
+  }
+
   .text-gradient-swarm {
     @apply bg-clip-text text-transparent bg-gradient-to-r from-swarm-300 via-swarm-400 to-swarm-500;
   }
 
   .text-gradient-human {
     @apply bg-clip-text text-transparent bg-gradient-to-r from-human-300 via-human-400 to-human-500;
+  }
+
+  .border-glow-brand {
+    box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.2),
+                0 0 20px -5px rgba(16, 185, 129, 0.15);
   }
 
   .border-glow-swarm {
@@ -32,30 +41,21 @@ body {
                 0 0 20px -5px rgba(255, 107, 53, 0.15);
   }
 
-  .card-shine-swarm {
+  .card-shine-brand {
     background: linear-gradient(
       135deg,
-      rgba(0, 212, 255, 0.05) 0%,
+      rgba(16, 185, 129, 0.05) 0%,
       transparent 50%,
-      rgba(0, 170, 204, 0.03) 100%
-    );
-  }
-
-  .card-shine-human {
-    background: linear-gradient(
-      135deg,
-      rgba(255, 107, 53, 0.05) 0%,
-      transparent 50%,
-      rgba(229, 90, 38, 0.03) 100%
+      rgba(5, 150, 105, 0.03) 100%
     );
   }
 }
 
-/* Grid background — Mission Control */
+/* Grid background — emerald tint para ErsLabs */
 .grid-bg {
   background-image:
-    linear-gradient(rgba(0, 212, 255, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 212, 255, 0.04) 1px, transparent 1px);
+    linear-gradient(rgba(16, 185, 129, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(16, 185, 129, 0.04) 1px, transparent 1px);
   background-size: 60px 60px;
 }
 
@@ -71,7 +71,7 @@ body {
 }
 
 .pipeline-flow {
-  background: linear-gradient(90deg, transparent, rgba(0, 212, 255, 0.6), transparent);
+  background: linear-gradient(90deg, transparent, rgba(16, 185, 129, 0.5), transparent);
   background-size: 200% 100%;
   animation: pipeline-flow 2s linear infinite;
 }

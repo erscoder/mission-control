@@ -9,15 +9,26 @@ const config: Config = {
     extend: {
       colors: {
         space: {
-          950: '#05080F',  // Deep space black — el vacío es el canvas
+          950: '#05080F',
           900: '#0A0F1A',
           800: '#111827',
           700: '#1A2332',
           600: '#243044',
           500: '#2E4058',
         },
+        brand: {
+          DEFAULT: '#10B981',  // Emerald — color del logo de ErsLabs
+          50: '#ECFDF5',
+          100: '#D1FAE5',
+          200: '#A7F3D0',
+          300: '#6EE7B7',
+          400: '#34D399',
+          500: '#10B981',
+          600: '#059669',
+          700: '#047857',
+        },
         swarm: {
-          DEFAULT: '#00D4FF',  // Primary cyan — el swarm, electrificado
+          DEFAULT: '#00D4FF',  // Cyan — el swarm de Sentinel V2
           400: '#00D4FF',
           300: '#4DE8FF',
           200: '#80F0FF',
@@ -29,16 +40,15 @@ const config: Config = {
           900: '#001A22',
         },
         human: {
-          DEFAULT: '#FF6B35',  // Tertiary coral — puntos de control/approval
+          DEFAULT: '#FF6B35',  // Coral — puntos de control humanos
           400: '#FF6B35',
           300: '#FF8F66',
           200: '#FFB399',
-          100: '#FFD4C2',
           500: '#E55A26',
           600: '#CC4918',
         },
         terminal: {
-          green: '#10FF88',  // Terminal green para elementos de estado
+          green: '#10FF88',
           amber: '#FFB800',
           red: '#FF4757',
         },
@@ -88,11 +98,13 @@ const config: Config = {
         },
       },
       backgroundImage: {
-        'grid-space': 'linear-gradient(rgba(0, 212, 255, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 212, 255, 0.03) 1px, transparent 1px)',
+        'grid-space': 'linear-gradient(rgba(16, 185, 129, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(16, 185, 129, 0.03) 1px, transparent 1px)',
+        'gradient-brand': 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
         'gradient-swarm': 'linear-gradient(135deg, #00D4FF 0%, #007A99 100%)',
         'gradient-human': 'linear-gradient(135deg, #FF6B35 0%, #CC4918 100%)',
       },
       boxShadow: {
+        'brand-glow': '0 0 20px rgba(16, 185, 129, 0.3), 0 0 40px rgba(16, 185, 129, 0.1)',
         'swarm-glow': '0 0 20px rgba(0, 212, 255, 0.3), 0 0 40px rgba(0, 212, 255, 0.1)',
         'human-glow': '0 0 20px rgba(255, 107, 53, 0.3), 0 0 40px rgba(255, 107, 53, 0.1)',
         'terminal-glow': '0 0 10px rgba(16, 255, 136, 0.2)',
