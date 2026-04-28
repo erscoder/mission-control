@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -25,26 +26,29 @@ WORKSPACES_ROOT = Path(os.environ.get("SENTINEL_WORKSPACES_ROOT", os.path.expand
 
 # Commands an agent may invoke. Anything else is refused. Keep this list tight.
 _SHELL_WHITELIST = {
-    "npm",
-    "npx",
-    "pnpm",
-    "node",
+    # Build / package managers
+    "npm", "npx", "pnpm", "node", "yarn",
+    # VCS
     "git",
-    "prisma",
-    "flyctl",
+    # ORMs / deploy CLIs
+    "prisma", "flyctl",
+    # Security scanners
     "osv-scanner",
+    # HTTP
     "curl",
-    "ls",
-    "cat",
-    "mkdir",
-    "rm",
-    "mv",
-    "cp",
-    "sh",
-    "bash",
-    "echo",
-    "test",
+    # Filesystem read-only inspection
+    "ls", "cat", "head", "tail", "find", "grep", "wc", "pwd", "which", "stat",
+    # Filesystem write (workspace-scoped via cwd)
+    "mkdir", "rm", "mv", "cp", "touch", "chmod",
+    # Shell + misc
+    "sh", "bash", "echo", "test", "true", "false",
 }
+
+# Pattern: ``cd <subdir> && <rest>``. Agents fall back to this when they want
+# to run a command in a sub-directory of the workspace; subprocess.run does
+# not invoke a shell, so the literal `cd` would fail. We extract the subdir
+# and the rest of the command transparently.
+_CD_PREFIX = re.compile(r"^\s*cd\s+([^\s&;]+)\s*&&\s*(.+)$", re.DOTALL)
 
 
 def _resolve_workspace(workspace_dir: str) -> Path:
@@ -127,22 +131,63 @@ class ListFilesTool(BaseTool):
 
 
 class RunShellInput(BaseModel):
-    workspace_dir: str = Field(..., description="Absolute workspace path (cwd for the command)")
-    command: str = Field(..., description="Shell command, first token must be whitelisted")
+    workspace_dir: str = Field(..., description="Absolute workspace path")
+    command: str = Field(
+        ...,
+        description=(
+            "Shell command. First token must be whitelisted. The 'cd <subdir> && <rest>' "
+            "pattern is supported and translated to subdir + rest automatically."
+        ),
+    )
+    subdir: str = Field(
+        default=".",
+        description=(
+            "Optional sub-directory of workspace_dir to run the command in "
+            "(e.g. 'frontend', 'backend'). Defaults to the workspace root."
+        ),
+    )
     timeout_seconds: int = Field(default=300, description="Max runtime (1-1800)")
 
 
 class RunShellTool(BaseTool):
     name: str = "run_shell"
     description: str = (
-        "Run a shell command inside the workspace. First token must be one of: "
+        "Run a shell command inside the workspace (or a sub-directory via the "
+        "'subdir' parameter). The 'cd <path> && <cmd>' pattern is also accepted "
+        "and translated to subdir+cmd transparently. First token of the actual "
+        "command must be one of: "
         + ", ".join(sorted(_SHELL_WHITELIST))
         + ". Returns combined stdout/stderr (truncated to 4000 chars) and exit code."
     )
     args_schema: Type[BaseModel] = RunShellInput
 
-    def _run(self, workspace_dir: str, command: str, timeout_seconds: int = 300) -> str:
+    def _run(
+        self,
+        workspace_dir: str,
+        command: str,
+        subdir: str = ".",
+        timeout_seconds: int = 300,
+    ) -> str:
         ws = _resolve_workspace(workspace_dir)
+
+        # Translate 'cd <subdir> && <rest>' into the structured form.
+        m = _CD_PREFIX.match(command)
+        if m:
+            translated_subdir, command = m.group(1), m.group(2)
+            if subdir == "." or subdir == "":
+                subdir = translated_subdir
+            else:
+                # Both explicit subdir AND inline cd; combine them.
+                subdir = str(Path(subdir) / translated_subdir)
+
+        # Resolve cwd safely
+        try:
+            cwd = _safe_child(ws, subdir) if subdir not in (".", "") else ws
+        except ValueError as e:
+            return f"shell-error: {e}"
+        if not cwd.is_dir():
+            return f"shell-error: subdir {subdir!r} does not exist under workspace"
+
         try:
             argv = shlex.split(command)
         except ValueError as e:
@@ -157,7 +202,7 @@ class RunShellTool(BaseTool):
         try:
             proc = subprocess.run(
                 argv,
-                cwd=str(ws),
+                cwd=str(cwd),
                 capture_output=True,
                 text=True,
                 timeout=timeout,

@@ -1,0 +1,22 @@
+<svg viewBox="0 0 360 120" xmlns="http://www.w3.org/2000/svg" fill="none">
+  <!-- Classic line-art Erlenmeyer with bubbles, ErsLabs wordmark outside -->
+  <g stroke="#10B981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Flask outline -->
+    <path d="M 42 18 L 62 18 M 46 18 L 46 42 L 22 92 Q 20 100 28 100 L 80 100 Q 88 100 86 92 L 62 42 L 62 18"/>
+    <!-- Liquid surface -->
+    <path d="M 32 72 Q 40 68 54 70 T 76 72" stroke-width="1.5"/>
+  </g>
+  <!-- Liquid fill -->
+  <path d="M 32 72 Q 40 68 54 70 T 76 72 L 80 92 Q 80 98 74 98 L 34 98 Q 28 98 28 92 Z" fill="#10B981" fill-opacity="0.18"/>
+  <!-- Bubbles rising -->
+  <circle cx="40" cy="60" r="2" fill="#10B981" fill-opacity="0.7"/>
+  <circle cx="52" cy="48" r="1.5" fill="#10B981" fill-opacity="0.6"/>
+  <circle cx="48" cy="36" r="1.2" fill="#10B981" fill-opacity="0.5"/>
+  <circle cx="60" cy="28" r="1" fill="#10B981" fill-opacity="0.4"/>
+  <circle cx="56" cy="14" r="1.2" fill="#10B981" fill-opacity="0.35"/>
+  <circle cx="64" cy="8" r="0.8" fill="#10B981" fill-opacity="0.25"/>
+  <!-- ErsLabs wordmark -->
+  <text x="110" y="74" font-family="Inter, sans-serif" font-size="42" font-weight="300" fill="#F9FAFB" letter-spacing="-1.5">
+    <tspan fill="#10B981" font-weight="600">Ers</tspan><tspan fill="#F9FAFB" font-weight="300">Labs</tspan>
+  </text>
+</svg>

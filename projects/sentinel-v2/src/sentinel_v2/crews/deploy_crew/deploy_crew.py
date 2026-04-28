@@ -1,7 +1,9 @@
-"""Deploy Crew — ship the backend to fly.io and the frontend to Cloudflare Pages
-under ``<slug>.erslabs.net``. Wire Stripe webhooks to the live backend URL.
+"""Deploy Crew: ship the backend to fly.io and the frontend to Cloudflare Pages
+under the canonical {frontend_url}. Wire Stripe webhooks to the live backend URL.
 Fully automated, no manual steps after the first run.
 """
+import os
+
 from crewai import Agent, Crew, Task, Process
 
 from sentinel_v2.config.llm_config import get_minimax_llm
@@ -29,7 +31,11 @@ def deploy_crew(cycle: int = 1) -> Crew:
 
     minimax = get_minimax_llm()
     minimax_smart = get_minimax_llm("MiniMax-M2.7")
-    memory = get_memory_for_crew_full(minimax)
+    # SENTINEL_DEPLOY_NO_MEMORY=1 disables long-term crew memory for the deploy
+    # crew. Use this when validating a fix that the agent's memory might shadow
+    # (e.g. a previously learned wrong association between slug and subdomain).
+    use_memory = os.environ.get("SENTINEL_DEPLOY_NO_MEMORY", "0") != "1"
+    memory = get_memory_for_crew_full(minimax) if use_memory else False
 
     # Shared tool instances
     fly_app_create = FlyAppCreateTool()
@@ -49,45 +55,66 @@ def deploy_crew(cycle: int = 1) -> Crew:
     deployer = Agent(
         role="Deployment Engineer",
         goal=(
-            "Ship the MVP to production URLs that accept real payments. Backend on fly.io, frontend on "
-            "Cloudflare Pages under <slug>.erslabs.net. Zero manual steps after kickoff."
+            "Ship the MVP to the canonical production URLs that accept real payments. "
+            "Backend on fly.io as the pre-assigned app name. Frontend on Cloudflare Pages "
+            "under the pre-assigned project name and custom domain. Zero manual steps."
         ),
         backstory=(
-            "You have shipped 100+ indie SaaS products. You know the exact sequence for fly.io + "
-            "Cloudflare + Stripe and never deviate from it:\n\n"
+            "You have shipped 100+ indie SaaS products. You NEVER invent names. "
+            "Every name you pass to a tool comes from your task inputs LITERALLY:\n"
+            "  - Fly app name: backend_app_name (already includes the -api suffix)\n"
+            "  - Cloudflare Pages project name: cf_project_name\n"
+            "  - DNS subdomain label: slug\n"
+            "  - Final frontend URL: frontend_url\n"
+            "  - Final backend URL: backend_url\n"
+            "If a tool rejects a name, the fix is NEVER to guess a different name. "
+            "Re-read the input variables and use those.\n\n"
             "BACKEND (fly.io):\n"
-            "  1. `fly_app_create(app_name='<slug>-api')` — idempotent.\n"
-            "  2. Apply Postgres migrations (prisma migrate deploy / drizzle-kit migrate) using "
-            "     `run_shell` in `<workspace_dir>/backend/` against the DATABASE_URL the build plan "
-            "     requires.\n"
-            "  3. `fly_secrets_set(app_name='<slug>-api', secrets={DATABASE_URL, STRIPE_SECRET_KEY, "
-            "     … others the backend needs}, stage=True)` so they are present at first boot.\n"
-            "  4. `fly_deploy(app_name='<slug>-api', source_dir='<workspace_dir>/backend')` — the "
-            "     Dockerfile and fly.toml the backend agent wrote are used. The tool returns "
-            "     `https://<slug>-api.fly.dev` as the backend URL.\n"
-            "  5. `stripe_create_webhook(url='<backend_url>/api/stripe/webhook', events=["
-            "     'checkout.session.completed', 'customer.subscription.created', "
+            "  1. `fly_app_create(app_name=backend_app_name)`. Idempotent.\n"
+            "  2. Apply Postgres migrations (prisma migrate deploy / drizzle-kit migrate) "
+            "     using `run_shell` in `<workspace_dir>/backend/` against the DATABASE_URL "
+            "     the build plan requires.\n"
+            "  3. `fly_secrets_set(app_name=backend_app_name, secrets={DATABASE_URL, "
+            "     STRIPE_SECRET_KEY, ...}, stage=True)` so they are present at first boot.\n"
+            "  4. `fly_deploy(app_name=backend_app_name, source_dir='<workspace_dir>/backend')`. "
+            "     The Dockerfile and fly.toml are pre-baked from the canonical NestJS "
+            "     template before you start; do NOT inspect, edit, or rewrite them. Just "
+            "     deploy. The tool returns the backend URL; verify it equals backend_url. "
+            "     If not, you passed the wrong app name in step 1.\n"
+            "  5. `stripe_create_webhook(url=f'{backend_url}/api/stripe/webhook', "
+            "     events=['checkout.session.completed', 'customer.subscription.created', "
             "     'customer.subscription.updated', 'customer.subscription.deleted', "
-            "     'invoice.payment_succeeded', 'invoice.payment_failed'], draft_id='<draft_id>')` — "
-            "     returns {endpoint_id, secret}. Save the secret to STRIPE_WEBHOOK_SECRET.\n"
-            "  6. `fly_secrets_set(app_name='<slug>-api', secrets={STRIPE_WEBHOOK_SECRET: <secret>})` "
-            "     — triggers a new release with the webhook secret now present.\n\n"
+            "     'invoice.payment_succeeded', 'invoice.payment_failed'], "
+            "     draft_id=stripe_idempotency_key)`. The draft_id parameter on this tool "
+            "     is just an idempotency key for Stripe metadata; pass the "
+            "     stripe_idempotency_key value verbatim. Returns {endpoint_id, secret}.\n"
+            "  6. `fly_secrets_set(app_name=backend_app_name, "
+            "     secrets={STRIPE_WEBHOOK_SECRET: <secret>})`. Triggers a release with "
+            "     the webhook secret now present.\n\n"
             "FRONTEND (Cloudflare Pages + erslabs.net):\n"
-            "  7. `cloudflare_pages_create(project_name='<slug>')`.\n"
-            "  8. `cloudflare_pages_set_env(project_name='<slug>', env_vars={"
-            "     NEXT_PUBLIC_API_URL: '<backend_url>', "
-            "     NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: STRIPE_API_KEY (publishable)})`.\n"
-            "  9. `run_shell('npm ci', cwd=<workspace_dir>/frontend)` then "
-            "     `run_shell('npm run build', cwd=<workspace_dir>/frontend)`. Next.js static export "
-            "     produces `out/`.\n"
-            " 10. `cloudflare_pages_deploy(project_name='<slug>', dist_dir='<workspace_dir>/frontend/out')` "
-            "     — returns the .pages.dev URL.\n"
-            " 11. `cloudflare_dns_cname(subdomain='<slug>', target='<slug>.pages.dev')` — attaches "
-            "     <slug>.erslabs.net to the Pages project.\n"
-            " 12. `cloudflare_pages_add_custom_domain(project_name='<slug>', "
-            "     domain='<slug>.erslabs.net')`.\n\n"
-            "You never hardcode secrets into generated code or logs. You never touch `.env` files that "
-            "contain live keys. You use the tools idempotently so retries do not create duplicates."
+            "  7. BUILD STEP. Verify `<workspace_dir>/frontend/out/` exists with `list_files`. "
+            "     If it does NOT exist:\n"
+            "       a. `run_shell('npm ci', cwd='<workspace_dir>/frontend')`\n"
+            "       b. `run_shell('npm run build', cwd='<workspace_dir>/frontend')`\n"
+            "       c. List `<workspace_dir>/frontend/out/` again. If still missing, the "
+            "          frontend has no static export configured. Inspect "
+            "          `frontend/next.config.mjs` and add `output: 'export'` if missing, "
+            "          then re-run the build. Without an `out/` directory you CANNOT "
+            "          deploy to Cloudflare Pages.\n"
+            "     Do NOT proceed past this step until `out/` is populated.\n"
+            "  8. `cloudflare_pages_create(project_name=cf_project_name)`.\n"
+            "  9. `cloudflare_pages_set_env(project_name=cf_project_name, env_vars={"
+            "     NEXT_PUBLIC_API_URL: backend_url, "
+            "     NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: stripe_publishable})`.\n"
+            " 10. `cloudflare_pages_deploy(project_name=cf_project_name, "
+            "     dist_dir='<workspace_dir>/frontend/out')`.\n"
+            " 11. `cloudflare_dns_cname(subdomain=slug, target=f'{cf_project_name}.pages.dev')`. "
+            "     Attaches frontend_url to the Pages project.\n"
+            " 12. `cloudflare_pages_add_custom_domain(project_name=cf_project_name, "
+            "     domain=f'{slug}.{erslabs_root}')`.\n\n"
+            "You never hardcode secrets into generated code or logs. You never touch `.env` "
+            "files that contain live keys. You use the tools idempotently so retries do not "
+            "create duplicates."
         ),
         tools=[
             fly_app_create,
@@ -112,14 +139,14 @@ def deploy_crew(cycle: int = 1) -> Crew:
     verifier = Agent(
         role="Production QA Verifier",
         goal=(
-            "Prove the product WORKS for a paying customer on the LIVE <slug>.erslabs.net URL, "
+            "Prove the product WORKS for a paying customer on the LIVE frontend_url, "
             "not just that /health returns 200."
         ),
         backstory=(
-            "You do not trust green checkmarks. You run `curl -f` against the live frontend domain, "
-            "the backend health endpoint, and the Stripe webhook URL (HEAD request). You confirm "
-            "the app is HTTPS, no mixed content, no 5xx on the health endpoint, and the fly.io app "
-            "status is 'running'. You produce a GO/ROLLBACK decision."
+            "You do not trust green checkmarks. You run `curl -f` against the live frontend "
+            "domain, the backend health endpoint, and the Stripe webhook URL (HEAD). You "
+            "confirm HTTPS, no mixed content, no 5xx on /health, and the fly.io app status "
+            "is 'running'. You produce a GO/ROLLBACK decision."
         ),
         tools=[run_shell, fly_status],
         llm=minimax_smart,
@@ -129,20 +156,39 @@ def deploy_crew(cycle: int = 1) -> Crew:
 
     deploy_task = Task(
         description=(
-            "INPUT: workspace_dir={workspace_dir}; slug={slug}; draft_id={draft_id}; "
-            "erslabs_root={erslabs_root}; stripe_publishable={stripe_publishable}.\n\n"
+            "INPUTS (use these LITERALLY, do not invent variations):\n"
+            "  workspace_dir   = {workspace_dir}\n"
+            "  slug            = {slug}\n"
+            "  backend_app_name= {backend_app_name}\n"
+            "  backend_url     = {backend_url}\n"
+            "  cf_project_name = {cf_project_name}\n"
+            "  frontend_url    = {frontend_url}\n"
+            "  erslabs_root    = {erslabs_root}\n"
+            "  stripe_publishable      = {stripe_publishable}\n"
+            "  stripe_idempotency_key  = {stripe_idempotency_key}\n\n"
             "PREVIOUS ATTEMPT FEEDBACK (if any): {deploy_feedback}\n"
-            "If feedback is provided, this is a RETRY. Read the error carefully, diagnose the root "
-            "cause using `list_files` and `run_shell`, fix the underlying issue (e.g. fix Dockerfile, "
-            "fly.toml, missing deps), then re-deploy. Do NOT repeat the same mistake.\n\n"
-            "Deploy the build that lives in `{workspace_dir}/` to production. Follow the EXACT sequence "
-            "in your backstory — do not skip steps, do not reorder.\n\n"
+            "If feedback is provided, this is a RETRY. Read the error carefully, diagnose "
+            "the root cause using `list_files` and `run_shell`, fix the underlying issue "
+            "(e.g. fix Dockerfile, fly.toml, missing deps, run npm build), then re-deploy. "
+            "Do NOT repeat the same mistake.\n\n"
+            "Deploy the build that lives in `{workspace_dir}/` to production. Follow the "
+            "EXACT 12-step sequence in your backstory. Do not skip steps, do not reorder.\n\n"
+            "NOTE: `<workspace_dir>/backend/fly.toml` and `<workspace_dir>/backend/Dockerfile` "
+            "have already been written from the canonical NestJS template before you start. "
+            "Do not inspect, edit, or rewrite them. They are correct.\n\n"
+            "HARD RULES:\n"
+            "- The DNS subdomain you pass to `cloudflare_dns_cname` is exactly `{slug}`. "
+            "  Never anything that starts with 'draft', 'cycle', or any compound name.\n"
+            "- The Cloudflare Pages project name is exactly `{cf_project_name}`.\n"
+            "- The Fly app name is exactly `{backend_app_name}`.\n"
+            "- The final frontend URL you report MUST equal `{frontend_url}`. If you report "
+            "  any other URL, the deploy is considered failed.\n\n"
             "At the end, report:\n"
-            "- backend_url (https://<slug>-api.fly.dev)\n"
-            "- frontend_url (https://<slug>.{erslabs_root})\n"
+            "- backend_url (must equal {backend_url})\n"
+            "- frontend_url (must equal {frontend_url})\n"
             "- stripe_webhook_endpoint_id\n"
-            "- cf_pages_project\n"
-            "- fly_app_name\n"
+            "- cf_pages_project (must equal {cf_project_name})\n"
+            "- fly_app_name (must equal {backend_app_name})\n"
             "- any step that failed with the exact tool output"
         ),
         expected_output=(
@@ -154,19 +200,22 @@ def deploy_crew(cycle: int = 1) -> Crew:
 
     verify_task = Task(
         description=(
-            "Verify the live deployment for slug={slug} under {erslabs_root}:\n\n"
-            "1. Use `run_shell` to curl the frontend at https://{slug}.{erslabs_root}/ and "
-            "   confirm it returns HTTP 200 (use curl -o /dev/null -s -w with the status code "
-            "   format specifier).\n"
-            "2. Use `run_shell` to curl https://{slug}-api.fly.dev/api/health and confirm "
-            "   the JSON response contains status 'ok' or equivalent.\n"
-            "3. `fly_status(app_name='{slug}-api')` — expect running state, zero crash loops.\n"
-            "4. Check the Stripe webhook endpoint id reported by the deployer is present on Stripe.\n\n"
-            "Return GO if all checks pass, else ROLLBACK with the failing check and its output."
+            "Verify the live deployment for the canonical URLs:\n\n"
+            "1. `run_shell('curl -o /dev/null -s -w \"%{http_code}\" {frontend_url}/')` "
+            "   and confirm it returns 200. If DNS does not resolve, the deploy never "
+            "   completed; report ROLLBACK with the exact curl output.\n"
+            "2. `run_shell('curl -fsS {backend_url}/api/health')` and confirm the JSON "
+            "   response contains status 'ok' or equivalent.\n"
+            "3. `fly_status(app_name='{backend_app_name}')` and expect a running state "
+            "   with zero crash loops. If the app is 'pending' with zero machines, the "
+            "   fly_deploy step never actually ran successfully; that is a ROLLBACK.\n"
+            "4. Check the Stripe webhook endpoint id reported by the deployer is present.\n\n"
+            "Return GO if all checks pass, else ROLLBACK with the failing check and its "
+            "exact tool output (do not paraphrase)."
         ),
         expected_output=(
-            "Verification report with http_code, health JSON, fly status summary, webhook present "
-            "(bool), go_no_go ('GO'|'ROLLBACK'), and failing_step (string or null)."
+            "Verification report with http_code, health JSON, fly status summary, "
+            "webhook present (bool), go_no_go ('GO'|'ROLLBACK'), failing_step (string|null)."
         ),
         agent=verifier,
     )

@@ -9,7 +9,6 @@ from crewai import Agent, Crew, Task, Process
 from sentinel_v2.config.llm_config import get_minimax_llm
 from sentinel_v2.config.embedder_config import get_memory_for_crew_full
 from sentinel_v2.crew_hooks import hook_crew_full
-from sentinel_v2.data.deploy_templates import load_templates as _load_deploy_templates
 from sentinel_v2.tools import (
     ListFilesTool,
     RunShellTool,
@@ -25,7 +24,6 @@ def build_crew(cycle: int = 1) -> Crew:
     minimax = get_minimax_llm()
     minimax_smart = get_minimax_llm("MiniMax-M2.7")
     memory = get_memory_for_crew_full(minimax)
-    deploy_templates = _load_deploy_templates()
 
     # Shared tool instances
     write_file = WriteFileTool()
@@ -105,24 +103,20 @@ def build_crew(cycle: int = 1) -> Crew:
             "HOW YOU WORK:\n"
             "1. You materialize every file to disk with `write_file` under `<workspace_dir>/backend/`. "
             "   Never return code as chat.\n"
-            "2. The backend ships to fly.io, so you MUST produce a Dockerfile and fly.toml in "
-            "   `<workspace_dir>/backend/` matching the chosen stack. Use the DEPLOY TEMPLATES "
-            "   below as a starting point — adapt to the actual stack but keep the structure.\n"
+            "2. The backend stack is fixed: NestJS + Prisma + PostgreSQL, multi-stage Node 20 alpine "
+            "   container listening on port 8080. Do NOT write a Dockerfile or fly.toml; the deploy "
+            "   crew installs the canonical pair before deploying. Your job is application code only: "
+            "   src/, prisma/schema.prisma, package.json, tsconfig.json, tests, .env.example.\n"
             "3. When the plan calls for paid tiers, you CREATE the real Stripe products using "
             "   `stripe_create_product` (idempotent via draft_id metadata). Then you embed the returned "
-            "   `price_ids` directly in your code — no placeholders like `price_XXX`. Before creating, "
+            "   `price_ids` directly in your code, no placeholders like `price_XXX`. Before creating, "
             "   call `stripe_list_products` with the draft_id to avoid duplicates on retries.\n"
             "4. The Stripe webhook URL is `<backend_url>/api/stripe/webhook` where <backend_url> is "
-            "   injected at deploy time. Do NOT create the webhook yourself — the deploy crew does it "
+            "   injected at deploy time. Do NOT create the webhook yourself; the deploy crew does it "
             "   once the app URL is known.\n"
             "5. Read `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` from env at runtime. List them in "
             "   `.env.example` but never hardcode.\n"
-            "6. Tests only on the risky slices: auth, Stripe webhook, core business rule.\n\n"
-            "## DEPLOY TEMPLATES\n"
-            "Pick the template closest to your stack, copy it into `<workspace_dir>/backend/`, "
-            "and adapt. Replace `{{SLUG}}` in fly.toml with the actual slug. "
-            "DO NOT write Dockerfiles from scratch — always start from these templates.\n\n"
-            f"{deploy_templates}"
+            "6. Tests only on the risky slices: auth, Stripe webhook, core business rule.\n"
         ),
         tools=[write_file, list_files, run_shell, stripe_create_product, stripe_list_products],
         llm=minimax,
@@ -272,19 +266,17 @@ def build_crew(cycle: int = 1) -> Crew:
 
     backend_task = Task(
         description=(
-            "Implement the server-side API per the plan. Default to Next.js Route Handlers for a single-"
-            "service app; only use NestJS if the plan explicitly needs it. Write every file under "
-            "`{workspace_dir}/backend/` using `write_file`.\n\n"
+            "Implement the server-side API per the plan. The stack is fixed: NestJS + Prisma + "
+            "PostgreSQL, listening on port 8080. Write every file under `{workspace_dir}/backend/` "
+            "using `write_file`.\n\n"
             "STRIPE PRODUCT CREATION (do this FIRST):\n"
             "- Call `stripe_list_products(draft_id='{draft_id}')` to check for existing products.\n"
             "- If none, call `stripe_create_product` with the draft_id and the pricing tiers from the "
-            "  plan (free trial, paid monthly, paid yearly — whatever the plan calls for).\n"
+            "  plan (free trial, paid monthly, paid yearly, whatever the plan calls for).\n"
             "- Embed the returned `price_ids` directly in your checkout code. No `price_XXX` placeholders.\n\n"
-            "DEPLOY ARTIFACTS (required for fly.io):\n"
-            "- `Dockerfile` — COPY from the deploy templates in your backstory instructions. "
-            "  Adapt the template to the chosen stack. DO NOT write from scratch.\n"
-            "- `fly.toml` — COPY from the deploy templates. Replace `{{SLUG}}` with `{slug}`. "
-            "  Must have app name `{slug}-api`, health check on /api/health, internal_port 8080.\n\n"
+            "INFRA FILES (DO NOT WRITE):\n"
+            "- Do NOT create a Dockerfile or fly.toml. The deploy crew installs the canonical pair "
+            "  before running the deploy. Anything you write there will be overwritten.\n\n"
             "HARD REQUIREMENTS:\n"
             "- Strict TypeScript throughout.\n"
             "- Zod (or class-validator if NestJS) on every input, including query params.\n"

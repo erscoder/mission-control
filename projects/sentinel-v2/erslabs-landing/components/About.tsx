@@ -1,7 +1,7 @@
 import { Cpu, Users, Zap, Brain, ArrowRight } from 'lucide-react'
 
 const stats = [
-  { value: '6', label: 'AI Agents', icon: Brain },
+  { value: '17', label: 'AI Agents', icon: Brain },
   { value: '50+', label: 'Sources Monitored', icon: Cpu },
   { value: '<4h', label: 'Discovery to Deploy', icon: Zap },
   { value: '24/7', label: 'Always Scanning', icon: Users },
@@ -28,13 +28,13 @@ export function About() {
             </h2>
             <p className="text-slate-400 leading-relaxed text-lg mb-4">
               ErsLabs is not a typical software company. We don&apos;t start with
-              ideas — we start with evidence. Our autonomous agents monitor
+              ideas. We start with evidence. Our autonomous agents monitor
               communities where people describe their daily frustrations.
             </p>
             <p className="text-slate-400 leading-relaxed text-lg mb-8">
               When enough people share the same problem and show willingness to
               pay for a solution, our pipeline kicks in. Design, build, test,
-              deploy — all automated, all in hours, not months.
+              deploy. All automated, all in hours, not months.
             </p>
 
             <a

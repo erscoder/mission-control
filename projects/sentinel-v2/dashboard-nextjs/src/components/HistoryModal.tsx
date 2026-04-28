@@ -20,7 +20,11 @@ interface HistoryModalProps {
 export default function HistoryModal({ drafts, children }: HistoryModalProps) {
   const items = useMemo(() => {
     const list = drafts.filter(
-      (x) => x.status === 'validated' || x.status === 'rejected' || x.status === 'failed',
+      (x) =>
+        x.status === 'validated' ||
+        x.status === 'rejected' ||
+        x.status === 'failed' ||
+        x.status === 'rejected_deploy',
     )
     list.sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''))
     return list
@@ -72,7 +76,7 @@ export default function HistoryModal({ drafts, children }: HistoryModalProps) {
                   <HistoryItem
                     key={d.id}
                     draft={d}
-                    variant={d.status === 'validated' ? 'validated' : d.status === 'failed' ? 'failed' : 'rejected'}
+                    variant={d.status === 'validated' ? 'validated' : (d.status === 'failed' || d.status === 'rejected_deploy') ? 'failed' : 'rejected'}
                   />
                 ))}
               </ul>

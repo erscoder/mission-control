@@ -22,6 +22,55 @@ log = logging.getLogger("sentinel_v2.flow")
 ERSLABS_ROOT_DOMAIN = "erslabs.net"
 
 
+def _resolve_workspace_dir(draft_id: Optional[str], cycle_count: int) -> str:
+    """Compute the workspace path from current env + draft id.
+
+    Always derived locally; never trust a persisted ``state.workspace_dir`` value
+    because checkpoints can carry paths from a different environment (e.g. a
+    Docker container where ``HOME=/root``).
+    """
+    from pathlib import Path
+    root = Path(os.environ.get("SENTINEL_WORKSPACES_ROOT", os.path.expanduser("~/Sentinel")))
+    return str(root / (draft_id or f"cycle_{cycle_count}"))
+
+
+def _prebake_deploy_files(workspace_dir: str, slug: str, stack: str = "node_nestjs") -> dict:
+    """Write the canonical ``fly.toml`` and ``Dockerfile`` for the deploy.
+
+    The build agent's only job for infra files is to know the stack. Templates
+    live in ``data/deploy_templates/<stack>/`` and are slug-substituted here in
+    Python so the LLM cannot break the format. Always overwrites.
+
+    Refuses to create the workspace tree itself: if ``workspace_dir`` does not
+    exist, the build phase never ran here (or wrote elsewhere). Caller must
+    have validated the path first.
+
+    Returns the substituted file paths so callers can log/verify them.
+    """
+    from pathlib import Path
+    ws = Path(workspace_dir)
+    if not ws.exists():
+        raise FileNotFoundError(
+            f"workspace_dir {workspace_dir!r} does not exist. The build phase "
+            "may have written to a different path (e.g. inside a container). "
+            "Re-run the build for this draft, or copy the workspace into place."
+        )
+    backend = ws / "backend"
+    backend.mkdir(exist_ok=True)  # parents=False on purpose: do not climb to /
+    template_dir = Path(__file__).resolve().parent.parent / "data" / "deploy_templates" / stack
+
+    written = {}
+    for name in ("fly.toml", "Dockerfile"):
+        src_path = template_dir / name
+        if not src_path.exists():
+            continue
+        content = src_path.read_text().replace("{{SLUG}}", slug)
+        dst_path = backend / name
+        dst_path.write_text(content)
+        written[name] = str(dst_path)
+    return written
+
+
 def _make_slug(title: str) -> str:
     """Extract the product name from an opportunity title and return a DNS-safe slug.
 
@@ -121,11 +170,28 @@ class SentinelLoopFlow(Flow[SentinelState]):
 
     def __init__(self):
         super().__init__()
+        # Drop the auto-created CrewAI Memory: it spins up with embedder=None
+        # which then tries the OpenAI default (CHROMA_OPENAI_API_KEY) on every
+        # event and floods logs. Our `remember()` is a no-op override and our
+        # persistence is handled by the SQLite checkpoint + dashboard_state.
+        try:
+            self.memory = None
+        except Exception:
+            object.__setattr__(self, "memory", None)
         # Set _state directly to avoid the read-only `state` property setter error.
         # Accessing self.state for the first time triggers lazy init from
         # Flow[SentinelState].initial_state_class via _create_initial_state().
         object.__setattr__(self, "_state", SentinelState())
         self._shutdown_requested = False
+
+    def remember(self, *args, **kwargs):  # type: ignore[override]
+        """No-op override. Persistence happens via SQLite checkpoint + dashboard
+        state. CrewAI's flow-level memory needs an embedder we do not configure
+        for the flow; calling base remember() raises and floods logs."""
+        return None
+
+    def recall(self, *args, **kwargs):  # type: ignore[override]
+        return []
 
         # Register signals only on main thread
         try:
@@ -173,7 +239,12 @@ class SentinelLoopFlow(Flow[SentinelState]):
             log.info("Shutdown requested — skipping start_cycle")
             return
 
-        if self.state.cycle_count > 0:
+        # A real resume always carries a draft_id from the persisted checkpoint.
+        # The daemon's main loop pre-sets cycle_count > 0 even on FRESH flows
+        # (so make_draft_id produces unique ids across cycles), so we cannot use
+        # cycle_count alone to detect resume. draft_id is the unambiguous signal.
+        is_resume = bool(self.state.draft_id) and self.state.cycle_count > 0
+        if is_resume:
             log.info("Resuming cycle #%d from phase %s", self.state.cycle_count, self.state.current_phase)
             print(f"\n{'='*50}\nResuming Cycle #{self.state.cycle_count} (phase: {self.state.current_phase})\n{'='*50}")
             return
@@ -238,6 +309,13 @@ class SentinelLoopFlow(Flow[SentinelState]):
                 self.state.stripe_product_ids = []
                 self.state.error = None
                 self.state.draft = None
+                # CRITICAL: reset retry counters. Without this, a queued draft
+                # that previously hit MAX retries would inherit those counters
+                # via the persisted state, and the exhausted-retry guards in
+                # run_build / run_deploy would mark it failed before the
+                # crews even start.
+                self.state.build_attempts = 0
+                self.state.deploy_attempts = 0
                 self.state.draft_file = None
                 self.state.pending_since = None
                 self._save_checkpoint()
@@ -252,6 +330,32 @@ class SentinelLoopFlow(Flow[SentinelState]):
         if self.state.top_opportunity is not None:
             log.info("Resume: research already done, skipping")
             return
+
+        # Backpressure: suppress new research when the pipeline is already
+        # saturated with pending review or in-flight builds/deploys. Adding
+        # more opportunities here just piles work the user cannot triage.
+        try:
+            from sentinel_v2.dashboard_state import list_drafts_by_status
+            active = list_drafts_by_status({
+                "pending", "queued", "building", "review", "testing",
+                "built", "pending_deploy", "deploying",
+            })
+            threshold = int(os.environ.get("SENTINEL_RESEARCH_PAUSE_THRESHOLD", "6"))
+            if len(active) >= threshold:
+                by_status: dict[str, int] = {}
+                for d in active:
+                    s = d.get("status") or "?"
+                    by_status[s] = by_status.get(s, 0) + 1
+                summary = ", ".join(f"{k}={v}" for k, v in sorted(by_status.items()))
+                log.info(
+                    "Research paused: %d active drafts (>= threshold %d) [%s]. "
+                    "Skipping new research this cycle.",
+                    len(active), threshold, summary,
+                )
+                self.state.opportunities = []
+                return
+        except Exception as e:
+            log.warning("Could not evaluate research backpressure: %s", e)
 
         self.state.current_phase = "research"
         self._touch()
@@ -398,6 +502,9 @@ class SentinelLoopFlow(Flow[SentinelState]):
         )
         if status in (None, "rejected"):
             log.info("Draft %s not approved (status=%s) — ending cycle", self.state.draft_id, status)
+            # Clear the checkpoint so the next cycle does not resume on this
+            # dead draft and skip queued-draft pickup.
+            self._clear_checkpoint()
             self._shutdown_requested = status is None  # timeout stops the loop
             return "rejected"
         return "approved"
@@ -519,6 +626,34 @@ class SentinelLoopFlow(Flow[SentinelState]):
             return
         if self.state.build_output is not None:
             log.info("Resume: build already done, skipping")
+            return
+
+        # Stale-checkpoint guard: a resumed state with build_attempts already
+        # at the cap means a previous run blew through every retry without
+        # producing build_output. Re-entering run_build would just spin (the
+        # while loop below will not execute). Mark failed, clear checkpoint,
+        # let the user retry or request changes.
+        if self.state.build_attempts >= MAX_BUILD_RETRIES:
+            log.error(
+                "Build exhausted (attempts=%d/%d) on resumed state with no build_output. "
+                "Marking draft failed and clearing checkpoint.",
+                self.state.build_attempts, MAX_BUILD_RETRIES,
+            )
+            if self.state.draft_id:
+                try:
+                    from sentinel_v2.dashboard_state import update_draft
+                    update_draft(
+                        self.state.draft_id,
+                        status="failed",
+                        revision_notes=(
+                            f"Build exhausted all {MAX_BUILD_RETRIES} attempts in a prior cycle "
+                            "and the resumed state had no build_output. Click Retry to start fresh."
+                        ),
+                    )
+                except Exception as e:
+                    log.warning("Could not mark draft failed: %s", e)
+            self._clear_checkpoint()
+            self._shutdown_requested = True  # end this cycle cleanly
             return
 
         self.state.current_phase = "build"
@@ -859,15 +994,33 @@ class SentinelLoopFlow(Flow[SentinelState]):
             return "approved"
 
         log.info("Waiting for deploy gate on draft %s", self.state.draft_id)
+        # Wait for the user's INTENT statuses, not the runtime's terminal states.
+        #   pending_deploy   → user clicked "Approve deploy" → we run run_deploy
+        #   queued           → user clicked "Request changes" with notes → end
+        #                       cycle so the daemon's next start_cycle picks the
+        #                       queued draft up and re-runs build with the notes
+        #   rejected_deploy  → user clicked "Reject deploy" → end cycle final
         status = wait_for_draft_status(
             self.state.draft_id,
-            target_statuses={"deployed", "failed"},
+            target_statuses={"pending_deploy", "queued", "rejected_deploy"},
             timeout_seconds=int(os.getenv("SENTINEL_APPROVAL_TIMEOUT_SECONDS", "3600")),
         )
-        if status == "deployed":
+        if status == "pending_deploy":
             self.state.approved = True
             return "approved"
+        if status == "queued":
+            log.info(
+                "Deploy gate on %s: user requested changes (status=queued). "
+                "Ending cycle; next cycle will pick up the queued draft and rebuild.",
+                self.state.draft_id,
+            )
+            # Drop the checkpoint so the next cycle does NOT resume into the
+            # post-build approval gate; it should restart from start_cycle and
+            # re-pick the queued draft via the queued-list path.
+            self._clear_checkpoint()
+            return "stop"
         log.info("Deploy gate on %s resolved as %s — stopping cycle", self.state.draft_id, status)
+        self._clear_checkpoint()
         return "stop"
 
     # ─── Phase 5: DEPLOY ──────────────────────────────────────────────────
@@ -883,13 +1036,48 @@ class SentinelLoopFlow(Flow[SentinelState]):
             self._clear_checkpoint()
             return
 
+        # Stale-checkpoint guard: a resumed state with deploy_attempts already
+        # at the cap means a previous run exhausted every retry without
+        # marking the draft deployed. Re-entering would just spin (the while
+        # loop below cannot increment past MAX). Mark failed, clear, exit.
+        if self.state.deploy_attempts >= MAX_DEPLOY_RETRIES:
+            log.error(
+                "Deploy exhausted (attempts=%d/%d) on resumed state without success. "
+                "Marking draft failed and clearing checkpoint.",
+                self.state.deploy_attempts, MAX_DEPLOY_RETRIES,
+            )
+            if self.state.draft_id:
+                try:
+                    from sentinel_v2.dashboard_state import update_draft
+                    update_draft(
+                        self.state.draft_id,
+                        status="failed",
+                        revision_notes=(
+                            f"Deploy exhausted all {MAX_DEPLOY_RETRIES} attempts in a prior cycle "
+                            "and the resumed state had no deployed=True. Click Retry to start fresh."
+                        ),
+                    )
+                except Exception as e:
+                    log.warning("Could not mark draft failed: %s", e)
+            self._clear_checkpoint()
+            self._shutdown_requested = True  # end this cycle cleanly
+            return
+
         self.state.current_phase = "deploy"
         self._touch()
         log.info("Phase 5: DEPLOY")
         print("Phase 5: DEPLOY — deploying to production...")
 
         from sentinel_v2.crews.deploy_crew.deploy_crew import deploy_crew
-        from sentinel_v2.dashboard_state import write_state, write_flow_breakdown
+        from sentinel_v2.dashboard_state import write_state, write_flow_breakdown, update_draft
+
+        # Mark the draft as actively deploying so the dashboard shows progress
+        # and orphan recovery on daemon restart can clean up partial deploys.
+        if self.state.draft_id:
+            try:
+                update_draft(self.state.draft_id, status="deploying", build_progress=0.85)
+            except Exception as e:
+                log.warning("Could not set deploying status: %s", e)
 
         # Emit state update for deploy phase
         write_state(
@@ -919,15 +1107,38 @@ class SentinelLoopFlow(Flow[SentinelState]):
             or self.state.draft_id
             or f"cycle-{self.state.cycle_count}"
         )
-        workspace_dir = self.state.workspace_dir or str(
-            os.path.join(
-                os.environ.get("SENTINEL_WORKSPACES_ROOT", os.path.expanduser("~/Sentinel")),
-                self.state.draft_id or f"cycle_{self.state.cycle_count}",
+        # Always recompute from current env. A persisted state.workspace_dir
+        # may carry a stale path from a different environment (e.g. a previous
+        # Docker run where HOME=/root). Files actually live under the local
+        # workspaces root; trust the env, not the snapshot.
+        workspace_dir = _resolve_workspace_dir(self.state.draft_id, self.state.cycle_count)
+        if self.state.workspace_dir and self.state.workspace_dir != workspace_dir:
+            log.warning(
+                "Ignoring stale state.workspace_dir=%r; using current env path %r",
+                self.state.workspace_dir, workspace_dir,
             )
-        )
+        self.state.workspace_dir = workspace_dir
+
+        # Pre-bake the EXACT names the deploy agent must use.
+        # The agent receives these as plain strings: it has no access to draft_id,
+        # so it cannot accidentally use the draft_cN_ form as a Cloudflare project
+        # name or DNS subdomain.
+        expected_backend_app_name = f"{slug}-api"
+        expected_cf_project_name = slug
+        expected_frontend_url = f"https://{slug}.{ERSLABS_ROOT_DOMAIN}"
+        expected_backend_url = f"https://{expected_backend_app_name}.fly.dev"
+
+        # Pre-bake fly.toml and Dockerfile from the canonical template. The build
+        # agent has no business writing infra files: every backend ships with the
+        # same NestJS stack, so we overwrite whatever it produced with the known-
+        # good template, slug-substituted. Same defense for the Dockerfile.
+        prebaked = _prebake_deploy_files(workspace_dir, slug)
+        log.info("Prebaked deploy files: %s", prebaked)
 
         # ── Deploy with automatic retry loop ─────────────────────────────
-        deploy_feedback = ""
+        # Seed feedback with any human revision_notes so a "request changes"
+        # actually reaches the deploy agent on the next attempt.
+        deploy_feedback = self.state.revision_notes or ""
         result = None
         parsed = None
         deploy_success = False
@@ -953,9 +1164,19 @@ class SentinelLoopFlow(Flow[SentinelState]):
                         "opportunity": self.state.top_opportunity,
                         "workspace_dir": workspace_dir,
                         "slug": slug,
-                        "draft_id": self.state.draft_id or "unknown",
+                        # Pre-baked names the agent MUST use literally.
+                        # We do NOT pass draft_id: it confuses the agent, which
+                        # then uses the draft_cN_ form as a Pages project name.
+                        "backend_app_name": expected_backend_app_name,
+                        "cf_project_name": expected_cf_project_name,
+                        "frontend_url": expected_frontend_url,
+                        "backend_url": expected_backend_url,
                         "erslabs_root": ERSLABS_ROOT_DOMAIN,
                         "stripe_publishable": os.environ.get("STRIPE_API_KEY", ""),
+                        # Stripe needs an idempotency key on webhook creation;
+                        # the draft_id value is the natural key, but we rename
+                        # it so the agent never sees the string "draft_id".
+                        "stripe_idempotency_key": self.state.draft_id or "unknown",
                         "deploy_feedback": deploy_feedback,
                     }
                 )
@@ -1019,8 +1240,8 @@ class SentinelLoopFlow(Flow[SentinelState]):
         if not deploy_success:
             return
 
-        frontend_url = parsed.get("frontend_url") or parsed.get("url") if isinstance(parsed, dict) else None
-        if not frontend_url:
+        reported_frontend_url = parsed.get("frontend_url") or parsed.get("url") if isinstance(parsed, dict) else None
+        if not reported_frontend_url:
             log.error("Deploy crew returned no frontend_url -- marking as failed")
             self.state.error = "Deploy crew did not return a real frontend URL"
             if self.state.draft_id:
@@ -1030,13 +1251,18 @@ class SentinelLoopFlow(Flow[SentinelState]):
             self._save_checkpoint()
             return
 
+        # Use the deterministic URL we pre-baked (not whatever the agent reported).
+        # The QA verifier step inside the crew already curl'd it, so if we got
+        # here without an early failure the URL resolves.
         self.state.deployed = True
-        self.state.deployed_url = frontend_url
+        self.state.deployed_url = expected_frontend_url
         self.state.deployment_id = parsed.get("deployment_id")
-        self.state.backend_url = parsed.get("backend_url")  # None is OK if frontend-only
-        self.state.fly_app_name = f"{slug}-api"
-        self.state.cf_pages_project = slug
+        self.state.backend_url = parsed.get("backend_url") or expected_backend_url
+        self.state.fly_app_name = expected_backend_app_name
+        self.state.cf_pages_project = expected_cf_project_name
         self.state.stripe_webhook_endpoint_id = parsed.get("stripe_webhook_endpoint_id")
+        # Clear revision_notes so they don't bleed into the next cycle.
+        self.state.revision_notes = None
 
         if self.state.draft_id:
             from sentinel_v2.dashboard_state import update_draft

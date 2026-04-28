@@ -87,9 +87,12 @@ export type DraftStatus =
   | 'review'
   | 'testing'
   | 'built'
+  | 'pending_deploy'
+  | 'deploying'
   | 'deployed'
   | 'validated'
   | 'failed'
+  | 'rejected_deploy'
 
 export type Draft = {
   id: string

@@ -1,0 +1,17 @@
+<svg viewBox="0 0 320 120" xmlns="http://www.w3.org/2000/svg" fill="none">
+  <!-- Minimal flat triangular flask, monochrome emerald -->
+  <!-- Flask body as solid triangle + neck rectangle -->
+  <rect x="44" y="14" width="20" height="22" rx="1" fill="#10B981"/>
+  <path d="M 44 36 L 64 36 L 90 96 L 18 96 Z" fill="#10B981" fill-opacity="0.22"/>
+  <path d="M 44 36 L 64 36 L 90 96 L 18 96 Z" stroke="#10B981" stroke-width="2" stroke-linejoin="round"/>
+  <!-- Liquid solid bottom -->
+  <path d="M 30 70 L 78 70 L 90 96 L 18 96 Z" fill="#10B981"/>
+  <!-- ERS inside liquid -->
+  <text x="54" y="89" text-anchor="middle" font-family="Inter, sans-serif" font-size="13" font-weight="800" fill="#030712" letter-spacing="2">ERS</text>
+  <!-- Three large bubbles -->
+  <circle cx="42" cy="58" r="3.5" fill="#030712" stroke="#10B981" stroke-width="1.5"/>
+  <circle cx="54" cy="48" r="2.5" fill="#030712" stroke="#10B981" stroke-width="1.2"/>
+  <circle cx="60" cy="22" r="2" fill="#030712" stroke="#10B981" stroke-width="1"/>
+  <!-- Labs wordmark, bold -->
+  <text x="115" y="78" font-family="Inter, sans-serif" font-size="44" font-weight="800" fill="#F9FAFB" letter-spacing="-2">Labs</text>
+</svg>

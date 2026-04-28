@@ -41,9 +41,18 @@ def setup_logging():
 
 
 def _load_resumable_state():
-    """Return a SentinelState from the latest checkpoint, or None."""
+    """Return a SentinelState from the latest checkpoint, or None.
+
+    Drops the checkpoint and returns None if the draft has reached a terminal
+    or wait-state where the loop should NOT resume into the same flow:
+      - pending: research surfaced it, waiting for user. Re-running this draft
+        would loop on the approval gate. start_cycle's queued-draft pickup
+        handles real progress instead.
+      - rejected, validated, deployed, rejected_deploy: terminal.
+    """
     try:
         from sentinel_v2 import db
+        from sentinel_v2.dashboard_state import get_draft
         from sentinel_v2.flows.sentinel_loop import SentinelState
         state_json = db.load_active_flow_checkpoint()
         if state_json is None:
@@ -51,6 +60,27 @@ def _load_resumable_state():
         state = SentinelState.model_validate_json(state_json)
         if state.deployed or not state.draft_id:
             return None
+
+        # Drop checkpoints whose draft is in a terminal/wait state.
+        try:
+            draft = get_draft(state.draft_id)
+        except Exception:
+            draft = None
+        terminal = {
+            "pending", "rejected", "validated", "deployed",
+            "rejected_deploy", "failed",
+        }
+        if draft and (draft.get("status") or "") in terminal:
+            log.info(
+                "Dropping stale checkpoint for draft %s (status=%s)",
+                state.draft_id, draft.get("status"),
+            )
+            try:
+                db.clear_flow_checkpoint(state.draft_id)
+            except Exception:
+                pass
+            return None
+
         log.info(
             "Found resumable checkpoint: cycle=%d phase=%s draft=%s",
             state.cycle_count, state.current_phase, state.draft_id,
@@ -81,8 +111,11 @@ def _recover_orphaned_drafts() -> None:
         pass
 
     # "queued" = approved, awaiting daemon pickup → NOT in-flight, leave alone.
-    # Only mark drafts that were actively being processed when the daemon died.
-    orphaned_statuses = {"building", "review", "built"}
+    # "pending_deploy" = user clicked approve, awaiting daemon pickup → leave alone too.
+    # "rejected_deploy" = terminal user intent, do not touch.
+    # Only mark drafts that were actively being processed (had the daemon
+    # actively running a phase on them) when the daemon died.
+    orphaned_statuses = {"building", "review", "built", "deploying"}
     orphans = list_drafts_by_status(orphaned_statuses)
     for draft in orphans:
         if draft["id"] in checkpointed:
@@ -179,10 +212,26 @@ def run_daemon():
                 except Exception:
                     pass  # fallback to normal sleep
 
-            # Wait before next cycle (no queued drafts)
+            # Wait before next cycle, but poll for queued drafts every 30s so
+            # the daemon wakes promptly when the user clicks Approve / Retry /
+            # Request Changes (any of which can re-queue a draft mid-sleep).
             if not _shutdown:
-                log.info("No queued drafts — sleeping %.1fh before next cycle", interval_hours)
-                await asyncio.sleep(interval_seconds)
+                poll_interval = min(30.0, interval_seconds)
+                log.info(
+                    "No queued drafts — sleeping up to %.1fh, polling every %.0fs",
+                    interval_hours, poll_interval,
+                )
+                slept = 0.0
+                while slept < interval_seconds and not _shutdown:
+                    await asyncio.sleep(poll_interval)
+                    slept += poll_interval
+                    try:
+                        from sentinel_v2.dashboard_state import list_drafts_by_status
+                        if list_drafts_by_status({"queued"}):
+                            log.info("Queued draft appeared during sleep — waking now")
+                            break
+                    except Exception:
+                        pass
 
             # Update env if shutdown requested
             if os.getenv("SENTINEL_SHUTDOWN") == "1":

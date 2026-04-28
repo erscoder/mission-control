@@ -1,0 +1,18 @@
+<svg viewBox="0 0 460 160" xmlns="http://www.w3.org/2000/svg" fill="none">
+  <!-- 01f: "Ers" dentro del liquido como sello, "Labs" wordmark grande fuera, mismo baseline -->
+  <g stroke="#10B981" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 50 14 L 92 14 M 58 14 L 58 50 L 18 130 Q 14 144 32 144 L 118 144 Q 136 144 132 130 L 92 50 L 92 14"/>
+    <path d="M 32 96 Q 50 88 76 90 T 116 96" stroke-width="2"/>
+  </g>
+  <path d="M 32 96 Q 50 88 76 90 T 116 96 L 124 130 Q 124 140 110 140 L 40 140 Q 26 140 26 130 Z" fill="#10B981" fill-opacity="0.25"/>
+  <!-- Ers grande dentro del liquido -->
+  <text x="75" y="126" text-anchor="middle" font-family="Inter, sans-serif" font-size="22" font-weight="800" fill="#10B981" letter-spacing="-0.5">Ers</text>
+  <!-- Bubbles -->
+  <circle cx="48" cy="78" r="2.6" fill="#10B981" fill-opacity="0.7"/>
+  <circle cx="72" cy="62" r="2" fill="#10B981" fill-opacity="0.6"/>
+  <circle cx="66" cy="44" r="1.6" fill="#10B981" fill-opacity="0.5"/>
+  <circle cx="84" cy="32" r="1.3" fill="#10B981" fill-opacity="0.4"/>
+  <circle cx="80" cy="10" r="1.4" fill="#10B981" fill-opacity="0.3"/>
+  <!-- Labs fuera baseline alineado a base del matraz (y=144) -->
+  <text x="160" y="144" font-family="Inter, sans-serif" font-size="92" font-weight="200" fill="#F9FAFB" letter-spacing="-3.5">Labs</text>
+</svg>

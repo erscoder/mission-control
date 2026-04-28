@@ -1,5 +1,3 @@
-import { Terminal } from 'lucide-react'
-
 export function Footer() {
   const year = new Date().getFullYear()
 
@@ -10,11 +8,8 @@ export function Footer() {
       <div className="relative max-w-6xl mx-auto px-6">
         <div className="flex flex-col md:flex-row items-center justify-between gap-6">
           {/* Logo */}
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-brand-500/10 border border-brand-500/20 flex items-center justify-center">
-              <Terminal className="w-4 h-4 text-brand-400" />
-            </div>
-            <span className="font-bold text-slate-300 tracking-tight">ErsLabs</span>
+          <div className="flex items-center">
+            <img src="/logo.svg" alt="ErsLabs" className="h-8" />
           </div>
 
           {/* Links */}

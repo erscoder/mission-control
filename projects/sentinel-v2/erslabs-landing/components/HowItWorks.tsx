@@ -9,7 +9,7 @@ const steps = [
     iconColor: 'text-accent-cyan',
     labelColor: 'text-accent-cyan',
     description:
-      'Our agents continuously scan Reddit, Twitter, Hacker News, and 50+ forums for genuine complaints — not trends, not hype. Real people describing real friction, with evidence they would pay for a solution.',
+      'Our agents continuously scan Reddit, Twitter, Hacker News, and 50+ forums for genuine complaints, not trends, not hype. Real people describing real friction, with evidence they would pay for a solution.',
     detail: '847 sources monitored',
   },
   {
@@ -20,7 +20,7 @@ const steps = [
     iconColor: 'text-brand-400',
     labelColor: 'text-brand-400',
     description:
-      'A crew of 6 specialized AI agents — product manager, frontend engineer, backend engineer, code reviewer, security auditor, and QA lead — collaborate to ship a complete, tested MVP with Stripe payments from day one.',
+      'A crew of 6 specialized AI agents (product manager, frontend engineer, backend engineer, code reviewer, security auditor, and QA lead) collaborate to ship a complete, tested MVP with Stripe payments from day one.',
     detail: '6 agents per build',
   },
   {
@@ -47,7 +47,7 @@ export function HowItWorks() {
             Process
           </p>
           <h2 className="text-4xl md:text-5xl font-black tracking-tight">
-            From pain point to{' '}
+            From pain to{' '}
             <span className="text-gradient">product</span>
           </h2>
         </div>

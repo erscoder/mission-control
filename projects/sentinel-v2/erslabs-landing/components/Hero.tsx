@@ -11,30 +11,7 @@ export function Hero() {
       <div className="absolute top-1/4 left-1/4 w-[800px] h-[800px] rounded-full bg-brand-500/[0.07] blur-[120px]" />
       <div className="absolute bottom-1/4 right-1/4 w-[600px] h-[600px] rounded-full bg-accent-cyan/[0.04] blur-[100px]" />
 
-      {/* Terminal-style top bar */}
-      <div className="absolute top-0 left-0 right-0 h-10 flex items-center px-6 border-b border-surface-600/50 bg-surface-900/80 backdrop-blur-sm">
-        <div className="flex gap-2">
-          <div className="w-3 h-3 rounded-full bg-accent-rose/60" />
-          <div className="w-3 h-3 rounded-full bg-accent-amber/60" />
-          <div className="w-3 h-3 rounded-full bg-brand-400/60" />
-        </div>
-        <div className="ml-4 flex items-center gap-2 text-xs font-mono text-surface-500">
-          <Terminal className="w-3 h-3" />
-          <span>erslabs.net</span>
-          <span className="text-brand-500">~</span>
-          <span className="text-surface-500/50">production</span>
-        </div>
-      </div>
-
-      <div className="relative z-10 max-w-5xl mx-auto px-6 text-center pt-10">
-        {/* Logo */}
-        <div className="mb-8 flex justify-center animate-fade-in">
-          <div className="relative">
-            <img src="/logo.svg" alt="ErsLabs" className="h-14 md:h-20 relative z-10" />
-            <div className="absolute inset-0 blur-2xl bg-brand-500/20 scale-150" />
-          </div>
-        </div>
-
+      <div className="relative z-10 max-w-5xl mx-auto px-6 text-center pt-20">
         {/* Status badge */}
         <div className="mb-8 inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-brand-500/20 bg-brand-500/5 animate-slide-up">
           <span className="relative flex h-2 w-2">
@@ -42,7 +19,7 @@ export function Hero() {
             <span className="relative inline-flex rounded-full h-2 w-2 bg-brand-500" />
           </span>
           <span className="text-xs font-mono text-brand-300 tracking-wide">
-            6 agents online &middot; scanning communities now
+            17 agents online &middot; scanning communities now
           </span>
         </div>
 
@@ -56,8 +33,7 @@ export function Hero() {
         {/* Subheadline */}
         <p className="text-lg md:text-xl text-slate-400 max-w-2xl mx-auto mb-12 leading-relaxed animate-fade-in">
           An autonomous AI lab that discovers real problems people have,
-          engineers targeted solutions, and ships them to production —
-          all without human intervention.
+          engineers targeted solutions, and ships them to production.
         </p>
 
         {/* CTA */}
@@ -89,8 +65,8 @@ export function Hero() {
               <div><span className="text-brand-400">{'>'}</span> <span className="text-accent-cyan">Scout</span> found <span className="text-white">847</span> complaints across 12 subreddits</div>
               <div><span className="text-brand-400">{'>'}</span> <span className="text-accent-violet">Analyst</span> ranked top 3 by revenue potential</div>
               <div><span className="text-brand-400">{'>'}</span> <span className="text-accent-amber">Matcher</span> confirmed fit: <span className="text-brand-300">92% match</span></div>
-              <div><span className="text-brand-400">{'>'}</span> <span className="text-white">Building</span> ComplianceDesk — HIPAA tracking SaaS</div>
-              <div><span className="text-brand-400">{'>'}</span> <span className="text-brand-500">6 agents</span> collaborating: frontend, backend, review, security, QA</div>
+              <div><span className="text-brand-400">{'>'}</span> <span className="text-white">Building</span> ComplianceDesk: HIPAA tracking SaaS</div>
+              <div><span className="text-brand-400">{'>'}</span> <span className="text-brand-500">build_crew (6)</span> collaborating: PM, frontend, backend, review, security, QA</div>
               <div className="flex items-center gap-1">
                 <span className="text-brand-400">{'>'}</span>
                 <span className="text-brand-300">Deploying to</span>

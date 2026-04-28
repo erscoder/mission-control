@@ -91,7 +91,11 @@ def update_draft_status(draft_id: str, new_status: str, revision_notes: str | No
 def compute_build_queue(drafts: list[dict]) -> list[dict]:
     """Derive a build queue view from drafts. Drafts with status 'pending' (just surfaced)
     now appear at the head of the pipeline as a 'draft' stage; rejected items stay out."""
-    ACTIVE = {"pending", "approved", "queued", "building", "review", "testing", "built", "deployed", "failed"}
+    ACTIVE = {
+        "pending", "approved", "queued", "building", "review", "testing",
+        "built", "pending_deploy", "deploying", "deployed", "failed",
+        "rejected_deploy",
+    }
     queue = [d for d in drafts if d.get("status") in ACTIVE]
     order = {
         "pending": 0,
@@ -101,8 +105,11 @@ def compute_build_queue(drafts: list[dict]) -> list[dict]:
         "queued": 2,
         "approved": 2,
         "built": 3,
-        "deployed": 4,
-        "failed": 5,
+        "pending_deploy": 4,
+        "deploying": 4,
+        "deployed": 5,
+        "failed": 6,
+        "rejected_deploy": 6,
     }
     queue.sort(key=lambda d: (order.get(d.get("status", ""), 99), d.get("queue_position") or 0, d.get("created_at") or ""))
     return queue
@@ -472,23 +479,32 @@ def handle_validate_draft(data):
 
 @socketio.on("approve_deploy", namespace="/dashboard")
 def handle_approve_deploy(data):
-    """Second approval gate: after a draft is built, human approves deployment."""
+    """Second approval gate: human approves the built draft for deployment.
+
+    Sets status to 'pending_deploy' (user intent). The flow's check_approval
+    gate watches for this status and proceeds to run_deploy. Final 'deployed'
+    is set by the runtime only after the deploy crew actually succeeds.
+    """
     draft_id = (data or {}).get("id", "")
     if not draft_id:
         emit("action_response", {"success": False, "action": "approve_deploy", "error": "missing id"}, namespace="/dashboard")
         return
-    ok = update_draft_status(draft_id, "deployed")
+    ok = update_draft_status(draft_id, "pending_deploy")
     emit("action_response", {"success": ok, "action": "approve_deploy", "id": draft_id}, namespace="/dashboard")
 
 
 @socketio.on("reject_deploy", namespace="/dashboard")
 def handle_reject_deploy(data):
-    """Second approval gate: reject deployment of a built draft. Marks it as failed."""
+    """Second approval gate: human rejects deployment of a built draft.
+
+    Sets status to 'rejected_deploy' (user intent), distinguishable from a
+    runtime 'failed' status. The flow ends the cycle without deploying.
+    """
     draft_id = (data or {}).get("id", "")
     if not draft_id:
         emit("action_response", {"success": False, "action": "reject_deploy", "error": "missing id"}, namespace="/dashboard")
         return
-    ok = update_draft_status(draft_id, "failed")
+    ok = update_draft_status(draft_id, "rejected_deploy")
     emit("action_response", {"success": ok, "action": "reject_deploy", "id": draft_id}, namespace="/dashboard")
 
 
@@ -545,9 +561,9 @@ def api_drafts_action():
     elif action == "revise":
         ok = update_draft_status(draft_id, "pending", revision_notes=notes)
     elif action == "approve_deploy":
-        ok = update_draft_status(draft_id, "deployed")
+        ok = update_draft_status(draft_id, "pending_deploy")
     elif action == "reject_deploy":
-        ok = update_draft_status(draft_id, "failed")
+        ok = update_draft_status(draft_id, "rejected_deploy")
     elif action == "retry":
         _unblock_daemon_for_retry(draft_id)
         ok = update_draft_status(draft_id, "queued", revision_notes="retry requested")

@@ -1,0 +1,18 @@
+<svg viewBox="0 0 320 120" xmlns="http://www.w3.org/2000/svg" fill="none">
+  <!-- Bauhaus: bold geometry, primary shapes, flat -->
+  <!-- Neck rectangle -->
+  <rect x="46" y="12" width="20" height="20" fill="#F9FAFB"/>
+  <!-- Flask body triangle outline -->
+  <path d="M 46 32 L 66 32 L 92 100 L 20 100 Z" fill="#F9FAFB"/>
+  <!-- Liquid as solid emerald block -->
+  <path d="M 32 66 L 80 66 L 92 100 L 20 100 Z" fill="#10B981"/>
+  <!-- ERS large bold inside -->
+  <text x="56" y="92" text-anchor="middle" font-family="Inter, sans-serif" font-size="16" font-weight="900" fill="#030712" letter-spacing="1">ERS</text>
+  <!-- Bubbles as perfect circles, varying sizes, flat colors -->
+  <circle cx="38" cy="54" r="5" fill="#FBBF24"/>
+  <circle cx="56" cy="46" r="3.5" fill="#FB7185"/>
+  <circle cx="50" cy="22" r="4" fill="#22D3EE"/>
+  <circle cx="62" cy="6" r="2.5" fill="#A78BFA"/>
+  <!-- Labs wordmark Bauhaus geometric -->
+  <text x="115" y="78" font-family="Inter, sans-serif" font-size="44" font-weight="900" fill="#F9FAFB" letter-spacing="-2">Labs</text>
+</svg>

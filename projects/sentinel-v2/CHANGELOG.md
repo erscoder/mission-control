@@ -5,6 +5,264 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-28 · pending - Retry from dashboard now actually starts fresh
+
+User reported: clicking Retry kept resurrecting drafts already exhausted, with the message "Deploy exhausted all 2 attempts in a prior cycle and the resumed state had no deployed=True." Two cooperating bugs:
+
+**Bug A: `_load_resumable_state` did not drop checkpoints for `failed` drafts.**
+The terminal set was `{pending, rejected, validated, deployed, rejected_deploy}` and missing `failed`. So when a draft hit max-retries and was marked `failed`, its checkpoint persisted; the next cycle's daemon main loaded it; the listener chain reached `run_deploy`; the exhausted-retry guard fired again and re-marked it failed. Loop on every retry.
+
+Fix: added `"failed"` to the terminal set in `main.py::_load_resumable_state`. Now any failed draft's checkpoint is dropped at daemon start / next-cycle load.
+
+**Bug B: `start_cycle` queued-draft pickup did not reset `build_attempts` / `deploy_attempts`.**
+The pickup branch already reset `build_output`, `workspace_dir`, `match_score`, `deployed`, `deployed_url`, etc., but left the retry counters at whatever they were in the prior state. A user clicking Retry on a draft that exhausted retries inherited those counters via the kickoff state, and the exhausted-retry guards in `run_build` / `run_deploy` immediately flagged the draft as exhausted-and-failed.
+
+Fix: explicitly reset `self.state.build_attempts = 0` and `self.state.deploy_attempts = 0` when picking a queued draft in `start_cycle`. Combined with Bug A, Retry from dashboard is now genuinely fresh.
+
+Sanity tests passed: source inspection confirms both fixes are in place.
+
+Operational note: drafts created at 2026-04-27 23:57, 2026-04-28 05:21, 09:38 came from the previous daemon (PID 15394) which was started before today's backpressure code was added. Code edits do not retroactively apply to running processes; a daemon restart is required for behavior changes to take effect. Confirmed by `Research paused` count = 0 in the current daemon's log.
+
+## 2026-04-28 · pending - Daemon sleep polls for queued drafts every 30s
+
+Race condition spotted while validating the run_shell fix: I reset compliancedesk to `queued`, but the daemon had already finished its empty cycle and gone into a 1-hour sleep before my reset. The draft sat untouched for 50 minutes until the daemon naturally woke.
+
+Fix in `main.py` `run_daemon`:
+- The post-cycle "no queued drafts" sleep is now a polling loop. Every 30 seconds (or `interval_seconds`, whichever is smaller) it re-checks `list_drafts_by_status({"queued"})` and wakes early if anything appeared.
+- Total sleep budget unchanged (`SENTINEL_LOOP_INTERVAL_HOURS`, default 1h), so the daemon does not spin when truly idle.
+- Effect for the user: clicking Approve / Retry / Request Changes on the dashboard wakes the daemon within 30s instead of within 1h.
+
+## 2026-04-28 · pending - run_shell: support `cd subdir && cmd` and add subdir param
+
+Build agents kept failing tool calls with `shell-error: 'cd' not in whitelist` because they were composing commands like `cd backend && npm run build`. `RunShellTool` invokes `subprocess.run(argv)` (no shell), so the literal `cd` becomes the binary name, fails the whitelist, and the agent has to retry. Each round trip costs an LLM call.
+
+Fix in `tools/file_tool.py`:
+
+- `RunShellInput` gains a `subdir: str = "."` parameter so agents can run a command in a sub-directory of the workspace explicitly: `run_shell(workspace_dir=..., subdir='frontend', command='npm run build')`.
+- New regex `_CD_PREFIX = re.compile(r"^\s*cd\s+([^\s&;]+)\s*&&\s*(.+)$", re.DOTALL)` translates the legacy `cd <subdir> && <rest>` pattern transparently into structured `subdir + command`. Agents that fall back to that pattern just work.
+- `cwd` resolved via `_safe_child(ws, subdir)` so subdir traversal is sandboxed; missing dirs return `subdir 'X' does not exist under workspace` instead of opaque exec errors.
+- Tool description updated so the agent sees both `subdir` and the `cd && cmd` shorthand documented.
+- Whitelist expanded with read-only inspection commands the build agent commonly needs: `head`, `tail`, `find`, `grep`, `wc`, `pwd`, `which`, `stat`, `touch`, `chmod`, `yarn`, `true`, `false`. Sandboxing is unchanged (cwd is still locked to the workspace).
+
+Sanity tests passed in a temp workspace:
+- `cd frontend && pwd` resolves to `<ws>/frontend` via the regex translation.
+- `subdir='frontend'` explicit form works.
+- No `subdir` and no `cd` falls back to workspace root.
+- Non-existent subdir returns a clear error.
+- `find . -name package.json` runs (whitelist expansion).
+
+## 2026-04-27 · pending - Stale-retry-counter spin guard in run_build / run_deploy
+
+After the SLUG fix the daemon resumed compliancedesk from a checkpoint where the previous cycle had already burned `build_attempts=3` and `deploy_attempts=2`. With both counters at their cap, the `while attempts < MAX` loops in `run_build` / `run_deploy` did not execute, the methods returned almost immediately, the daemon's main loop saw the cycle complete, re-loaded the same checkpoint, and re-entered run_deploy. Logs showed "Phase 5: DEPLOY" emitted 15+ times per second, daemon at 85% CPU.
+
+Fix: at the top of both `run_build` and `run_deploy`, after the existing "approved / build_output / deployed" guards, check whether the relevant attempt counter has already reached its cap. If yes, mark the draft `failed` with a clear message ("Build/Deploy exhausted all N attempts in a prior cycle. Click Retry to start fresh."), clear the checkpoint, and set `_shutdown_requested = True` to end the cycle cleanly. The daemon's main loop sees no remaining queued draft for this id and either picks the next queued or sleeps; either way the spin stops.
+
+Verified by reset compliancedesk → queued, cleared checkpoints, restarted daemon. The guard fires only on RESUMED state with exhausted counters; a fresh kickoff increments from 0 normally.
+
+## 2026-04-27 · pending - Research backpressure: pause when pipeline saturated
+
+Symptom: with 4 in queued, 1 building, 4 pending, the daemon kept running research every idle cycle, piling up new pending drafts the user could not triage. New research while the bottleneck is downstream is just noise.
+
+Fix in `flows/sentinel_loop.py` `run_research`:
+- Before kicking off research_crew, count drafts in active states: `pending`, `queued`, `building`, `review`, `testing`, `built`, `pending_deploy`, `deploying`.
+- If count >= threshold (env `SENTINEL_RESEARCH_PAUSE_THRESHOLD`, default `6`), log a per-status breakdown and return without running research. The cycle ends gracefully; subsequent listeners exit on `top_opportunity is None`.
+- If a queued draft was picked up by `start_cycle`, `top_opportunity` is set → research-skip path runs first (unchanged), so the threshold check never fires for the queued-draft path.
+
+Threshold rationale (default 6):
+- `pending` consumes user attention (review/approve/reject). 3+ pending = user already overwhelmed.
+- `queued + in-flight build/deploy` is the sequential pipeline; a single MVP build + deploy is roughly 15-25 minutes. 3+ in this lane = ~1h+ of work backlogged.
+- 6 covers a healthy mix of both lanes; beyond that, idea volume is the wrong lever to pull.
+
+Tunable via env. Set `SENTINEL_RESEARCH_PAUSE_THRESHOLD=10` for a louder pipeline, `=4` for a tighter one. Set very high to disable.
+
+Verified at restart: 9 active drafts in DB, helper correctly identifies pause. Daemon resumed compliancedesk's in-flight build via checkpoint, so backpressure will fire on the NEXT cycle when the daemon would otherwise generate fresh research.
+
+## 2026-04-27 · pending - Stop embedding fly.toml template into build_crew prompt
+
+After the previous fix the daemon picked up `compliancedesk` and reached the build phase but failed three times with `Missing required template variable 'SLUG' not found in inputs dictionary`. Root cause: the `Senior Backend Engineer` agent's backstory and the `backend_task` description embedded the raw `fly.toml` template content (`app = '{{SLUG}}-api'`). CrewAI 1.14.x interprets `{{...}}` as a Jinja2 variable reference; with no `SLUG` key in `inputs`, every render aborted before the crew even ran.
+
+We already pre-bake `fly.toml` and `Dockerfile` deterministically at deploy time, so the build agent has zero need to reproduce them. Removed:
+
+- The `from sentinel_v2.data.deploy_templates import load_templates` import.
+- The `deploy_templates = _load_deploy_templates()` call in `build_crew()`.
+- The `## DEPLOY TEMPLATES` block with `f"{deploy_templates}"` interpolation in the backend agent backstory.
+- The `DEPLOY ARTIFACTS` block in `backend_task.description` that referenced `Dockerfile` and `fly.toml` (and contained the offending `{{SLUG}}`).
+
+Replaced both spots with a one-liner: "Do NOT create a Dockerfile or fly.toml; the deploy crew installs the canonical pair before deploying. Anything you write there will be overwritten." Stack pinned to NestJS + Prisma + PostgreSQL on port 8080.
+
+Reset the stuck `compliancedesk` draft back to `queued` and restarted the daemon to validate the fix end-to-end.
+
+## 2026-04-27 · pending - start_cycle queued pickup, neutralize CrewAI flow memory, drop stale checkpoints
+
+User reported queue still piling up after the previous session's fixes. Daemon was running but stuck on a stale `cycle 658 fieldsync research` checkpoint, never reaching the queued-draft pickup branch. Logs were also flooded with `Memory save failed: ... CHROMA_OPENAI_API_KEY environment variable is not set`.
+
+Fixes:
+
+**`flows/sentinel_loop.py` `start_cycle` resume detection**
+- Old condition `if self.state.cycle_count > 0:` mis-detected fresh flows as resumes because the daemon's main loop pre-sets `cycle_count = cycle - 1` even when there is no checkpoint. After the first cycle, the queued-draft pickup never ran.
+- New condition `is_resume = bool(self.state.draft_id) and self.state.cycle_count > 0`. A real resume always carries a `draft_id`; pre-set cycle counters do not.
+
+**`flows/sentinel_loop.py` flow-level memory neutralized**
+- CrewAI's `Flow.__init__` auto-creates a `Memory(...)` with `embedder=None`, which then defaults to OpenAI and demands `CHROMA_OPENAI_API_KEY`. Every internal event triggered a `Memory save failed` warning.
+- Set `self.memory = None` immediately after `super().__init__()` and overrode `remember()` / `recall()` as no-ops. Persistence already lives in the SQLite checkpoint and `dashboard_state`, so we do not lose anything functional.
+
+**`flows/sentinel_loop.py` clear checkpoint on gate exit**
+- `wait_for_draft_approval`: clears the checkpoint when the draft was rejected or the gate timed out, so the next cycle does not resume into a dead flow.
+- `check_approval`: clears the checkpoint when the user requested changes (`queued`), rejected (`rejected_deploy`), or the gate timed out. The next cycle starts fresh and re-picks via `start_cycle`'s queued-draft branch.
+
+**`main.py` `_load_resumable_state` drops stale checkpoints**
+- A checkpoint pointing at a draft whose status is now terminal or wait-state (`pending`, `rejected`, `validated`, `deployed`, `rejected_deploy`) is dropped from the DB and the function returns None. Prevents the daemon from resuming the same dead flow forever.
+
+**Operational cleanup**
+- Manually deleted the stale `cycle 658 fieldsync research` checkpoint that was blocking the queue. The new `_load_resumable_state` guard would have dropped it on its own at next start, but cleaning it explicitly avoided one wasted cycle.
+
+Restarted the daemon. Verified:
+- 0 memory warnings in `/tmp/sentinel.log` after restart.
+- Daemon picked up `draft_c1_compliancedesk-hipaa-compliance-tracker` (the first queued draft, with revision_notes "subdominio erroneo") and saved a fresh checkpoint at phase=research → run_match crew started executing.
+
+## 2026-04-27 · pending - Approval gate + request_changes loop fix; status semantics
+
+User reported queued drafts piling up (5 stuck in queue, daemon also not running). Found that the post-build approval gate was watching for terminal `{deployed, failed}` statuses, while the dashboard's "Approve deploy" and "Reject deploy" buttons set the same `deployed` / `failed` statuses (conflating user intent with runtime outcome). When the user clicked "Request changes", the dashboard set status to `queued` with revision_notes, which the gate did not recognize, so the cycle stalled until the 1h timeout.
+
+Fixes:
+
+**Status semantics: split user intent from runtime outcome**
+- New status `pending_deploy`: user clicked "Approve deploy". Daemon will pick up and run deploy crew.
+- New status `deploying`: deploy crew actively running. Set at start of `run_deploy`.
+- New status `rejected_deploy`: user clicked "Reject deploy". Distinguishable from runtime `failed`.
+- `deployed` and `failed` now exclusively reflect what the runtime actually achieved.
+
+**`dashboard/app.py`**:
+- `approve_deploy` socketio handler now sets `pending_deploy` instead of `deployed`.
+- `reject_deploy` socketio handler now sets `rejected_deploy` instead of `failed`.
+- Same change in `/api/drafts/action` HTTP endpoint.
+- `compute_build_queue` knows about all three new statuses for sort and filter.
+
+**`flows/sentinel_loop.py` `check_approval`**:
+- `target_statuses` changed from `{"deployed", "failed"}` to `{"pending_deploy", "queued", "rejected_deploy"}`.
+- `pending_deploy` → approved=True → router proceeds to run_deploy.
+- `queued` → user requested changes; end cycle. Daemon's next `start_cycle` picks the queued draft and re-runs build with revision_notes.
+- `rejected_deploy` → end cycle terminal.
+
+**`flows/sentinel_loop.py` `run_deploy`**:
+- Sets draft status to `deploying` at start so the dashboard reflects progress and orphan recovery can clean up if the daemon dies mid-deploy.
+
+**`main.py` `_recover_orphaned_drafts`**:
+- Added `deploying` to `orphaned_statuses`. `pending_deploy` and `rejected_deploy` are intentionally NOT recovered: the former is user intent waiting for daemon pickup (no in-flight work), the latter is terminal user intent.
+
+**`dashboard-nextjs/src/types/sentinel.ts`**:
+- `DraftStatus` extended with `pending_deploy`, `deploying`, `rejected_deploy`.
+
+**`dashboard-nextjs/src/components/BuildQueue.tsx`**:
+- New `deploying` stage between `built` and `deployed` in the visual pipeline (violet/fuchsia gradient).
+- `currentStageIndex` maps `pending_deploy` and `deploying` → index 5 (deploying stage).
+- `failed` styling now applies to both `failed` and `rejected_deploy`.
+- `countByStage` includes a `deploying` bucket and counts `rejected_deploy` as failed.
+
+**`dashboard-nextjs/src/components/HistoryModal.tsx`**:
+- Filters and renders `rejected_deploy` alongside `failed` in the history list.
+
+Sanity tests passed:
+- Python compiles for `main.py`, `sentinel_loop.py`, `dashboard/app.py`.
+- Dashboard `handle_approve_deploy` / `handle_reject_deploy` set the new statuses.
+- `check_approval` source contains `pending_deploy`, `queued`, `rejected_deploy`; old `{deployed, failed}` target removed.
+- `run_deploy` sets `status="deploying"`.
+- `_recover_orphaned_drafts` includes `deploying`.
+
+**Operational note**: the Sentinel daemon was not running when the user reported stuck queued drafts. Fixes alone do not unstick anything — the daemon must be started for queued drafts to be processed.
+
+## 2026-04-26 · pending - Resilient workspace resolution, prebake never climbs to /
+
+Crash on `run_deploy`: `[Errno 30] Read-only file system: '/root'` when `_prebake_deploy_files` called `mkdir(parents=True)`. Root cause: a checkpoint persisted `state.workspace_dir = "/root/Sentinel/<draft>"` from a previous run in a Docker container where `HOME=/root`. On macOS, `Path("/root/Sentinel/...").mkdir(parents=True)` walked up and tried to create `/root`, which is read-only.
+
+Fixes:
+- New `_resolve_workspace_dir(draft_id, cycle_count)` always derives the path from `SENTINEL_WORKSPACES_ROOT` or `~/Sentinel` in the current process. The persisted `state.workspace_dir` is never trusted; if it differs from the recomputed value, log a warning and overwrite.
+- `_prebake_deploy_files` now refuses to create the workspace tree itself: raises `FileNotFoundError` if `workspace_dir` does not exist, and uses `mkdir(exist_ok=True)` (without `parents=True`) so it cannot climb up to `/`.
+- Cleaned the existing checkpoint row in `sentinel.db` so the path leak does not affect the next deploy attempt: `/root/Sentinel/...` rewritten to `/Users/kike/Sentinel/...`.
+
+## 2026-04-26 · pending - fly.toml + Dockerfile pre-baked from canonical NestJS template
+
+Decision: every Sentinel backend ships as NestJS, so there is no reason to let the LLM compose `fly.toml` or `Dockerfile`. The build agent's broken `[[processes]] app = ""` was the symptom. Cure is to take infra files out of the agent's hands.
+
+- New helper `_prebake_deploy_files(workspace_dir, slug, stack='node_nestjs')` in `flows/sentinel_loop.py`. Reads `data/deploy_templates/<stack>/fly.toml` and `Dockerfile`, substitutes `{{SLUG}}`, writes both into `<workspace>/backend/`. Always overwrites whatever the build agent produced.
+- `run_deploy()` calls the helper after computing `slug` and `workspace_dir`, before the kickoff loop. Logs the file paths it wrote.
+- Updated the canonical NestJS `fly.toml` template to match the user's preferred shape: `primary_region = 'cdg'`, `min_machines_running = 1`, `auto_stop_machines = false`, explicit `[[vm]] memory = '512mb' cpu_kind = 'shared' cpus = 1`. Dropped the noisy `[http_service.checks]` and `[http_service.concurrency]` blocks; the app code already exposes `/api/health` and small MVPs do not need request-level concurrency tuning.
+- Deploy crew prompt simplified: removed the "verify fly.toml" step (no longer relevant). New explicit note in the task description: "fly.toml and Dockerfile have already been written from the canonical template before you start. Do not inspect, edit, or rewrite them." Renumbered the sequence from 13 steps to 12.
+- New env flag `SENTINEL_DEPLOY_NO_MEMORY=1` disables long-term crew memory in the deploy crew. Use when validating a fix that the agent's memory could shadow (e.g. a previously learned wrong association between slug and subdomain). Off by default.
+- Re-baked the existing failing workspace `~/Sentinel/draft_c1_compliancedesk-hipaa-compliance-tracker/backend/{fly.toml,Dockerfile}` with the new template so a re-run does not pick up the broken state.
+
+Sanity tests:
+- `_prebake_deploy_files(tmp, 'compliancedesk')` writes a fly.toml with `app = 'compliancedesk-api'`, `primary_region = 'cdg'`, no `{{SLUG}}` placeholder, no `[[processes]]` block, and a Dockerfile with the multi-stage build and `EXPOSE 8080` ✓
+- `deploy_crew()` source contains `SENTINEL_DEPLOY_NO_MEMORY` and conditional memory wiring ✓
+
+## 2026-04-26 · pending - Deploy crew: deterministic URLs, frontend build gate, draft_id leak fix
+
+Confirmed via QA Verifier log that the failing deploy of `compliancedesk` never created a fly.io machine and never created a Cloudflare Pages project. The agent was hallucinating the final URL as `draft-c1-compliancedesk-hipaa.erslabs.net` because it confused the `slug` and `draft_id` inputs and used the latter as a DNS subdomain.
+
+Fixes applied across three files:
+
+**`flows/sentinel_loop.py` `run_deploy()`:**
+- Pre-bake the canonical deploy strings in Python before kicking off the crew: `expected_backend_app_name = f"{slug}-api"`, `expected_cf_project_name = slug`, `expected_frontend_url = f"https://{slug}.{ERSLABS_ROOT_DOMAIN}"`, `expected_backend_url = f"https://{expected_backend_app_name}.fly.dev"`.
+- Pass these as `backend_app_name`, `cf_project_name`, `frontend_url`, `backend_url` inputs.
+- Remove `draft_id` from the deploy kickoff inputs entirely. The Stripe webhook idempotency value is renamed to `stripe_idempotency_key` so the agent never sees the substring `draft_id` or `draft_c\d+_`.
+- Seed `deploy_feedback` from `self.state.revision_notes` so a human "request changes" actually reaches the deploy agent on the next attempt (previously only auto-retry errors flowed in).
+- Clear `self.state.revision_notes = None` on deploy success so they do not contaminate the next cycle.
+- Use the pre-baked `expected_frontend_url` for `state.deployed_url` instead of trusting the URL the agent reports.
+
+**`crews/deploy_crew/deploy_crew.py`:**
+- Rewrote the deployer backstory as a 13-step sequence with literal `{}` interpolation of the pre-baked names. Hard rules at the bottom: "the DNS subdomain is exactly `{slug}`, never anything that starts with 'draft', 'cycle', or any compound name."
+- Added an explicit frontend-build gate: before `cloudflare_pages_deploy`, the agent must verify `<workspace_dir>/frontend/out/` exists. If missing, run `npm ci && npm run build`. If still missing after build, inspect `next.config.mjs` and add `output: 'export'`. Cannot proceed without `out/`.
+- Added a fly.toml verification step before deploy: agent must confirm the file contains `app = '<backend_app_name>'` and an `[http_service]` block. If `[[processes]]` is present (the bug we observed in the broken workspace) or `app` is empty/wrong, overwrite with the canonical template.
+- Verifier task now uses literal `{frontend_url}` and `{backend_url}` and explicitly says: "If DNS does not resolve, the deploy never completed. Report ROLLBACK with the exact curl output."
+- Removed the previous use of `{draft_id}` from the task description.
+
+**`tools/cloudflare_tool.py`:**
+- New `_reject_draft_like(value, field)` helper. Hard error if any `project_name`, `subdomain`, or `domain label` matches `^draft[-_]c?\d` or contains `draft-c` / `draft_c` (case-insensitive).
+- Guard wired into `CloudflarePagesCreateTool._run`, `CloudflareDnsCnameTool._run`, and `CloudflarePagesAddCustomDomainTool._run`. The error message tells the agent exactly what to do: "you must pass the clean slug (e.g. 'compliancedesk'), not the draft id". Feeds the retry loop with a fix-friendly diagnostic.
+
+**Sanity tests (run before commit):**
+- `_make_slug("ComplianceDesk HIPAA Compliance") == "compliancedesk"` ✓
+- `_reject_draft_like("draft-c1-compliancedesk-hipaa", ...)` returns an `error:` string ✓
+- `_reject_draft_like("compliancedesk", ...)` returns `None` ✓
+- `run_deploy` source: no `"draft_id"` key in inputs dict; all five new keys present; `deploy_feedback` seeded from `revision_notes`; `revision_notes` cleared on success; `deployed_url` uses pre-baked URL ✓
+
+**Known follow-ups (NOT fixed in this batch):**
+- The build_crew backstory still hands the backend agent freedom to "adapt" the fly.toml template and it produced a broken `[[processes]] app = ""` in the failing workspace. The deploy crew now defends against this at deploy time, but the build prompt should be tightened to forbid edits beyond the literal `{{SLUG}}` substitution. Tracked separately.
+- CrewAI memory carryover: the deploy crew has `memory=memory`. If a previous run wrote "compliancedesk → draft-c1-compliancedesk-hipaa" into long-term memory, the agent may resurrect that association even after the input fix. Recommended: run the next deploy cycle with `memory=False` (or wipe the memory storage) the first time, to confirm the fix in isolation before re-enabling.
+- Zombie Cloudflare resources: the previous failed runs may have created Pages projects or DNS records under the wrong name. Run `cloudflare_pages_list` (manually via CF dashboard) and clean up any `draft-c*` projects/CNAMEs before re-running against the same draft.
+
+## 2026-04-26 · pending - Honest agent count: 17 across 7 crews (Pipeline rewrite)
+
+- Removed fictional agent names from `Pipeline.tsx` (Nova, Atlas, Echo, Forge, Sentinel, Hermes did not exist in `src/sentinel_v2/crews/`).
+- Pipeline section now mirrors the real codebase: 7 crews (research, match, build, deploy, portfolio, security_remediation, social_response) with the 17 actual agent roles (Demand Hunter, Commercial Validator, Customer Intelligence Analyst, Opportunity Qualifier, Strategic Product Manager, Senior Frontend/Backend Engineer, Senior Code Reviewer, Security Engineer, QA Engineering Lead, Deployment Engineer, Production QA Verifier, Portfolio Maintainer, Dependency Vulnerability Scanner, Security Remediation Planner, Dependency Refactor Developer, Social Response Specialist).
+- Each crew card now shows: phase badge, agent count, real crew goal sourced from each crew's docstring/agent goals, and a list of every agent in that crew.
+- Phase indicators expanded from 4 to 7 (Discover, Validate, Engineer, Ship, Showcase, Harden, Respond).
+- Hero status badge updated from "6 agents online" to "17 agents online".
+- Hero terminal preview now reads `build_crew (6)` for accuracy when describing the build phase specifically.
+- About stats updated from "6 AI Agents" to "17 AI Agents".
+
+## 2026-04-26 · pending - Listening Board background (real user voices) + em-dash purge
+
+- Replaced `MathBackground.tsx` (decorative math equations, off-thesis) with `VoicesBackground.tsx`: 71 unique handwritten user complaints scattered across the page (0-600vh). Reddit/HN-style raw quotes that directly back the "we build apps by listening" thesis.
+- Each voice cites its source (r/SaaS, HN, r/freelance, Slack DM, support ticket, etc.) in slate annotation. Color encodes emotion: rose for frustration, amber for confusion, brand for wishful, cyan for feature requests, violet for domain-specific (clinic, freelancer, therapist, lawyer), white for punchlines.
+- Closing About section repeats the brand promise as voices: "we're listening.", "we listen. we build. we ship.", "ship something that just works".
+- Global em-dash and en-dash purge across landing copy: `app/layout.tsx`, `Hero.tsx`, `HowItWorks.tsx`, `Pipeline.tsx`, `CaseStudy.tsx`, `About.tsx`. Replaced with commas, colons, parentheses, or split sentences.
+- Dev-time duplicate check warns in console if anyone adds a repeated voice.
+
+## 2026-04-26 · pending - Chalkboard math equations background (superseded)
+
+- Initial attempt: 75 famous equations as handwritten background. Replaced in same session because pure math/physics equations are off-brand for a product studio.
+
+## 2026-04-26 · pending - New ErsLabs flask logo + sticky header
+
+- New brand logo: Erlenmeyer flask lineart in emerald (#10B981) with rising bubbles + `ERSLABS` wordmark (Manrope, ERS 500 / LABS 200, all caps, letter-spacing 0.5). Replaces previous hexagonal blue mark.
+- Replaced `public/logo.svg`, `public/favicon.svg`, `public/og-image.svg`.
+- Added Manrope (200/300/500) to `globals.css` font import.
+- New `components/Header.tsx`: fixed top, transparent at top, blurred surface bg on scroll. Logo left, nav (Pipeline / Portfolio / About) right.
+- Removed redundant logo from `Hero.tsx` (now in header) and removed the decorative terminal-style top bar that conflicted with the fixed header.
+- Refactored `Footer.tsx` to use the new logo image.
+- Logo concept iteration archive: `erslabs-landing/public/logos/flask-variants/` (showcase.html + 20+ SVG explorations).
+
 ## 2026-04-26 · 7d2ec27 — Fix CSS purging in ErsLabs landing
 
 - Dynamic Tailwind class interpolation (`bg-${accent}/10`) invisible to JIT scanner. Replaced with explicit pre-composed class strings in `HowItWorks.tsx`.

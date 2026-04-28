@@ -12,6 +12,7 @@ import io
 import json
 import logging
 import os
+import re
 import tarfile
 from pathlib import Path
 from typing import Type
@@ -24,6 +25,24 @@ log = logging.getLogger("sentinel_v2.tools.cloudflare")
 
 CF_API = "https://api.cloudflare.com/client/v4"
 ERSLABS_ROOT_DOMAIN = "erslabs.net"
+
+# Reject any name that looks like a Sentinel draft_id leaking into Cloudflare.
+# A draft_id has the form ``draft_c<N>_<slug>`` (or ``draft-c<N>-<slug>`` after
+# DNS-safe replacement). The deploy agent should never use either form as a
+# project / subdomain. Hard-fail loud so the retry loop sees the real reason.
+_DRAFT_LIKE = re.compile(r"^draft[-_]c?\d", re.IGNORECASE)
+
+
+def _reject_draft_like(value: str, field: str) -> str | None:
+    """Return an error string if ``value`` looks like a draft_id, else None."""
+    if not value:
+        return None
+    if _DRAFT_LIKE.match(value) or "draft-c" in value.lower() or "draft_c" in value.lower():
+        return (
+            f"error: {field}={value!r} looks like a Sentinel draft_id; "
+            "you must pass the clean slug (e.g. 'compliancedesk'), not the draft id"
+        )
+    return None
 
 
 def _auth_headers() -> dict[str, str]:
@@ -72,6 +91,9 @@ class CloudflarePagesCreateTool(BaseTool):
     args_schema: Type[BaseModel] = PagesCreateInput
 
     def _run(self, project_name: str, production_branch: str = "main") -> str:
+        guard = _reject_draft_like(project_name, "project_name")
+        if guard:
+            return guard
         acct = _account_id()
         # Check if exists
         r = httpx.get(
@@ -208,6 +230,9 @@ class CloudflareDnsCnameTool(BaseTool):
     def _run(self, subdomain: str, target: str, proxied: bool = True) -> str:
         if "." in subdomain:
             return f"error: subdomain {subdomain!r} must not contain dots"
+        guard = _reject_draft_like(subdomain, "subdomain")
+        if guard:
+            return guard
         zone_id = _resolve_zone_id()
         fqdn = f"{subdomain}.{ERSLABS_ROOT_DOMAIN}"
 
@@ -264,6 +289,9 @@ class CloudflarePagesAddCustomDomainTool(BaseTool):
     args_schema: Type[BaseModel] = PagesCustomDomainInput
 
     def _run(self, project_name: str, domain: str) -> str:
+        guard = _reject_draft_like(project_name, "project_name") or _reject_draft_like(domain.split(".")[0], "domain label")
+        if guard:
+            return guard
         acct = _account_id()
         r = httpx.post(
             f"{CF_API}/accounts/{acct}/pages/projects/{project_name}/domains",

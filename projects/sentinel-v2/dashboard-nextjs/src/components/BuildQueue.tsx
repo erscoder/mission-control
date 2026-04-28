@@ -42,7 +42,7 @@ interface BuildQueueProps {
   onValidateDraft?: (id: string) => void
 }
 
-type StageKey = 'draft' | 'queued' | 'building' | 'review' | 'built' | 'deployed'
+type StageKey = 'draft' | 'queued' | 'building' | 'review' | 'built' | 'deploying' | 'deployed'
 
 const STAGE_ORDER: StageKey[] = [
   'draft',
@@ -50,6 +50,7 @@ const STAGE_ORDER: StageKey[] = [
   'building',
   'review',
   'built',
+  'deploying',
   'deployed',
 ]
 
@@ -101,6 +102,14 @@ const STAGE: Record<StageKey, {
     ring: 'border-cyan-500/25',
     stripe: 'bg-gradient-to-b from-cyan-400 to-sky-500',
   },
+  deploying: {
+    label: 'Deploying',
+    icon: Rocket,
+    tone: 'text-violet-300',
+    bg: 'bg-gradient-to-br from-violet-500 to-fuchsia-500',
+    ring: 'border-violet-500/25',
+    stripe: 'bg-gradient-to-b from-violet-400 to-fuchsia-500',
+  },
   deployed: {
     label: 'Deployed',
     icon: Rocket,
@@ -117,7 +126,8 @@ function currentStageIndex(s: DraftStatus): number {
   if (s === 'building') return 2
   if (s === 'review') return 3
   if (s === 'testing' || s === 'built') return 4
-  if (s === 'deployed') return 6 // past everything → all done
+  if (s === 'pending_deploy' || s === 'deploying') return 5
+  if (s === 'deployed') return 7 // past everything → all done
   return -1
 }
 
@@ -145,7 +155,7 @@ export default function BuildQueue({
   const historyDrafts = allDrafts ?? queue
   const historyCount =
     historyDrafts.filter(
-      (d) => d.status === 'validated' || d.status === 'rejected' || d.status === 'failed',
+      (d) => d.status === 'validated' || d.status === 'rejected' || d.status === 'failed' || d.status === 'rejected_deploy',
     ).length
 
   return (
@@ -234,7 +244,7 @@ function PipelineRow({
   onRequestChanges?: (id: string, notes: string) => void
   onValidateDraft?: (id: string) => void
 }) {
-  const failed = draft.status === 'failed'
+  const failed = draft.status === 'failed' || draft.status === 'rejected_deploy'
   const currentIdx = currentStageIndex(draft.status)
   const isDoneState = draft.status === 'deployed'
   const activeStage: StageKey | null = isDoneState
@@ -870,6 +880,7 @@ function countByStage(queue: Draft[]) {
     building: 0,
     review: 0,
     built: 0,
+    deploying: 0,
     deployed: 0,
     failed: 0,
   }
@@ -880,8 +891,9 @@ function countByStage(queue: Draft[]) {
     else if (s === 'building') out.building++
     else if (s === 'review') out.review++
     else if (s === 'built' || s === 'testing') out.built++
+    else if (s === 'pending_deploy' || s === 'deploying') out.deploying++
     else if (s === 'deployed') out.deployed++
-    else if (s === 'failed') out.failed++
+    else if (s === 'failed' || s === 'rejected_deploy') out.failed++
   }
   return out
 }

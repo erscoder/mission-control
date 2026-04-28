@@ -1,0 +1,20 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10B981"/>
+      <stop offset="100%" stop-color="#06B6D4"/>
+    </linearGradient>
+    <mask id="nm">
+      <circle cx="50" cy="50" r="36" fill="white"/>
+      <circle cx="74" cy="26" r="16" fill="black"/>
+    </mask>
+  </defs>
+  <!-- Circle with rounded notch cut out -->
+  <circle cx="50" cy="50" r="36" fill="url(#g)" mask="url(#nm)"/>
+  <!-- Signal arcs from notch -->
+  <g fill="none" stroke="#06B6D4" stroke-linecap="round">
+    <path d="M 82 18 A 10 10 0 0 1 86 28" stroke-width="3"/>
+    <path d="M 86 12 A 18 18 0 0 1 92 30" stroke-width="2.5" opacity="0.5"/>
+    <path d="M 90 6 A 26 26 0 0 1 96 28" stroke-width="2" opacity="0.2"/>
+  </g>
+</svg>
