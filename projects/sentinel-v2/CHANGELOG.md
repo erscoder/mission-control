@@ -5,6 +5,18 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-29 · 1cde7a4 - Error escalation, NestJS pin, true QA fail-closed
+
+User reported: `ComplianceDesk` deploy died with `Error code: 429` (Anthropic Token Plan rate-limit), pipeline burned the whole 2-attempt deploy budget on something only the operator can fix, and ERESOLVE peer-dep loops kept producing broken `package.json` cycle after cycle. Three coupled fixes.
+
+**Fix 1: error classification + escalation (`flows/error_classifier.py`).** Build/deploy retry loops previously retried every exception until `MAX_*_RETRIES`, even when the error was a provider rate-limit, expired API key, or billing block — none of which retrying can fix. The new classifier pattern-matches `429` / `401` / `402` / Anthropic Token Plan errors, short-circuits the loop on the first attempt, marks the draft `blocked` (distinct from `failed`), and appends an actionable entry to `/tmp/sentinel_v2_escalations.json` with category, action_required hint, phase, draft_id, and truncated error excerpt. The operator now learns "rotate the key" or "wait for quota reset" once, instead of `[Auto-retry 2/2]` thrash.
+
+**Fix 2: pin canonical NestJS `package.json` (`data/deploy_templates/node_nestjs/package.json`).** The build agent kept inventing incompatible `@nestjs/*` matrices — `@nestjs/common@10` + `@nestjs/core@11`, `@nestjs/throttler@5` alongside `@nestjs/common@11` — producing ERESOLVE deadlocks every cycle. The pinned `package.json` (NestJS 10.4.15 LTS + throttler 5.2 + Prisma 5.22 + Stripe 14.25 + class-validator 0.14, all peer-dep compatible) is now pre-baked into `<workspace>/backend/` before the build crew starts (in `run_build`) and again as a defensive overwrite before deploy (in `_prebake_deploy_files`). Build and security-remediation prompts forbid rewriting the file; extra deps must come from `npm install <pkg>@<version>` so npm re-resolves peers cleanly. The `@nestjs/*` version matrix is explicitly off-limits to the security crew.
+
+**Fix 3: close the QA gate fail-open (`flows/sentinel_loop.py:799+`).** The previous `daa96d5` only added an explicit-fail path; the unparseable branch still defaulted to `build_ok=True` with the rationale "the security loop will validate". The security loop only validates dependency CVEs, never `npm run build`, so any QA Lead returning prose-instead-of-JSON silently promoted broken drafts. Now closed by default — only an explicit `GO` plus `build_status` in `{clean, warnings}` promotes the draft. Anything else (silence, partial output, garbled JSON) marks the draft failed with `build_failed_qa_gate_unparseable`, clears the checkpoint, and stops the cycle.
+
+**Tests.** 26 new for the classifier (pattern match per category, escalation file lifecycle including corrupt-recovery and 2KB truncation, action-hint coverage), 4 new for the gate + escalation (fail-closed on unparseable, accepts explicit GO, build escalates 1-attempt on 429, recoverable errors still consume full retry budget). Two pre-existing tests updated to mock `_parse_deploy_result` so their happy-path mocks satisfy the now-closed gate. Full unit suite (278 tests) green.
+
 ## 2026-04-28 · 9fbf9aa - Daemon promotion gates: stop shipping broken drafts
 
 User reported: daemon log showed `Build status: FAIL` from the QA Lead, hourly `awaiting_approval` heartbeats on drafts whose `npm run build` never compiled, and Pydantic `string_type` validation errors crashing the security remediation crew. Five cooperating fixes, in order.
