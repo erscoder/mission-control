@@ -429,6 +429,142 @@ class TestQAGateAndApprovalGate:
             flow.state.build_ok = flow.state.build_ok and bool(parsed.get("build_ok", False))
         assert flow.state.build_ok is False
 
+    def test_qa_gate_fail_closed_on_unparseable_output(self, flow):
+        """A QA Lead that returns prose (no go_no_go, no build_status) must
+        fail the gate. Previously this defaulted to build_ok=True under the
+        rationale that the security loop would catch real failures, but the
+        security loop only validates dependency CVEs, not `npm run build`.
+        Closed-by-default is the only way to guarantee broken drafts never
+        reach the approval queue.
+        """
+        flow.state.draft_id = "draft_c1_qatest"
+        flow.state.cycle_count = 1
+        flow.state.top_opportunity = {"title": "Demo App"}
+        flow.state.user_profile = {"name": "Kike"}
+
+        # Crew returns prose, no JSON fields the gate looks at
+        mock_result = Mock(spec=["raw"])
+        mock_result.raw = "I have completed the build. All looks good."
+
+        with patch(
+            "sentinel_v2.crews.build_crew.build_crew.build_crew"
+        ) as mock_crew_cls, patch(
+            "sentinel_v2.dashboard_state.update_draft"
+        ) as mock_update, patch.object(
+            flow, "remember"
+        ), patch.object(
+            flow, "_clear_checkpoint"
+        ) as mock_clear, patch.object(
+            flow, "_parse_deploy_result", return_value={}
+        ):
+            mock_crew = MagicMock()
+            mock_crew.kickoff.return_value = mock_result
+            mock_crew_cls.return_value = mock_crew
+            flow.run_build()
+
+        assert flow.state.build_ok is False, "QA gate must fail-closed on unparseable output"
+        assert flow.state.error == "build_failed_qa_gate_unparseable"
+        # Draft marked failed, checkpoint cleared, shutdown requested for clean exit
+        assert any(
+            call.kwargs.get("status") == "failed" for call in mock_update.call_args_list
+        ), "Draft must be marked failed when QA gate fails closed"
+        mock_clear.assert_called_once()
+        assert flow._shutdown_requested is True
+
+    def test_qa_gate_accepts_explicit_go(self, flow):
+        """An explicit GO + clean build_status promotes the draft."""
+        flow.state.draft_id = "draft_c1_gotest"
+        flow.state.cycle_count = 1
+        flow.state.top_opportunity = {"title": "Demo App"}
+        flow.state.user_profile = {"name": "Kike"}
+
+        mock_result = Mock(spec=["raw"])
+        mock_result.raw = '{"go_no_go": "GO", "build_status": "clean"}'
+
+        with patch(
+            "sentinel_v2.crews.build_crew.build_crew.build_crew"
+        ) as mock_crew_cls, patch(
+            "sentinel_v2.dashboard_state.update_draft"
+        ), patch.object(flow, "remember"), patch.object(
+            flow,
+            "_parse_deploy_result",
+            return_value={"go_no_go": "GO", "build_status": "clean"},
+        ):
+            mock_crew = MagicMock()
+            mock_crew.kickoff.return_value = mock_result
+            mock_crew_cls.return_value = mock_crew
+            flow.run_build()
+
+        assert flow.state.build_ok is True
+
+
+class TestEscalationOnUnrecoverableErrors:
+    """Build/deploy retry loops escalate on unrecoverable errors instead of
+    burning the full retry budget on something only the operator can fix.
+    """
+
+    def test_build_escalates_on_429_and_skips_retries(self, flow, tmp_path, monkeypatch):
+        """A 429 rate-limit during build halts on attempt 1, no further retries."""
+        monkeypatch.setattr(
+            "sentinel_v2.flows.error_classifier.ESCALATION_FILE",
+            tmp_path / "esc.json",
+        )
+
+        flow.state.draft_id = "draft_c1_429"
+        flow.state.cycle_count = 1
+        flow.state.top_opportunity = {"title": "RateLimited App"}
+        flow.state.user_profile = {"name": "Kike"}
+
+        mock_crew = MagicMock()
+        mock_crew.kickoff.side_effect = Exception(
+            "Error code: 429 - rate_limit_error from upstream provider"
+        )
+        with patch(
+            "sentinel_v2.crews.build_crew.build_crew.build_crew",
+            return_value=mock_crew,
+        ), patch(
+            "sentinel_v2.dashboard_state.update_draft"
+        ) as mock_update, patch.object(flow, "remember"):
+            flow.run_build()
+
+        # Only ONE attempt — escalation skips remaining retries
+        assert mock_crew.kickoff.call_count == 1
+        assert flow.state.build_attempts == 1
+        assert flow.state.error.startswith("escalated:")
+        # Draft marked blocked, not failed
+        statuses = [c.kwargs.get("status") for c in mock_update.call_args_list]
+        assert "blocked" in statuses
+        # Escalation file written
+        esc_file = tmp_path / "esc.json"
+        assert esc_file.exists()
+
+    def test_build_recoverable_error_still_retries(self, flow, tmp_path, monkeypatch):
+        """A normal code error must NOT trigger escalation — full retry budget used."""
+        monkeypatch.setattr(
+            "sentinel_v2.flows.error_classifier.ESCALATION_FILE",
+            tmp_path / "esc.json",
+        )
+
+        flow.state.draft_id = "draft_c1_recoverable"
+        flow.state.cycle_count = 1
+        flow.state.top_opportunity = {"title": "App"}
+        flow.state.user_profile = {"name": "Kike"}
+
+        mock_crew = MagicMock()
+        mock_crew.kickoff.side_effect = Exception("ERESOLVE peer dep mismatch")
+        with patch(
+            "sentinel_v2.crews.build_crew.build_crew.build_crew",
+            return_value=mock_crew,
+        ), patch("sentinel_v2.dashboard_state.update_draft"), patch.object(
+            flow, "remember"
+        ):
+            flow.run_build()
+
+        # Used the full retry budget (3 by default), not escalated on attempt 1
+        from sentinel_v2.flows.sentinel_loop import MAX_BUILD_RETRIES
+        assert mock_crew.kickoff.call_count == MAX_BUILD_RETRIES
+        assert not flow.state.error.startswith("escalated:")
+
 
 class TestRouter:
     """Tests for route_after_approval() router."""
@@ -506,15 +642,25 @@ class TestWriteState:
         assert "match_completed" in phases
 
     def test_run_build_calls_write_state(self, flow):
-        """run_build() calls write_state (build and build_completed)."""
+        """run_build() calls write_state (build and build_completed).
+
+        Mocks the QA gate parse so the closed-by-default gate sees a positive
+        GO signal — otherwise the gate stops the cycle before build_completed
+        is written. The intent of this test is the write_state emission, not
+        the gate behavior (covered separately).
+        """
         flow.state.top_opportunity = {"title": "Op"}
         flow.state.user_profile = {}
         mock_result = Mock()
-        mock_result.raw = "Built: SaaS app"
+        mock_result.raw = '{"go_no_go": "GO", "build_status": "clean"}'
 
         with patch(
             "sentinel_v2.crews.build_crew.build_crew.build_crew"
-        ) as mock_crew_cls:
+        ) as mock_crew_cls, patch.object(
+            flow,
+            "_parse_deploy_result",
+            return_value={"go_no_go": "GO", "build_status": "clean"},
+        ):
             mock_crew = MagicMock()
             mock_crew.kickoff.return_value = mock_result
             mock_crew_cls.return_value = mock_crew
@@ -576,15 +722,23 @@ class TestRememberCalls:
         mock_remember.assert_called()
 
     def test_run_build_calls_remember(self, flow):
-        """run_build() stores build result in CrewAI memory."""
+        """run_build() stores build result in CrewAI memory.
+
+        QA gate is closed-by-default; mock _parse_deploy_result so the gate
+        sees a positive GO and the flow reaches the remember() call.
+        """
         flow.state.top_opportunity = {"title": "Op"}
         flow.state.user_profile = {}
         mock_result = Mock()
-        mock_result.raw = "Built: SaaS"
+        mock_result.raw = '{"go_no_go": "GO", "build_status": "clean"}'
 
         with patch(
             "sentinel_v2.crews.build_crew.build_crew.build_crew"
-        ) as mock_crew_cls:
+        ) as mock_crew_cls, patch.object(
+            flow,
+            "_parse_deploy_result",
+            return_value={"go_no_go": "GO", "build_status": "clean"},
+        ):
             mock_crew = MagicMock()
             mock_crew.kickoff.return_value = mock_result
             mock_crew_cls.return_value = mock_crew

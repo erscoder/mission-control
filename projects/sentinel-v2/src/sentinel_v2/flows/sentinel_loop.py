@@ -17,6 +17,8 @@ from typing import Optional
 from crewai.flow.flow import Flow, listen, start, router
 from pydantic import BaseModel, Field
 
+from sentinel_v2.flows.error_classifier import classify_error, write_escalation
+
 log = logging.getLogger("sentinel_v2.flow")
 
 ERSLABS_ROOT_DOMAIN = "erslabs.net"
@@ -59,8 +61,13 @@ def _prebake_deploy_files(workspace_dir: str, slug: str, stack: str = "node_nest
     backend.mkdir(exist_ok=True)  # parents=False on purpose: do not climb to /
     template_dir = Path(__file__).resolve().parent.parent / "data" / "deploy_templates" / stack
 
+    # Files that live under backend/. package.json is included so the build
+    # agent cannot drift the @nestjs/* version matrix and produce ERESOLVE
+    # peer-dep deadlocks at deploy time. If a draft legitimately needs an
+    # extra dependency the agent must install it on top with
+    # `npm install <pkg>@<version>`, never by rewriting this file.
     written = {}
-    for name in ("fly.toml", "Dockerfile"):
+    for name in ("fly.toml", "Dockerfile", "package.json"):
         src_path = template_dir / name
         if not src_path.exists():
             continue
@@ -703,6 +710,17 @@ class SentinelLoopFlow(Flow[SentinelState]):
             or f"cycle-{self.state.cycle_count}"
         )
 
+        # Pre-bake fly.toml, Dockerfile, and the pinned NestJS package.json
+        # BEFORE the build crew runs, so the builder treats them as inputs
+        # and cannot regenerate an ERESOLVE-prone dependency matrix. The
+        # deploy phase re-bakes the same files defensively.
+        try:
+            written = _prebake_deploy_files(self.state.workspace_dir, slug)
+            if written:
+                log.info("Pre-baked canonical templates: %s", list(written))
+        except FileNotFoundError as e:
+            log.warning("Skipping pre-bake: %s", e)
+
         # ── Build with automatic retry loop ──────────────────────────────
         feedback = self.state.revision_notes or ""
         result = None
@@ -738,6 +756,38 @@ class SentinelLoopFlow(Flow[SentinelState]):
             except Exception as e:
                 error_msg = str(e)
                 log.error("Build attempt %d/%d failed: %s", attempt, MAX_BUILD_RETRIES, error_msg)
+
+                # Unrecoverable errors (rate-limit, expired key, payment) get
+                # escalated immediately. Retrying just wastes the budget and
+                # masks the real action item from the operator.
+                category = classify_error(error_msg)
+                if category:
+                    write_escalation(
+                        category,
+                        error_msg,
+                        phase="build",
+                        draft_id=self.state.draft_id,
+                        cycle=self.state.cycle_count,
+                        extra={"attempt": attempt, "slug": slug},
+                    )
+                    if self.state.draft_id:
+                        try:
+                            from sentinel_v2.dashboard_state import update_draft
+                            update_draft(
+                                self.state.draft_id,
+                                status="blocked",
+                                revision_notes=(
+                                    f"[ESCALATED:{category}] Build halted on attempt {attempt}/"
+                                    f"{MAX_BUILD_RETRIES}. Operator action required. "
+                                    f"Last error: {error_msg[:500]}"
+                                ),
+                            )
+                        except Exception as db_err:
+                            log.warning("Could not mark draft blocked: %s", db_err)
+                    self.state.error = f"escalated:{category}"
+                    self._save_checkpoint()
+                    return
+
                 feedback = f"Build attempt {attempt} failed with error:\n{error_msg}\n\nFix the issues and try again."
 
                 if attempt >= MAX_BUILD_RETRIES:
@@ -796,25 +846,41 @@ class SentinelLoopFlow(Flow[SentinelState]):
             self._shutdown_requested = True
             return
 
-        # QA passed. Decide build_ok:
-        #   - explicit GO / clean / warnings → True
-        #   - unparseable (both fields empty) → True with WARNING; security
-        #     loop is the authoritative gate for that case (it actually runs
-        #     `npm run build`). Without this default, a QA Lead that returns
-        #     prose instead of JSON would auto-fail every passing draft at
-        #     request_approval despite a real green build.
-        #   - any other partial/garbled but non-NO-GO output → True for the
-        #     same reason. We already returned above on explicit failure.
+        # QA gate decision. Closed-by-default: only an explicit positive
+        # signal from the QA Lead promotes the draft. Anything else (silence,
+        # prose-instead-of-JSON, partial output) is a fail. The previous
+        # "default to True if unparseable, security loop will validate"
+        # branch was a fail-open: when the QA Lead returns natural language
+        # instead of structured output, we have NO evidence the build is
+        # green, and the security loop only validates dependency CVEs, not
+        # the actual `npm run build`. Treating "no signal" as "green" let
+        # broken builds reach the approval queue cycle after cycle.
         if go_no_go == "GO" or build_status in {"clean", "warnings"}:
             self.state.build_ok = True
-        elif go_no_go == "" and build_status == "":
-            log.warning(
-                "QA gate output unparseable, defaulting build_ok=True; "
-                "security loop will validate"
-            )
-            self.state.build_ok = True
         else:
-            self.state.build_ok = True
+            self.state.build_ok = False
+            self.state.error = "build_failed_qa_gate_unparseable"
+            reason = (
+                f"QA gate produced no positive signal: "
+                f"go_no_go={go_no_go or 'unknown'!r}, "
+                f"build_status={build_status or 'unknown'!r}. "
+                "QA Lead must return GO + build_status in {clean, warnings} "
+                "for the draft to be promoted."
+            )
+            log.error("Build QA gate fail-closed — %s", reason)
+            if self.state.draft_id:
+                from sentinel_v2.dashboard_state import update_draft
+                try:
+                    update_draft(
+                        self.state.draft_id,
+                        status="failed",
+                        revision_notes=f"Auto-rejected by QA gate (no positive signal). {reason}",
+                    )
+                except Exception as db_err:
+                    log.warning("Could not mark draft failed: %s", db_err)
+            self._clear_checkpoint()
+            self._shutdown_requested = True
+            return
 
         if self.state.draft_id:
             from sentinel_v2.dashboard_state import update_draft
@@ -1272,6 +1338,39 @@ class SentinelLoopFlow(Flow[SentinelState]):
             except Exception as e:
                 error_msg = str(e)
                 log.error("Deploy attempt %d/%d failed: %s", attempt, MAX_DEPLOY_RETRIES, error_msg)
+
+                # Same escalation policy as the build retry loop: an
+                # unrecoverable failure (provider rate-limit, expired key,
+                # billing block) skips the remaining retries and surfaces
+                # an explicit action for the operator.
+                category = classify_error(error_msg)
+                if category:
+                    write_escalation(
+                        category,
+                        error_msg,
+                        phase="deploy",
+                        draft_id=self.state.draft_id,
+                        cycle=self.state.cycle_count,
+                        extra={"attempt": attempt, "slug": slug},
+                    )
+                    if self.state.draft_id:
+                        try:
+                            from sentinel_v2.dashboard_state import update_draft
+                            update_draft(
+                                self.state.draft_id,
+                                status="blocked",
+                                revision_notes=(
+                                    f"[ESCALATED:{category}] Deploy halted on attempt {attempt}/"
+                                    f"{MAX_DEPLOY_RETRIES}. Operator action required. "
+                                    f"Last error: {error_msg[:500]}"
+                                ),
+                            )
+                        except Exception as db_err:
+                            log.warning("Could not mark draft blocked: %s", db_err)
+                    self.state.error = f"escalated:{category}"
+                    self._save_checkpoint()
+                    return
+
                 deploy_feedback = f"Deploy attempt {attempt} failed with error:\n{error_msg}\n\nFix the issues and retry."
 
                 if attempt >= MAX_DEPLOY_RETRIES:
