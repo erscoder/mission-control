@@ -5,6 +5,18 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-28 · 9756e58 - Langfuse observability for all pipeline phases
+
+Connects Sentinel to the shared Langfuse v3 instance running in `synapseia-network` (no new services - Sentinel reaches it via `host.docker.internal:3700`).
+
+**New module `observability/tracing.py`:** Singleton Langfuse client initialized at import time; safe no-op if `LANGFUSE_ENABLED=false` or SDK init fails. Three functions: `start_trace` (creates a named trace with cycle/draft_id/opportunity tags), `log_event` (attaches events to a trace), `end_trace` (finalizes + flushes). All accept `None` safely so tracing can never break the pipeline.
+
+**Instrumented phases in `sentinel_loop.py`:** `run_research` (outputs opportunity count), `run_match` (outputs match score, error event on crew failure), `run_build` (per-attempt events, escalation ERROR event, QA gate pass/fail events), `run_security_remediation` (vuln count), `request_approval` (approval_requested event), `run_deploy` (per-attempt events, escalation ERROR, deployed_url on success).
+
+**docker-compose.yml:** `LANGFUSE_HOST/PUBLIC_KEY/SECRET_KEY/ENABLED` added to sentinel service. Defaults use synapseia-network dev keys; override via `.env` for prod projects.
+
+All 278 unit tests pass.
+
 ## 2026-04-29 · 1cde7a4 - Error escalation, NestJS pin, true QA fail-closed
 
 User reported: `ComplianceDesk` deploy died with `Error code: 429` (Anthropic Token Plan rate-limit), pipeline burned the whole 2-attempt deploy budget on something only the operator can fix, and ERESOLVE peer-dep loops kept producing broken `package.json` cycle after cycle. Three coupled fixes.
