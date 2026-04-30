@@ -18,6 +18,7 @@ from crewai.flow.flow import Flow, listen, start, router
 from pydantic import BaseModel, Field
 
 from sentinel_v2.flows.error_classifier import classify_error, write_escalation
+from sentinel_v2.observability.tracing import end_trace, log_event, start_trace
 
 log = logging.getLogger("sentinel_v2.flow")
 
@@ -369,6 +370,7 @@ class SentinelLoopFlow(Flow[SentinelState]):
         self._touch()
         log.info("Phase 1: RESEARCH")
         print("Phase 1: RESEARCH — scouting web...")
+        _trace = start_trace("run_research", cycle=self.state.cycle_count)
 
         from sentinel_v2.crews.research_crew.research_crew import research_crew
         from sentinel_v2.dashboard_state import write_state, write_flow_breakdown
@@ -482,6 +484,8 @@ class SentinelLoopFlow(Flow[SentinelState]):
 
         self._touch()
         self._save_checkpoint()
+        log_event(_trace, "research_complete", metadata={"opportunity_count": len(self.state.opportunities), "top": (self.state.top_opportunity or {}).get("title")})
+        end_trace(_trace, output={"opportunities": len(self.state.opportunities)})
 
     # ─── Gate 1: DRAFT APPROVAL (dashboard) ──────────────────────────────
 
@@ -532,6 +536,7 @@ class SentinelLoopFlow(Flow[SentinelState]):
         self._touch()
         log.info("Phase 2: MATCH")
         print("Phase 2: MATCH — profiling Kike and matching...")
+        _trace = start_trace("run_match", cycle=self.state.cycle_count, draft_id=self.state.draft_id, opportunity=(self.state.top_opportunity or {}).get("title"))
 
         from sentinel_v2.crews.match_crew.match_crew import match_crew
         from sentinel_v2.dashboard_state import write_state, write_flow_breakdown
@@ -577,6 +582,8 @@ class SentinelLoopFlow(Flow[SentinelState]):
                     log.warning("Could not mark draft failed: %s", db_err)
             self.state.error = str(e)
             self._save_checkpoint()
+            log_event(_trace, "match_error", level="ERROR", metadata={"error": str(e)})
+            end_trace(_trace, output={"error": str(e)}, level="ERROR")
             return
 
         parsed = self._parse_match_result(result)
@@ -624,6 +631,8 @@ class SentinelLoopFlow(Flow[SentinelState]):
 
         self._touch()
         self._save_checkpoint()
+        log_event(_trace, "match_complete", metadata={"score": self.state.match_score})
+        end_trace(_trace, output={"match_score": self.state.match_score})
 
     # ─── Phase 3: BUILD ───────────────────────────────────────────────────
 
@@ -668,6 +677,7 @@ class SentinelLoopFlow(Flow[SentinelState]):
         self._touch()
         log.info("Phase 3: BUILD")
         print("Phase 3: BUILD — building micro-business draft...")
+        _trace = start_trace("run_build", cycle=self.state.cycle_count, draft_id=self.state.draft_id, opportunity=(self.state.top_opportunity or {}).get("title"))
 
         from sentinel_v2.crews.build_crew.build_crew import build_crew
         from sentinel_v2.dashboard_state import write_state, write_flow_breakdown
@@ -729,6 +739,7 @@ class SentinelLoopFlow(Flow[SentinelState]):
             self.state.build_attempts += 1
             attempt = self.state.build_attempts
             log.info("Build attempt %d/%d", attempt, MAX_BUILD_RETRIES)
+            log_event(_trace, "build_attempt_start", metadata={"attempt": attempt, "max": MAX_BUILD_RETRIES})
 
             if self.state.draft_id and attempt > 1:
                 from sentinel_v2.dashboard_state import update_draft
@@ -786,6 +797,8 @@ class SentinelLoopFlow(Flow[SentinelState]):
                             log.warning("Could not mark draft blocked: %s", db_err)
                     self.state.error = f"escalated:{category}"
                     self._save_checkpoint()
+                    log_event(_trace, "build_escalated", level="ERROR", metadata={"category": category, "attempt": attempt, "error": error_msg[:500]})
+                    end_trace(_trace, output={"escalated": category}, level="ERROR")
                     return
 
                 feedback = f"Build attempt {attempt} failed with error:\n{error_msg}\n\nFix the issues and try again."
@@ -844,6 +857,8 @@ class SentinelLoopFlow(Flow[SentinelState]):
                     log.warning("Could not mark draft failed: %s", db_err)
             self._clear_checkpoint()
             self._shutdown_requested = True
+            log_event(_trace, "qa_gate_fail", level="ERROR", metadata={"go_no_go": go_no_go, "build_status": build_status, "blockers": blocking_issues})
+            end_trace(_trace, output={"qa_gate": "fail", "reason": reason}, level="ERROR")
             return
 
         # QA gate decision. Closed-by-default: only an explicit positive
@@ -880,7 +895,11 @@ class SentinelLoopFlow(Flow[SentinelState]):
                     log.warning("Could not mark draft failed: %s", db_err)
             self._clear_checkpoint()
             self._shutdown_requested = True
+            log_event(_trace, "qa_gate_fail_closed", level="ERROR", metadata={"go_no_go": go_no_go, "build_status": build_status})
+            end_trace(_trace, output={"qa_gate": "fail_closed"}, level="ERROR")
             return
+
+        log_event(_trace, "qa_gate_pass", metadata={"go_no_go": go_no_go, "build_status": build_status})
 
         if self.state.draft_id:
             from sentinel_v2.dashboard_state import update_draft
@@ -930,6 +949,7 @@ class SentinelLoopFlow(Flow[SentinelState]):
 
         self._touch()
         self._save_checkpoint()
+        end_trace(_trace, output={"build_ok": self.state.build_ok, "attempts": self.state.build_attempts})
 
     # ─── Phase 3b: SECURITY REMEDIATION ──────────────────────────────────
 
@@ -946,6 +966,7 @@ class SentinelLoopFlow(Flow[SentinelState]):
         self._touch()
         log.info("Phase 3b: SECURITY REMEDIATION")
         print("Phase 3b: SECURITY — scanning + remediating dependency vulnerabilities...")
+        _trace = start_trace("run_security", cycle=self.state.cycle_count, draft_id=self.state.draft_id)
 
         from sentinel_v2.crews.security_remediation_crew.security_remediation_crew import (
             security_remediation_crew,
@@ -1052,6 +1073,8 @@ class SentinelLoopFlow(Flow[SentinelState]):
         self.state.security_remediated = True
         self._touch()
         self._save_checkpoint()
+        log_event(_trace, "security_complete", metadata={"vuln_count": self.state.vulnerability_count, "scan_error": self.state.vulnerability_scan_error})
+        end_trace(_trace, output={"vuln_count": self.state.vulnerability_count})
 
     # ─── Phase 4: APPROVE (human feedback) ───────────────────────────────
 
@@ -1091,6 +1114,9 @@ class SentinelLoopFlow(Flow[SentinelState]):
         self._touch()
         log.info("Phase 4: APPROVE — waiting for Kike")
         print("Phase 4: APPROVE — sending to Kike for review...")
+        _trace = start_trace("request_approval", cycle=self.state.cycle_count, draft_id=self.state.draft_id)
+        log_event(_trace, "approval_requested")
+        end_trace(_trace, output={"pending_since": self.state.pending_since})
 
         # Store in CrewAI memory
         try:
@@ -1222,6 +1248,7 @@ class SentinelLoopFlow(Flow[SentinelState]):
         self._touch()
         log.info("Phase 5: DEPLOY")
         print("Phase 5: DEPLOY — deploying to production...")
+        _trace = start_trace("run_deploy", cycle=self.state.cycle_count, draft_id=self.state.draft_id, opportunity=(self.state.top_opportunity or {}).get("title"))
 
         from sentinel_v2.crews.deploy_crew.deploy_crew import deploy_crew
         from sentinel_v2.dashboard_state import write_state, write_flow_breakdown, update_draft
@@ -1302,6 +1329,7 @@ class SentinelLoopFlow(Flow[SentinelState]):
             self.state.deploy_attempts += 1
             attempt = self.state.deploy_attempts
             log.info("Deploy attempt %d/%d", attempt, MAX_DEPLOY_RETRIES)
+            log_event(_trace, "deploy_attempt_start", metadata={"attempt": attempt, "max": MAX_DEPLOY_RETRIES})
 
             if self.state.draft_id and attempt > 1:
                 from sentinel_v2.dashboard_state import update_draft
@@ -1369,6 +1397,8 @@ class SentinelLoopFlow(Flow[SentinelState]):
                             log.warning("Could not mark draft blocked: %s", db_err)
                     self.state.error = f"escalated:{category}"
                     self._save_checkpoint()
+                    log_event(_trace, "deploy_escalated", level="ERROR", metadata={"category": category, "attempt": attempt, "error": error_msg[:500]})
+                    end_trace(_trace, output={"escalated": category}, level="ERROR")
                     return
 
                 deploy_feedback = f"Deploy attempt {attempt} failed with error:\n{error_msg}\n\nFix the issues and retry."
@@ -1471,6 +1501,8 @@ class SentinelLoopFlow(Flow[SentinelState]):
 
         self._touch()
         self._clear_checkpoint()
+        log_event(_trace, "deploy_success", metadata={"url": self.state.deployed_url, "attempts": self.state.deploy_attempts})
+        end_trace(_trace, output={"deployed_url": self.state.deployed_url, "attempts": self.state.deploy_attempts})
 
     # ─── Loop Router ─────────────────────────────────────────────────────
 

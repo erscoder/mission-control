@@ -18,6 +18,7 @@ dependencies = [
     "flask-socketio>=5.3",
     "eventlet>=0.36",
     "stripe>=7.0",
+    "langfuse>=2.50",
 ]
 
 [project.optional-dependencies]

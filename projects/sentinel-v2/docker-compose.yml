@@ -13,6 +13,13 @@ services:
     env_file: .env
     environment:
       SENTINEL_TMPDIR: /tmp/sentinel_shared
+      # Langfuse tracing — points to shared instance in synapseia-network.
+      # Override LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY via .env if
+      # you've created a dedicated Sentinel project in the Langfuse UI.
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-http://host.docker.internal:3700}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-pk-lf-synapseia-dev}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-sk-lf-synapseia-dev}
+      LANGFUSE_ENABLED: ${LANGFUSE_ENABLED:-true}
     volumes:
       - sentinel_tmp:/tmp/sentinel_shared
       - ./sentinel.db:/app/sentinel.db
