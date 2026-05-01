@@ -5,6 +5,14 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-05-01 · c608f07 - Health gate before run_deploy (F3.1)
+
+`flows/sentinel_loop.py:request_approval` already refuses to park a broken draft for human review when `vulnerability_scan_error` is set or `state.build_ok` is False. `run_deploy` had no equivalent gate. A force-approval, race condition, or a resumed state with stale flags could enter the deploy phase carrying `build_ok=False` or a scan error, fire the deploy crew, and burn Fly/Cloudflare tokens on a draft that was never green. The dashboard would also flip into a "deploying" state for a build that should have been auto-rejected.
+
+Fix: new health gate at the top of `run_deploy`, AFTER the existing early-returns (`not approved`, `deployed`, `deploy_attempts >= MAX_DEPLOY_RETRIES`) and BEFORE `self.state.current_phase = "deploy"` is set. Same semantics as the approval gate: marks the draft `failed` with `Auto-rejected before deploy. <reason>` in `revision_notes`, clears the checkpoint, sets `_shutdown_requested = True`. Adds a dedicated `run_deploy_health_gate` trace span emitting a `deploy_health_gate_fail` event with the reason and `build_ok` value before returning, so Langfuse captures the rejection alongside the rest of the cycle.
+
+3 new unit tests in `tests/unit/test_sentinel_loop.py::TestRunDeployHealthGate`: `test_run_deploy_refuses_when_build_ok_false` (approved + build_ok=False blocks deploy, draft marked failed, deploy_crew never instantiated, shutdown signaled), `test_run_deploy_refuses_when_security_scan_errored` (vulnerability_scan_error set with build_ok=True still blocks, scan-error string lands in revision_notes), `test_run_deploy_passes_when_healthy` (both flags clean: deploy_crew is invoked, deployed=True, no shutdown). 5 pre-existing run_deploy tests gained an explicit `flow.state.build_ok = True` line so they reach the deploy crew under the new contract. Full unit suite green at 317 tests (314 prior + 3 new). Closes audit finding F3.1.
+
 ## 2026-05-01 · 95d9dc4 - Pin Langfuse to >=4.5,<5.0 (F2.4)
 
 Audit finding F2.4. Previous constraint `langfuse>=2.50` allowed the resolver to pull v4.x (a major API break already patched in `f623a51` adapting `tracing.py` to the OTel-based v4 imperative API). Without an upper bound, a clean `uv sync` on a fresh machine could pull v5 (when released) and silently break tracing again. Pinned to the major version we are tested against. `uv.lock` regenerated; resolved version unchanged at 4.5.1.
