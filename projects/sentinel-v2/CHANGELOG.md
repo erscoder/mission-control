@@ -5,6 +5,14 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-30 · 10a2180 - Transient network patterns in error classifier (F2.1)
+
+`flows/error_classifier.py` had no patterns for transient network failures (`ECONNREFUSED`, `ECONNRESET`, `ETIMEDOUT`, `socket hang up`, `ENOTFOUND`, `read timeout`, `network is unreachable`, generic `timed out`). When a 30-second npm-registry blip surfaced one of these, `classify_error` correctly returned `None` so the build/deploy retry loop kept going, but the operator had no signal that the failure was environmental rather than a code bug. Worse, an error string that combined a transient hit with a generic `429` could be misclassified as a quota escalation and burn the operator's escalation budget.
+
+Fix: new `RECOVERABLE_PATTERNS` list (single category `transient_network`) and `is_transient(msg)` helper. `classify_error` now short-circuits to `None` whenever `is_transient` matches, so a transient-shaped message can never escalate (Option A from the brief). Both retry loops in `flows/sentinel_loop.py:run_build` and `:run_deploy` call `is_transient` once per failed attempt and emit a clearly-tagged INFO line (`Transient network error on attempt N/M: <excerpt>. Retrying.`); the LLM-facing retry feedback string is unchanged.
+
+15 new unit tests in `tests/unit/test_error_classifier.py`: each transient pattern is parametrized, `is_transient` returns True and `classify_error` returns None; code-shaped errors (ERESOLVE, TypeError) are explicitly NOT flagged transient (regression guard); real escalation patterns (429, 401, 402) still escalate; a hybrid `429 + timed out` string is verified to short-circuit. Full unit suite green at 307 tests (292 prior + 15 new). Closes audit finding F2.1.
+
 ## 2026-04-30 · 84ff29b - QA Lead structured output via Pydantic schema (F1.4)
 
 QA Lead in `build_crew` sometimes returned prose instead of JSON when CrewAI's hierarchical manager pressured it for "a quick summary". `_parse_deploy_result` then yielded `{}`, hit the new fail-closed gate at `sentinel_loop.py:873`, and auto-failed the draft with `go_no_go='unknown'`. Real failure mode reproduced by `draft_c1_compliancedesk-hipaa-compliance-tracker`.
