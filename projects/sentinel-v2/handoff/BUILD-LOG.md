@@ -34,11 +34,11 @@ Deploy: deferred (next image rebuild)
 ## Known Gaps
 *Logged here instead of fixed. Addressed in a future step.*
 
-- **KG-N** — [Description] — logged [date]
+- **KG-N**: [Description], logged [date]
 
 ---
 
 ## Architecture Decisions
 *Locked decisions that cannot be changed without breaking the system.*
 
-- [Decision — date]
+- [Decision, date]
