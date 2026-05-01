@@ -60,6 +60,18 @@ _init_lock = threading.Lock()
 _initialized = False
 
 
+def _apply_pragmas(conn: sqlite3.Connection) -> None:
+    """Apply concurrency-safe pragmas on every connection.
+
+    journal_mode=WAL is sticky per-database file, but we still set it each time
+    so a fresh DB file (tests, first run) lands in WAL without an extra round-trip.
+    busy_timeout and synchronous are per-connection and must be re-applied.
+    """
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA synchronous=NORMAL")
+
+
 def _ensure_schema(conn: sqlite3.Connection) -> None:
     global _initialized
     if _initialized:
@@ -67,7 +79,6 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     with _init_lock:
         if _initialized:
             return
-        conn.executescript("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")
         conn.executescript(_SCHEMA)
         conn.commit()
         _initialized = True
@@ -76,9 +87,9 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
 @contextmanager
 def connect() -> Iterator[sqlite3.Connection]:
     """Open a short-lived connection. Callers should use this as a context manager."""
-    conn = sqlite3.connect(_db_path(), isolation_level=None, timeout=5.0)
+    conn = sqlite3.connect(_db_path(), isolation_level=None, timeout=30.0)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout=5000")
+    _apply_pragmas(conn)
     try:
         _ensure_schema(conn)
         yield conn
