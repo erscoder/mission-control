@@ -5,6 +5,10 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-28 · f072a30 - Escape http_code Jinja interpolation in deploy verify task
+
+CrewAI Task description strings are rendered via Python `str.format(**inputs)` before the agent sees them. The literal `%{http_code}` in `deploy_crew.py:204` (verify_task) was being treated as `{http_code}` template var, raising `Missing required template variable 'http_code' not found in inputs dictionary` on every deploy attempt. Six drafts in the SQLite store (`draft_c1_proposalsiq`, `draft_c1_poolroute-pro`, `draft_c2_caseping`, `draft_c2846_fitlead`, etc.) failed with this exact error after burning all 2 deploy retries. Fix: double the braces (`%{{http_code}}`) so `str.format` renders the literal `%{http_code}` that curl needs. Closes audit finding F1.2.
+
 ## 2026-04-28 · 3ede94f - Resolve state file paths via SENTINEL_TMPDIR
 
 `flows/error_classifier.py` hardcoded `/tmp/sentinel_v2_escalations.json` as the default `ESCALATION_FILE`, bypassing the `SENTINEL_TMPDIR=/tmp/sentinel_shared` volume mount declared in `docker-compose.yml`. Inside the container `/tmp/` is the ephemeral overlayfs, not the named volume, so every restart wiped the escalation history and the dashboard could never surface it.
