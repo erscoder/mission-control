@@ -5,6 +5,12 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-28 · f623a51 - Langfuse v4 SDK compatibility
+
+`langfuse>=2.50` resolved to 4.5.1 in `uv.lock` - the SDK's v4 line is OpenTelemetry-based and dropped the imperative `client.trace()` / `trace.event()` API used in 9756e58. Smoke test against synapseia-network Langfuse v3.172.0 confirmed `auth_check=True` but span emission silently failed because the methods no longer exist on the client.
+
+`tracing.py` rewritten against v4's imperative API: `client.start_observation(name=..., as_type='chain', metadata=...)` returns a `LangfuseSpan` whose `create_event(...)`, `update(output=...)`, and `end()` replace the old `event` / `update` calls; `client.flush()` still pushes pending batches. Tags are folded into metadata (v4 spans don't accept a `tags` argument). The three public functions (`start_trace` / `log_event` / `end_trace`) keep the same signature and no-op-on-None semantics, so no callers in `sentinel_loop.py` had to change.
+
 ## 2026-04-28 · 9756e58 - Langfuse observability for all pipeline phases
 
 Connects Sentinel to the shared Langfuse v3 instance running in `synapseia-network` (no new services - Sentinel reaches it via `host.docker.internal:3700`).
