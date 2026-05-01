@@ -5,6 +5,16 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-05-01 · 5953139 - Strict prebake + OTel flush timeout (F3.4/F3.5)
+
+Two robustness fixes from the audit, bundled.
+
+F3.4 - `_prebake_deploy_files` (`flows/sentinel_loop.py`) silently `continue`d past missing canonical templates, so a refactor that moves `data/deploy_templates/` would ship a half-baked workspace where the agent's bad `package.json` never gets reverted. Now raises `FileNotFoundError` with the missing path baked into the message. Existing call sites in `run_build` and `run_deploy` already wrap in `try/except FileNotFoundError` and degrade with a warning, so the strict raise is safe.
+
+F3.5 - OTel exporter timeout default (10s) let a missing Langfuse hold each `flush()` open long enough to stall a phase. We saw 32-second exponential-backoff retries earlier in this session against the synapseia-network langfuse-web instance (KG-1). `OTEL_EXPORTER_OTLP_TIMEOUT=2000` and `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT=2000` now set in `observability/tracing.py` BEFORE the `from langfuse import Langfuse` import (the v4 SDK reads these on first OTel-SDK instantiation) and in `docker-compose.yml` env block so production picks them up too. Tracing stays best-effort; phases never block more than 2s on a flush.
+
+4 new unit tests in `tests/unit/test_prebake_deploy_files.py` covering missing template, happy path, slug substitution, and missing workspace dir. 326 passed (322 prior + 4 new) under `LANGFUSE_ENABLED=false uv run pytest -x -q`.
+
 ## 2026-05-01 · f883c81 - Sentinel healthcheck + SQLite WAL/busy_timeout=30s (F3.2/F3.3)
 
 `docker-compose.yml` had a healthcheck on the `flask` service but none on `sentinel`. If the daemon crashed mid-cycle (hung HTTP call, OOM, unhandled exception in a phase), Docker `restart: unless-stopped` only triggers on container exit; a wedged-but-running process kept the container "up" while no cycles advanced. Separately, `sentinel.db` is bind-mounted into both `sentinel` and `flask`. The previous `db.connect()` used `timeout=5.0`, `busy_timeout=5000`, and `synchronous=FULL` (default). Concurrent writes from the daemon's phase progress and the dashboard's status flips tripped `database is locked` under load.
