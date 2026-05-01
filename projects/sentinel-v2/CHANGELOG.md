@@ -5,6 +5,14 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-28 · 3ede94f - Resolve state file paths via SENTINEL_TMPDIR
+
+`flows/error_classifier.py` hardcoded `/tmp/sentinel_v2_escalations.json` as the default `ESCALATION_FILE`, bypassing the `SENTINEL_TMPDIR=/tmp/sentinel_shared` volume mount declared in `docker-compose.yml`. Inside the container `/tmp/` is the ephemeral overlayfs, not the named volume, so every restart wiped the escalation history and the dashboard could never surface it.
+
+New helper `resolve_state_path(filename, *, env_override=None)` (exported from `error_classifier`) resolves paths with precedence `env_override > $SENTINEL_TMPDIR > /tmp`. `ESCALATION_FILE` is now built through the helper so it lands on the mounted volume in prod, while still honoring the legacy `SENTINEL_ESCALATIONS_FILE` override that existing tests rely on.
+
+Other state-file writers (`dashboard_state.py`, `crew_hooks.py`, `dashboard/app.py`) already resolve via `SENTINEL_TMPDIR` correctly and were left untouched (scope lock for this step). 4 new unit tests in `test_state_paths.py` pin the precedence contract. Full suite green at 282 unit + 32 integration tests.
+
 ## 2026-04-28 · f623a51 - Langfuse v4 SDK compatibility
 
 `langfuse>=2.50` resolved to 4.5.1 in `uv.lock` - the SDK's v4 line is OpenTelemetry-based and dropped the imperative `client.trace()` / `trace.event()` API used in 9756e58. Smoke test against synapseia-network Langfuse v3.172.0 confirmed `auth_check=True` but span emission silently failed because the methods no longer exist on the client.
