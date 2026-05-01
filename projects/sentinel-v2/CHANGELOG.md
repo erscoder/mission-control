@@ -5,6 +5,10 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-05-01 · 5094dd0 - Faster healthcheck probe (find -mmin)
+
+E2E verify after Step 11 caught a regression in the Step 10 healthcheck. The `python -c` probe timed out under cycle load (Python interpreter cold-start in the healthcheck container takes >10s when the daemon is mid-research with the OTel SDK + chromadb + langfuse loaded in the parent process; child interpreter contends for the same import lock). FailingStreak hit 4 within minutes, all "Health check exceeded timeout (10s)". Container went unhealthy despite the daemon running fine. Swapped to `find /tmp/sentinel_shared/sentinel_v2_state.json -mmin -120` (single syscall, exits in microseconds). Same semantics (file must exist, mtime within 120 min = 7200s = 2x default loop interval).
+
 ## 2026-05-01 · 5953139 - Strict prebake + OTel flush timeout (F3.4/F3.5)
 
 Two robustness fixes from the audit, bundled.
