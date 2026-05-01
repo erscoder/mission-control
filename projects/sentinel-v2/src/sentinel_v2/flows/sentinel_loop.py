@@ -269,6 +269,101 @@ def _ensure_stripe_controller_registered(workspace_dir: str) -> dict:
     return {"registered": True, "patched": True, "reason": "auto_patched"}
 
 
+def _ensure_main_ts_raw_body(workspace_dir: str) -> dict:
+    """Defense-in-depth for the NestJS bootstrap rawBody requirement.
+
+    The Stripe webhook controller reads ``req.rawBody`` to verify the
+    Stripe-Signature header. NestJS only populates ``rawBody`` when the
+    bootstrap call passes ``{ rawBody: true }`` to ``NestFactory.create``.
+    The build_crew prompt requires this; this helper auto-patches when
+    forgotten.
+
+    Three insertion shapes the helper recognises (all common NestJS templates):
+
+      NestFactory.create(AppModule)                     -> add second arg
+      NestFactory.create(AppModule, {})                 -> set rawBody key
+      NestFactory.create(AppModule, { foo: 1 })         -> add rawBody key
+      NestFactory.create(AppModule, { rawBody: true })  -> no-op
+
+    Returns ``{patched: bool, reason: str}``. Never raises.
+    """
+    from pathlib import Path
+
+    main_ts = Path(workspace_dir) / "backend" / "src" / "main.ts"
+    if not main_ts.exists():
+        log.warning(
+            "main.ts missing: %s. Cannot ensure rawBody bootstrap; webhook signature "
+            "verification will fail at runtime.",
+            main_ts,
+        )
+        return {"patched": False, "reason": "main_ts_missing"}
+
+    try:
+        text = main_ts.read_text()
+    except OSError as exc:
+        log.warning("Could not read %s: %s", main_ts, exc)
+        return {"patched": False, "reason": f"read_error:{exc}"}
+
+    # Already correct: rawBody: true present anywhere in the NestFactory.create call.
+    if re.search(r"NestFactory\.create\([^)]*rawBody\s*:\s*true", text, flags=re.DOTALL):
+        return {"patched": False, "reason": "already_set"}
+
+    # Shape 3: existing options object, add rawBody key inside it.
+    options_match = re.search(
+        r"(NestFactory\.create\(\s*\w+\s*,\s*\{)([^}]*)(\}\s*\))",
+        text,
+        flags=re.DOTALL,
+    )
+    if options_match:
+        head, body, tail = options_match.groups()
+        body_stripped = body.strip()
+        if body_stripped:
+            new_body = body.rstrip() + ", rawBody: true "
+        else:
+            new_body = " rawBody: true "
+        patched = (
+            text[: options_match.start()]
+            + head
+            + new_body
+            + tail
+            + text[options_match.end():]
+        )
+    else:
+        # Shape 1: only AppModule arg, add full options object.
+        single_arg = re.search(
+            r"(NestFactory\.create\(\s*\w+)(\s*\))",
+            text,
+            flags=re.DOTALL,
+        )
+        if not single_arg:
+            log.warning(
+                "main.ts has no recognisable NestFactory.create(...) call; cannot "
+                "auto-patch rawBody. File: %s",
+                main_ts,
+            )
+            return {"patched": False, "reason": "no_nestfactory_call"}
+        head, tail = single_arg.groups()
+        patched = (
+            text[: single_arg.start()]
+            + head
+            + ", { rawBody: true }"
+            + tail
+            + text[single_arg.end():]
+        )
+
+    try:
+        main_ts.write_text(patched)
+    except OSError as exc:
+        log.warning("Could not write patched %s: %s", main_ts, exc)
+        return {"patched": False, "reason": f"write_error:{exc}"}
+
+    log.warning(
+        "main.ts was missing { rawBody: true } in NestFactory.create. Auto-patched: %s",
+        main_ts,
+    )
+    return {"patched": True, "reason": "auto_patched"}
+
+
 def _make_slug(title: str) -> str:
     """Extract the product name from an opportunity title and return a DNS-safe slug.
 
@@ -1180,6 +1275,20 @@ class SentinelLoopFlow(Flow[SentinelState]):
             )
         except Exception as e:  # noqa: BLE001 - defensive only
             log.warning("StripeWebhookController auto-registration skipped: %s", e)
+
+        # Sibling defense: webhook controller reads req.rawBody, which NestJS
+        # only populates when bootstrap passes { rawBody: true }. Auto-patch
+        # main.ts when the agent forgot. Same defensive contract: never raises,
+        # never fails the build.
+        try:
+            raw_body_check = _ensure_main_ts_raw_body(self.state.workspace_dir)
+            log_event(
+                _trace,
+                "main_ts_raw_body_check",
+                metadata=raw_body_check,
+            )
+        except Exception as e:  # noqa: BLE001 - defensive only
+            log.warning("main.ts rawBody auto-patch skipped: %s", e)
 
         # ── QA gate: refuse to promote a draft the QA Lead failed ────────
         # Reads the QA Lead's structured output (go_no_go, build_status,
