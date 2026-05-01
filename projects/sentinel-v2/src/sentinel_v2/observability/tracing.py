@@ -1,6 +1,6 @@
-"""Langfuse observability for Sentinel V2.
+"""Langfuse v4 observability for Sentinel V2.
 
-Connects to the shared Langfuse instance in synapseia-network.
+Connects to the shared Langfuse v3+ instance in synapseia-network.
 Configure via .env:
   LANGFUSE_PUBLIC_KEY   — project public key (default: pk-lf-synapseia-dev)
   LANGFUSE_SECRET_KEY   — project secret key (default: sk-lf-synapseia-dev)
@@ -9,6 +9,12 @@ Configure via .env:
 
 All functions are no-ops when disabled or when the client fails to init,
 so tracing never breaks the pipeline.
+
+The langfuse v4 SDK is OpenTelemetry-based. We use the imperative API:
+  client.start_observation(name=..., as_type='chain') -> LangfuseSpan
+  span.create_event(name=..., level=..., metadata=...)
+  span.update(output=..., level=...)
+  span.end()
 """
 from __future__ import annotations
 
@@ -58,18 +64,13 @@ def start_trace(
     opportunity: Optional[str] = None,
     metadata: Optional[dict] = None,
 ) -> Any:
-    """Create and return a Langfuse trace for a pipeline phase.
+    """Create and return a Langfuse span (root observation) for a phase.
 
     Returns None if tracing is disabled. Callers pass this to
     ``log_event`` and ``end_trace`` - both accept None safely.
     """
     if not _enabled or _client is None:
         return None
-    tags: list[str] = []
-    if cycle is not None:
-        tags.append(f"cycle:{cycle}")
-    if draft_id:
-        tags.append(f"draft:{draft_id}")
     meta: dict = {}
     if cycle is not None:
         meta["cycle"] = cycle
@@ -80,10 +81,11 @@ def start_trace(
     if metadata:
         meta.update(metadata)
     try:
-        return _client.trace(
+        return _client.start_observation(
             name=f"sentinel.{name}",
-            tags=tags or None,
+            as_type="chain",
             metadata=meta or None,
+            input={"cycle": cycle, "draft_id": draft_id, "opportunity": opportunity},
         )
     except Exception as exc:  # noqa: BLE001
         log.debug("start_trace failed: %s", exc)
@@ -91,24 +93,25 @@ def start_trace(
 
 
 def log_event(
-    trace: Any,
+    span: Any,
     event_name: str,
     *,
     level: str = "DEFAULT",
     metadata: Optional[dict] = None,
 ) -> None:
-    """Attach a named event to a trace. No-op if trace is None."""
-    if trace is None or not _enabled:
+    """Attach a named event to a span. No-op if span is None."""
+    if span is None or not _enabled:
         return
     with contextlib.suppress(Exception):
-        trace.event(name=event_name, level=level, metadata=metadata or {})
+        span.create_event(name=event_name, level=level, metadata=metadata or {})
 
 
-def end_trace(trace: Any, *, output: Optional[dict] = None, level: str = "DEFAULT") -> None:
-    """Finalise a trace and flush. No-op if trace is None."""
-    if trace is None or not _enabled or _client is None:
+def end_trace(span: Any, *, output: Optional[dict] = None, level: str = "DEFAULT") -> None:
+    """Update span with output, end it, and flush. No-op if span is None."""
+    if span is None or not _enabled or _client is None:
         return
     with contextlib.suppress(Exception):
         if output is not None:
-            trace.update(output=output, level=level)
+            span.update(output=output, level=level)
+        span.end()
         _client.flush()
