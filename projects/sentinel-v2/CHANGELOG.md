@@ -5,6 +5,10 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-05-02 · 640e2c3 - Deterministic build verification before security/deploy gates
+
+Trust-but-verify: the QA Lead self-reports `build_status` but a hallucinating LLM can claim `clean` on a workspace that will not `npm install` (observed live: build crew shipped a workspace with no `package-lock.json` / `node_modules`; osv-scanner returned 0 vulns + build_ok=False, security loop spun 5 times, cycle still reached the deploy health gate before being rejected, wasting tokens). New `_verify_npm_build` helper runs the real `npm install --no-audit --no-fund --prefer-offline` and `npm run build` (or `npx tsc --noEmit` fallback when no build script exists but tsconfig is present) in `backend/` and `frontend/`, captures exit codes and stderr tails. Hooked in `run_build` after the auto-patches and before the QA gate; on failure marks the draft `failed` with the npm output tail in revision_notes, clears the checkpoint, requests shutdown. Security and deploy phases never run on a broken build. 10 new unit tests cover skip/install-fail/build-fail/both-pass/tsc-fallback/install-only/timeout/corrupt-pkg/first-failure-ordering. Three existing QA-gate tests now mock the new helper so they stay isolated from real subprocess calls. 361 unit tests green.
+
 ## 2026-05-01 · 2240175 - Auto-patch main.ts NestFactory rawBody bootstrap
 
 Closes KG MED-3 (sibling of MED-2). NestJS only populates `req.rawBody` when `NestFactory.create` receives `{ rawBody: true }`. The Stripe webhook controller reads `rawBody` to verify the Stripe-Signature header; without the bootstrap option every webhook fails signature verification. New `_ensure_main_ts_raw_body` helper auto-patches three common shapes (single-arg, empty-options, existing-options object), no-op when already correct, returns `{patched: bool, reason: str}`. Same defensive contract as the AppModule helper: never raises, never fails the build. Call site forms a defensive trio in `run_build`: package.json revert -> AppModule registration -> main.ts bootstrap. 7 new unit tests; 349 unit tests green.
