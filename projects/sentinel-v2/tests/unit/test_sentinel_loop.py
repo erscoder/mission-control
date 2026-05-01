@@ -1218,3 +1218,85 @@ class TestDeployRetryLoop:
         assert flow.state.deploy_attempts == MAX_DEPLOY_RETRIES
         final_call = mock_update.call_args_list[-1]
         assert final_call.kwargs.get("status") == "failed"
+
+
+class TestVerifyPackageJsonUnchanged:
+    """Tests for _verify_package_json_unchanged hook-based revert helper."""
+
+    def _canonical_for(self, slug, stack="node_nestjs"):
+        """Return the slug-substituted template bytes (what _prebake writes)."""
+        from pathlib import Path
+        import sentinel_v2.flows.sentinel_loop as mod
+        template = (
+            Path(mod.__file__).resolve().parent.parent
+            / "data" / "deploy_templates" / stack / "package.json"
+        )
+        return template.read_text().replace("{{SLUG}}", slug)
+
+    def test_verify_package_json_unchanged_returns_true_when_match(self, tmp_path):
+        """Workspace package.json matches canonical -> True, no rewrite."""
+        from sentinel_v2.flows.sentinel_loop import _verify_package_json_unchanged
+
+        # Use a workspace whose basename is a known slug; the helper recovers
+        # slug from the file's "name" field which lines up with this.
+        ws = tmp_path / "myslug"
+        backend = ws / "backend"
+        backend.mkdir(parents=True)
+        canonical = self._canonical_for("myslug")
+        (backend / "package.json").write_text(canonical)
+        original_mtime = (backend / "package.json").stat().st_mtime_ns
+
+        result = _verify_package_json_unchanged(str(ws))
+
+        assert result is True
+        # File untouched
+        assert (backend / "package.json").stat().st_mtime_ns == original_mtime
+        assert (backend / "package.json").read_text() == canonical
+
+    def test_verify_package_json_unchanged_returns_false_when_diverged(self, tmp_path, caplog):
+        """Workspace package.json diverged -> False, WARNING logged, file re-baked to canonical."""
+        import logging
+        from sentinel_v2.flows.sentinel_loop import _verify_package_json_unchanged
+
+        ws = tmp_path / "myslug"
+        backend = ws / "backend"
+        backend.mkdir(parents=True)
+        canonical = self._canonical_for("myslug")
+        # Agent wrote a clobbered package.json. Keep the "name" field so the
+        # helper recovers slug correctly when picking the canonical to compare.
+        clobbered = '{"name": "myslug-backend", "dependencies": {"express": "^4.0.0"}}'
+        (backend / "package.json").write_text(clobbered)
+        assert (backend / "package.json").read_text() != canonical
+
+        with caplog.at_level(logging.WARNING, logger="sentinel_v2.flow"):
+            result = _verify_package_json_unchanged(str(ws))
+
+        assert result is False
+        # Re-baked to canonical (slug-substituted)
+        assert (backend / "package.json").read_text() == canonical
+        # WARNING logged with both hashes
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("diverged" in r.getMessage() for r in warnings)
+        assert any("sha256" in r.getMessage() for r in warnings)
+
+    def test_verify_package_json_unchanged_returns_false_when_missing(self, tmp_path, caplog):
+        """Workspace lacks package.json (agent never created it) -> False, WARN, file re-baked."""
+        import logging
+        from sentinel_v2.flows.sentinel_loop import _verify_package_json_unchanged
+
+        ws = tmp_path / "myslug"
+        backend = ws / "backend"
+        backend.mkdir(parents=True)
+        # No package.json present
+        assert not (backend / "package.json").exists()
+
+        with caplog.at_level(logging.WARNING, logger="sentinel_v2.flow"):
+            result = _verify_package_json_unchanged(str(ws))
+
+        assert result is False
+        # Re-baked from template using workspace dir basename as slug fallback
+        canonical = self._canonical_for("myslug")
+        assert (backend / "package.json").exists()
+        assert (backend / "package.json").read_text() == canonical
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("missing" in r.getMessage() for r in warnings)

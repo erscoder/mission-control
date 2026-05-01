@@ -7,6 +7,7 @@ Uses CrewAI built-ins:
 - @start, @listen, @router, @human_feedback decorators
 """
 from datetime import datetime, timezone
+import hashlib
 import logging
 import os
 import re
@@ -77,6 +78,72 @@ def _prebake_deploy_files(workspace_dir: str, slug: str, stack: str = "node_nest
         dst_path.write_text(content)
         written[name] = str(dst_path)
     return written
+
+
+def _verify_package_json_unchanged(workspace_dir: str, stack: str = "node_nestjs") -> bool:
+    """Return True if backend/package.json matches the canonical template, False if it diverged.
+
+    On divergence (or missing file), log a WARNING with both sha256 hashes and
+    re-bake the canonical via ``_prebake_deploy_files``. This is a defensive
+    check against prompt-only enforcement of the package.json immutability
+    rule: the build agent still has ``write_file`` and could clobber the
+    pinned NestJS matrix despite the prompt forbidding it.
+
+    The template contains a ``{{SLUG}}`` token that ``_prebake_deploy_files``
+    substitutes at bake time. To compare apples to apples, this helper
+    recovers the slug used at bake time from the workspace pkg's ``name``
+    field (``"<slug>-backend"``), falls back to the workspace dir name if
+    the file is unreadable, then hashes the slug-substituted template.
+    The deploy phase re-bakes again, so this helper never fails the build;
+    divergence is logged and silently corrected here.
+    """
+    from pathlib import Path
+    import json
+    backend_pkg = Path(workspace_dir) / "backend" / "package.json"
+    template_pkg = (
+        Path(__file__).resolve().parent.parent
+        / "data" / "deploy_templates" / stack / "package.json"
+    )
+
+    if not template_pkg.exists():
+        # No canonical template for this stack — nothing to verify.
+        return True
+
+    # Recover slug used at bake time. Workspace pkg "name" is "<slug>-backend";
+    # if unreadable or missing, fall back to the workspace dir basename so a
+    # re-bake still produces a stable name.
+    slug = Path(workspace_dir).name or "app"
+    if backend_pkg.exists():
+        try:
+            data = json.loads(backend_pkg.read_text())
+            name = str(data.get("name") or "")
+            if name.endswith("-backend"):
+                slug = name[: -len("-backend")] or slug
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    canonical_bytes = template_pkg.read_text().replace("{{SLUG}}", slug).encode("utf-8")
+    template_hash = hashlib.sha256(canonical_bytes).hexdigest()
+
+    if not backend_pkg.exists():
+        log.warning(
+            "package.json missing in workspace: %s (template sha256=%s). Re-baking canonical.",
+            backend_pkg, template_hash,
+        )
+    else:
+        workspace_hash = hashlib.sha256(backend_pkg.read_bytes()).hexdigest()
+        if workspace_hash == template_hash:
+            return True
+        log.warning(
+            "package.json diverged from canonical template: %s (workspace sha256=%s, template sha256=%s). Re-baking canonical.",
+            backend_pkg, workspace_hash, template_hash,
+        )
+
+    try:
+        _prebake_deploy_files(workspace_dir, slug, stack=stack)
+    except FileNotFoundError as e:
+        log.warning("Could not re-bake package.json: %s", e)
+    return False
 
 
 def _make_slug(title: str) -> str:
@@ -863,6 +930,17 @@ class SentinelLoopFlow(Flow[SentinelState]):
                 self._save_checkpoint()
 
         self.state.build_output = str(result.raw) if hasattr(result, "raw") else str(result)
+
+        # ── Defensive: revert any agent-side rewrites of the pinned package.json.
+        # The build_crew prompt forbids the backend Lead from rewriting
+        # backend/package.json, but the agent still has write_file. If the
+        # canonical NestJS matrix drifted, log a WARNING and re-bake before the
+        # QA gate sees it. The deploy phase re-bakes again, so this never
+        # fails the build.
+        try:
+            _verify_package_json_unchanged(self.state.workspace_dir)
+        except Exception as e:
+            log.warning("package.json verification skipped: %s", e)
 
         # ── QA gate: refuse to promote a draft the QA Lead failed ────────
         # Reads the QA Lead's structured output (go_no_go, build_status,
