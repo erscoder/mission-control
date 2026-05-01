@@ -304,13 +304,17 @@ def _ensure_main_ts_raw_body(workspace_dir: str) -> dict:
         log.warning("Could not read %s: %s", main_ts, exc)
         return {"patched": False, "reason": f"read_error:{exc}"}
 
+    # `NestFactory.create<X>(AppModule, ...)` is also valid TypeScript (e.g.
+    # fastify adapter). Optional generic accepted by all shapes below.
+    nf_create = r"NestFactory\.create(?:<[^>]+>)?\("
+
     # Already correct: rawBody: true present anywhere in the NestFactory.create call.
-    if re.search(r"NestFactory\.create\([^)]*rawBody\s*:\s*true", text, flags=re.DOTALL):
+    if re.search(nf_create + r"[^)]*rawBody\s*:\s*true", text, flags=re.DOTALL):
         return {"patched": False, "reason": "already_set"}
 
     # Shape 3: existing options object, add rawBody key inside it.
     options_match = re.search(
-        r"(NestFactory\.create\(\s*\w+\s*,\s*\{)([^}]*)(\}\s*\))",
+        r"(" + nf_create + r"\s*\w+\s*,\s*\{)([^}]*)(\}\s*\))",
         text,
         flags=re.DOTALL,
     )
@@ -331,7 +335,7 @@ def _ensure_main_ts_raw_body(workspace_dir: str) -> dict:
     else:
         # Shape 1: only AppModule arg, add full options object.
         single_arg = re.search(
-            r"(NestFactory\.create\(\s*\w+)(\s*\))",
+            r"(" + nf_create + r"\s*\w+)(\s*\))",
             text,
             flags=re.DOTALL,
         )

@@ -124,3 +124,33 @@ class TestEnsureMainTsRawBody:
 
         assert first["patched"] is True
         assert second == {"patched": False, "reason": "already_set"}
+
+    def test_patches_generic_typed_bootstrap(self, tmp_path: Path):
+        """`NestFactory.create<NestFastifyApplication>(AppModule)` form."""
+        text = (
+            "import { NestFastifyApplication } from '@nestjs/platform-fastify';\n"
+            "const app = await NestFactory.create<NestFastifyApplication>(AppModule);\n"
+        )
+        workspace = _workspace_with_main(tmp_path, text)
+
+        result = _ensure_main_ts_raw_body(str(workspace))
+
+        assert result["patched"] is True
+        on_disk = (workspace / "backend" / "src" / "main.ts").read_text()
+        assert "rawBody: true" in on_disk
+        # Generic preserved.
+        assert "<NestFastifyApplication>" in on_disk
+
+    def test_no_op_on_generic_already_set(self, tmp_path: Path):
+        """Generic form with rawBody already present: no-op."""
+        text = (
+            "const app = await NestFactory.create<NestExpressApplication>(\n"
+            "  AppModule,\n"
+            "  { rawBody: true },\n"
+            ");\n"
+        )
+        workspace = _workspace_with_main(tmp_path, text)
+
+        result = _ensure_main_ts_raw_body(str(workspace))
+
+        assert result == {"patched": False, "reason": "already_set"}
