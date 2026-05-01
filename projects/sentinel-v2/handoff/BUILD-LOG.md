@@ -31,6 +31,23 @@ Deploy: live in running sentinel container (rebuild + restart at 13:24 local).
 
 13 drafts in `pending` from prior cycles were blocking new research (`SENTINEL_RESEARCH_PAUSE_THRESHOLD=6`). UPDATE statement on `sentinel.db` set status to `failed` with revision_notes "Auto-failed by Arch on 2026-04-28: pre-fix backlog cleared to unblock research. Click Retry to start fresh." After clear: 19 failed, 11 rejected, 0 pending. Research resumed on next cycle.
 
+### Step 7 - Hook-based revert of package.json drift (F2.3) - PENDING REVIEW
+*Date: 2026-04-30*
+
+Files changed:
+- `src/sentinel_v2/flows/sentinel_loop.py` - added `hashlib` import, new `_verify_package_json_unchanged(workspace_dir, stack)` helper near `_prebake_deploy_files`, call site in `run_build` after the success break and before the QA gate parse.
+- `tests/unit/test_sentinel_loop.py` - new `TestVerifyPackageJsonUnchanged` class with 3 tests (match / diverged / missing) using `tmp_path` fixtures.
+- `CHANGELOG.md` - new entry pinned at `84fd4bb`.
+
+Commits: `84fd4bb` (code), changelog commit follows.
+Test status: 314 unit tests green (311 prior + 3 new), `LANGFUSE_ENABLED=false uv run pytest -x -q tests/unit/`.
+Diff size: 160 lines net (under the 200 cap).
+
+Key decisions:
+- Helper signature kept exactly as the brief specified (`workspace_dir, stack="node_nestjs"`), no slug parameter. Slug recovered from the workspace pkg's `name` field (`<slug>-backend`); falls back to workspace dir basename when JSON is unreadable, so the re-bake still produces a stable name.
+- Helper never raises and never fails the build. Divergence is logged and silently corrected; the deploy phase re-bakes again. Matches the brief's "do NOT fail the build" instruction.
+- Did not revoke the agent's `write_file` tool. The brief calls that out as out of scope.
+
 ### Step 3 - Escape http_code Jinja interpolation in deploy verify task (F1.2) - SHIPPED
 *Date: 2026-04-28*
 

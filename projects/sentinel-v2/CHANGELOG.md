@@ -5,6 +5,16 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-30 · 84fd4bb - Hook-based revert of package.json drift (F2.3)
+
+`crews/build_crew/build_crew.py` prompt forbids the backend Lead from rewriting `backend/package.json`, but the agent still has the `write_file` tool. Prompt-only enforcement is brittle: if the pinned NestJS matrix in `data/deploy_templates/node_nestjs/package.json` gets clobbered by an agent who decided to "improve" the dependencies, ERESOLVE peer-dep deadlocks return at deploy time. The deploy phase re-bakes defensively, but only the QA gate sees the post-build artifact in between, and a NO-GO there hides the root cause.
+
+Fix: new `_verify_package_json_unchanged(workspace_dir, stack)` helper in `flows/sentinel_loop.py` near `_prebake_deploy_files`. Computes sha256 of the workspace `backend/package.json` vs the slug-substituted canonical template. On divergence (or missing file): logs a WARNING containing both hashes plus the offending path, then re-bakes the canonical via `_prebake_deploy_files`. Slug is recovered from the pkg's `name` field (`"<slug>-backend"`, written by the prebake), falling back to the workspace dir basename if the JSON is unreadable, so the re-bake still produces a stable name. The helper never raises; the deploy phase re-bakes again, so divergence is silently corrected without failing the build.
+
+Call site: `run_build`, immediately after the retry-loop `break` and before the QA gate parse, so a clobbered manifest never reaches the gate as evidence against the build.
+
+3 new unit tests in `tests/unit/test_sentinel_loop.py::TestVerifyPackageJsonUnchanged` using `tmp_path`: `test_verify_package_json_unchanged_returns_true_when_match` (canonical present, returns True, file untouched, mtime unchanged), `test_verify_package_json_unchanged_returns_false_when_diverged` (clobbered content with valid name, returns False, WARNING with `diverged` and `sha256` substrings, file restored to canonical), `test_verify_package_json_unchanged_returns_false_when_missing` (no file, returns False, WARNING with `missing`, file re-baked from template using dir-basename slug). Full unit suite green at 314 tests (311 prior + 3 new). Closes audit finding F2.3.
+
 ## 2026-04-30 · 7fd43de - Clear stale revision_notes on new draft cycle (F2.2)
 
 `flows/sentinel_loop.py:run_build` and `:run_deploy` seed crew feedback from `self.state.revision_notes`. `run_deploy` clears the field on success, but a rejection at the deploy gate (or a fresh research cycle that produces a new opportunity) left the previous draft's notes in state. CrewAI Flow checkpointing persists `SentinelState` across cycles, so the next draft entering the loop inherited "fix the login button" feedback that had nothing to do with it. The build crew chased ghosts on the very first attempt of a brand-new app.
