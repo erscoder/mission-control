@@ -467,6 +467,9 @@ class TestQAGateAndApprovalGate:
             flow, "_clear_checkpoint"
         ) as mock_clear, patch.object(
             flow, "_parse_deploy_result", return_value={}
+        ), patch(
+            "sentinel_v2.flows.sentinel_loop._verify_npm_build",
+            return_value={"ok": True, "first_failure": None, "details": {}},
         ):
             mock_crew = MagicMock()
             mock_crew.kickoff.return_value = mock_result
@@ -500,6 +503,9 @@ class TestQAGateAndApprovalGate:
             flow,
             "_parse_deploy_result",
             return_value={"go_no_go": "GO", "build_status": "clean"},
+        ), patch(
+            "sentinel_v2.flows.sentinel_loop._verify_npm_build",
+            return_value={"ok": True, "first_failure": None, "details": {}},
         ):
             mock_crew = MagicMock()
             mock_crew.kickoff.return_value = mock_result
@@ -671,6 +677,9 @@ class TestWriteState:
             flow,
             "_parse_deploy_result",
             return_value={"go_no_go": "GO", "build_status": "clean"},
+        ), patch(
+            "sentinel_v2.flows.sentinel_loop._verify_npm_build",
+            return_value={"ok": True, "first_failure": None, "details": {}},
         ):
             mock_crew = MagicMock()
             mock_crew.kickoff.return_value = mock_result
@@ -750,6 +759,9 @@ class TestRememberCalls:
             flow,
             "_parse_deploy_result",
             return_value={"go_no_go": "GO", "build_status": "clean"},
+        ), patch(
+            "sentinel_v2.flows.sentinel_loop._verify_npm_build",
+            return_value={"ok": True, "first_failure": None, "details": {}},
         ):
             mock_crew = MagicMock()
             mock_crew.kickoff.return_value = mock_result

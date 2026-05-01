@@ -368,6 +368,145 @@ def _ensure_main_ts_raw_body(workspace_dir: str) -> dict:
     return {"patched": True, "reason": "auto_patched"}
 
 
+def _verify_npm_build(workspace_dir: str, *, timeout: int = 600) -> dict:
+    """Run `npm install` + build deterministically in backend and frontend subdirs.
+
+    Trust-but-verify gate that runs AFTER the build crew finishes. The QA Lead
+    self-reports `build_status` but a hallucinating LLM can claim 'clean' on a
+    workspace that does not even `npm install`. Running the real commands here
+    is the only way to be sure.
+
+    For each subdir (backend, frontend):
+      1. Skip if the dir does not exist or has no package.json.
+      2. `npm install --no-audit --no-fund --prefer-offline`. Non-zero -> fail.
+      3. If package.json has a "build" script: `npm run build`. Else fall
+         back to `npx tsc --noEmit` if a tsconfig.json exists; otherwise the
+         install alone counts as a pass (no-build TypeScript-less project).
+
+    Returns:
+        {
+            "ok": bool,
+            "first_failure": str | None,        # e.g. "backend.install", "frontend.build"
+            "details": {
+                "backend": {"install": int|None, "build": int|None,
+                            "tail": str, "skipped": str|None},
+                "frontend": {...},
+            },
+        }
+    """
+    import json as _json
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    out: dict = {
+        "ok": True,
+        "first_failure": None,
+        "details": {"backend": None, "frontend": None},
+    }
+
+    npm = shutil.which("npm")
+    if not npm:
+        out["ok"] = False
+        out["first_failure"] = "npm_not_found"
+        return out
+
+    npx = shutil.which("npx")
+
+    for sub in ("backend", "frontend"):
+        sub_path = Path(workspace_dir) / sub
+        pkg_path = sub_path / "package.json"
+        info: dict = {"install": None, "build": None, "tail": "", "skipped": None}
+
+        if not sub_path.is_dir():
+            info["skipped"] = "no_directory"
+            out["details"][sub] = info
+            continue
+        if not pkg_path.is_file():
+            info["skipped"] = "no_package_json"
+            out["details"][sub] = info
+            continue
+
+        try:
+            pkg = _json.loads(pkg_path.read_text())
+        except Exception as e:
+            info["skipped"] = f"package_json_parse_error:{e}"
+            info["tail"] = str(e)
+            out["ok"] = False
+            if out["first_failure"] is None:
+                out["first_failure"] = f"{sub}.parse"
+            out["details"][sub] = info
+            continue
+
+        scripts = pkg.get("scripts") or {}
+
+        try:
+            install_proc = subprocess.run(
+                [npm, "install", "--no-audit", "--no-fund", "--prefer-offline"],
+                cwd=str(sub_path),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as e:
+            info["install"] = -1
+            info["tail"] = f"timeout after {timeout}s: {e}"
+            out["ok"] = False
+            if out["first_failure"] is None:
+                out["first_failure"] = f"{sub}.install"
+            out["details"][sub] = info
+            continue
+
+        info["install"] = install_proc.returncode
+        if install_proc.returncode != 0:
+            tail_src = install_proc.stderr or install_proc.stdout or ""
+            info["tail"] = tail_src[-800:]
+            out["ok"] = False
+            if out["first_failure"] is None:
+                out["first_failure"] = f"{sub}.install"
+            out["details"][sub] = info
+            continue
+
+        if "build" in scripts:
+            cmd = [npm, "run", "build"]
+        elif npx and (sub_path / "tsconfig.json").is_file():
+            cmd = [npx, "--no-install", "tsc", "--noEmit"]
+        else:
+            info["build"] = 0
+            info["skipped"] = "no_build_script_no_tsconfig"
+            out["details"][sub] = info
+            continue
+
+        try:
+            build_proc = subprocess.run(
+                cmd,
+                cwd=str(sub_path),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as e:
+            info["build"] = -1
+            info["tail"] = f"timeout after {timeout}s: {e}"
+            out["ok"] = False
+            if out["first_failure"] is None:
+                out["first_failure"] = f"{sub}.build"
+            out["details"][sub] = info
+            continue
+
+        info["build"] = build_proc.returncode
+        if build_proc.returncode != 0:
+            tail_src = build_proc.stderr or build_proc.stdout or ""
+            info["tail"] = tail_src[-800:]
+            out["ok"] = False
+            if out["first_failure"] is None:
+                out["first_failure"] = f"{sub}.build"
+
+        out["details"][sub] = info
+
+    return out
+
+
 def _make_slug(title: str) -> str:
     """Extract the product name from an opportunity title and return a DNS-safe slug.
 
@@ -1293,6 +1432,65 @@ class SentinelLoopFlow(Flow[SentinelState]):
             )
         except Exception as e:  # noqa: BLE001 - defensive only
             log.warning("main.ts rawBody auto-patch skipped: %s", e)
+
+        # ── Deterministic build verification ─────────────────────────────
+        # Trust-but-verify gate. The QA Lead self-reports build_status, but a
+        # hallucinating LLM can claim 'clean' on a workspace that won't even
+        # `npm install`. Run the real commands ourselves; if they fail,
+        # short-circuit before security/approval/deploy. This is the only
+        # way to guarantee a broken build never reaches the deploy queue.
+        verify_timeout = int(os.environ.get("SENTINEL_BUILD_VERIFY_TIMEOUT", "600"))
+        try:
+            verify = _verify_npm_build(self.state.workspace_dir, timeout=verify_timeout)
+        except Exception as e:  # noqa: BLE001 - defensive only
+            log.error("Build verification raised; treating as failure: %s", e)
+            verify = {
+                "ok": False,
+                "first_failure": f"exception:{type(e).__name__}",
+                "details": {},
+            }
+
+        if not verify.get("ok"):
+            self.state.build_ok = False
+            self.state.error = "build_verification_failed"
+            details = verify.get("details") or {}
+            tail = ""
+            for sub in ("backend", "frontend"):
+                d = details.get(sub) or {}
+                if d.get("tail"):
+                    tail = d["tail"]
+                    break
+            reason = (
+                f"npm verify failed at {verify.get('first_failure') or 'unknown'}. "
+                f"Last output: {tail[:400]!r}"
+            )
+            log.error("Build verification failed - %s", reason)
+            if self.state.draft_id:
+                from sentinel_v2.dashboard_state import update_draft
+                try:
+                    update_draft(
+                        self.state.draft_id,
+                        status="failed",
+                        revision_notes=f"Auto-rejected by build verification. {reason}",
+                    )
+                except Exception as db_err:
+                    log.warning("Could not mark draft failed: %s", db_err)
+            self._clear_checkpoint()
+            self._shutdown_requested = True
+            log_event(
+                _trace,
+                "build_verification_fail",
+                level="ERROR",
+                metadata={"first_failure": verify.get("first_failure"), "details": details},
+            )
+            end_trace(_trace, output={"build_verification": "fail"}, level="ERROR")
+            return
+
+        log_event(
+            _trace,
+            "build_verification_pass",
+            metadata=verify.get("details") or {},
+        )
 
         # ── QA gate: refuse to promote a draft the QA Lead failed ────────
         # Reads the QA Lead's structured output (go_no_go, build_status,
