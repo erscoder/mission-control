@@ -8,9 +8,9 @@ required). For the latter category we should:
 
   1. Stop the retry loop immediately to save tokens.
   2. Mark the draft as ``blocked`` (distinct from ``failed``).
-  3. Append an entry to ``/tmp/sentinel_v2_escalations.json`` with enough
-     detail for the operator to take a one-shot manual action (rotate key,
-     top up balance, wait until reset).
+  3. Append an entry to ``$SENTINEL_TMPDIR/sentinel_v2_escalations.json``
+     (default ``/tmp``) with enough detail for the operator to take a
+     one-shot manual action (rotate key, top up balance, wait until reset).
 
 This module is the single source of truth for that classification. Patterns
 are intentionally permissive: a false positive only delays a retry; a false
@@ -28,11 +28,39 @@ from typing import Optional
 
 log = logging.getLogger("sentinel_v2.error_classifier")
 
-ESCALATION_FILE = Path(
-    os.environ.get(
-        "SENTINEL_ESCALATIONS_FILE",
-        "/tmp/sentinel_v2_escalations.json",
-    )
+
+def resolve_state_path(
+    filename: str,
+    *,
+    env_override: Optional[str] = None,
+) -> Path:
+    """Resolve a sentinel state file path.
+
+    Order of precedence:
+
+      1. ``$<env_override>`` if that env var name is provided and set
+         (legacy callers, e.g. ``SENTINEL_ESCALATIONS_FILE``).
+      2. ``$SENTINEL_TMPDIR/<filename>`` if ``SENTINEL_TMPDIR`` is set
+         (the docker-compose volume mount).
+      3. ``/tmp/<filename>`` as the last-resort default.
+
+    Always returns a :class:`pathlib.Path` (never a string).
+    """
+    if env_override:
+        override_value = os.environ.get(env_override)
+        if override_value:
+            return Path(override_value)
+
+    tmp_dir = os.environ.get("SENTINEL_TMPDIR")
+    if tmp_dir:
+        return Path(tmp_dir) / filename
+
+    return Path("/tmp") / filename
+
+
+ESCALATION_FILE = resolve_state_path(
+    "sentinel_v2_escalations.json",
+    env_override="SENTINEL_ESCALATIONS_FILE",
 )
 
 
