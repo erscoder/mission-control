@@ -5,7 +5,7 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
-## 2026-04-28 · 95d9dc4 - Pin Langfuse to >=4.5,<5.0 (F2.4)
+## 2026-05-01 · 95d9dc4 - Pin Langfuse to >=4.5,<5.0 (F2.4)
 
 Audit finding F2.4. Previous constraint `langfuse>=2.50` allowed the resolver to pull v4.x (a major API break already patched in `f623a51` adapting `tracing.py` to the OTel-based v4 imperative API). Without an upper bound, a clean `uv sync` on a fresh machine could pull v5 (when released) and silently break tracing again. Pinned to the major version we are tested against. `uv.lock` regenerated; resolved version unchanged at 4.5.1.
 
