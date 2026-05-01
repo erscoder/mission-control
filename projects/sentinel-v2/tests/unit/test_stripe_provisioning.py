@@ -1,10 +1,11 @@
-"""Tests for per-app Stripe provisioning (S1 + S2 of the dynamic-Stripe plan).
+"""Tests for per-app Stripe provisioning.
 
 Covers:
-- ``_provision_stripe_for_draft`` orchestration in ``flows.sentinel_loop``:
-  delegates to the pure helpers, refuses to inject empty webhook secret,
-  refuses to inject without ``STRIPE_SECRET_KEY`` on the daemon, returns the
-  expected payload shape.
+- ``_provision_stripe_resources`` orchestration in ``flows.sentinel_loop``:
+  runs BEFORE the deploy crew, delegates to the pure helpers, refuses to
+  return on empty webhook secret, refuses without daemon
+  ``STRIPE_SECRET_KEY``, returns the expected payload shape (including the
+  live ``webhook_secret`` for the crew to stage as a Fly secret).
 - ``stripe_tool.provision_webhook_for_draft`` idempotency-by-replace: any
   prior endpoint matching ``metadata.sentinel_draft_id`` or matching the URL
   is deleted before a fresh one is created, so the live signing secret is
@@ -185,9 +186,9 @@ class TestProvisionWebhookForDraft:
         assert out["secret_was_rotated"] is True
 
 
-# ── _provision_stripe_for_draft (orchestration in sentinel_loop) ────────────
+# ── _provision_stripe_resources (pre-crew orchestration in sentinel_loop) ──
 
-class TestProvisionStripeForDraftOrchestration:
+class TestProvisionStripeResources:
     @pytest.fixture
     def patched(self, monkeypatch):
         monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_fake")
@@ -202,7 +203,6 @@ class TestProvisionStripeForDraftOrchestration:
             "secret": "whsec_x",
             "secret_was_rotated": False,
         })
-        secrets_setter = MagicMock(return_value=json.dumps({"set": ["STRIPE_SECRET_KEY"]}))
 
         monkeypatch.setattr(
             "sentinel_v2.tools.stripe_tool.provision_product_for_draft", product_mock
@@ -210,50 +210,40 @@ class TestProvisionStripeForDraftOrchestration:
         monkeypatch.setattr(
             "sentinel_v2.tools.stripe_tool.provision_webhook_for_draft", webhook_mock
         )
-        monkeypatch.setattr(
-            "sentinel_v2.tools.fly_tool.FlySecretsSetTool._run", secrets_setter
-        )
-        return product_mock, webhook_mock, secrets_setter
+        return product_mock, webhook_mock
 
-    def test_happy_path_returns_full_payload(self, patched):
-        from sentinel_v2.flows.sentinel_loop import _provision_stripe_for_draft
+    def test_happy_path_returns_secret_and_ids(self, patched):
+        from sentinel_v2.flows.sentinel_loop import _provision_stripe_resources
 
-        product_mock, webhook_mock, secrets_setter = patched
+        product_mock, webhook_mock = patched
 
-        out = _provision_stripe_for_draft(
+        out = _provision_stripe_resources(
             draft_id="draft_x",
             slug="myapp",
             backend_url="https://myapp-api.fly.dev",
             opportunity={"title": "MyApp", "tagline": "do stuff"},
-            fly_app_name="myapp-api",
         )
 
         assert out["product_id"] == "prod_x"
         assert out["price_id"] == "price_x"
         assert out["webhook_endpoint_id"] == "we_x"
+        assert out["webhook_secret"] == "whsec_x"
         assert out["secret_was_rotated"] is False
         # Webhook URL canonicalized to backend_url + /api/stripe/webhook.
         webhook_kwargs = webhook_mock.call_args.kwargs
         assert webhook_kwargs["url"] == "https://myapp-api.fly.dev/api/stripe/webhook"
-        # Secrets injected into Fly include all four Stripe keys.
-        secrets_payload = secrets_setter.call_args.kwargs["secrets"]
-        assert "STRIPE_SECRET_KEY" in secrets_payload
-        assert "STRIPE_WEBHOOK_SECRET" in secrets_payload
-        assert "STRIPE_PRODUCT_ID" in secrets_payload
-        assert "STRIPE_PRICE_ID" in secrets_payload
-        assert secrets_payload["STRIPE_WEBHOOK_SECRET"] == "whsec_x"
 
-    def test_refuses_when_webhook_secret_empty(self, patched, monkeypatch):
+    def test_refuses_when_webhook_secret_empty(self, patched):
         """Closes audit blocker F-01 at the source.
 
-        If Stripe somehow returns an empty signing secret (should never
-        happen on a fresh create, but defense in depth), Sentinel must NOT
-        inject an empty STRIPE_WEBHOOK_SECRET into Fly. That would let the
-        deployed app's webhook handler accept any payload.
+        If Stripe somehow returns an empty signing secret (defense in depth),
+        Sentinel must NOT continue. The deploy crew would otherwise stage an
+        empty STRIPE_WEBHOOK_SECRET into Fly and the deployed webhook
+        handler would accept any payload.
         """
-        from sentinel_v2.flows.sentinel_loop import _provision_stripe_for_draft
+        from sentinel_v2.flows.sentinel_loop import _provision_stripe_resources
 
-        _, webhook_mock, _ = patched
+        _, webhook_mock = patched
         webhook_mock.return_value = {
             "endpoint_id": "we_empty",
             "secret": "",
@@ -261,55 +251,37 @@ class TestProvisionStripeForDraftOrchestration:
         }
 
         with pytest.raises(RuntimeError, match="empty STRIPE_WEBHOOK_SECRET"):
-            _provision_stripe_for_draft(
+            _provision_stripe_resources(
                 draft_id="draft_x",
                 slug="myapp",
                 backend_url="https://myapp-api.fly.dev",
                 opportunity={"title": "MyApp"},
-                fly_app_name="myapp-api",
             )
 
     def test_refuses_without_daemon_stripe_secret_key(self, patched, monkeypatch):
-        from sentinel_v2.flows.sentinel_loop import _provision_stripe_for_draft
+        from sentinel_v2.flows.sentinel_loop import _provision_stripe_resources
 
         monkeypatch.delenv("STRIPE_SECRET_KEY", raising=False)
 
         with pytest.raises(RuntimeError, match="STRIPE_SECRET_KEY not set"):
-            _provision_stripe_for_draft(
+            _provision_stripe_resources(
                 draft_id="draft_x",
                 slug="myapp",
                 backend_url="https://myapp-api.fly.dev",
                 opportunity={"title": "MyApp"},
-                fly_app_name="myapp-api",
-            )
-
-    def test_propagates_flyctl_failure(self, patched):
-        from sentinel_v2.flows.sentinel_loop import _provision_stripe_for_draft
-
-        _, _, secrets_setter = patched
-        secrets_setter.return_value = "error rc=1: app not found"
-
-        with pytest.raises(RuntimeError, match="flyctl secrets set failed"):
-            _provision_stripe_for_draft(
-                draft_id="draft_x",
-                slug="myapp",
-                backend_url="https://myapp-api.fly.dev",
-                opportunity={"title": "MyApp"},
-                fly_app_name="myapp-api",
             )
 
     def test_default_pricing_when_opportunity_lacks_it(self, patched):
         """No `pricing` key on the opportunity defaults to $19/month USD."""
-        from sentinel_v2.flows.sentinel_loop import _provision_stripe_for_draft
+        from sentinel_v2.flows.sentinel_loop import _provision_stripe_resources
 
-        product_mock, _, _ = patched
+        product_mock, _ = patched
 
-        _provision_stripe_for_draft(
+        _provision_stripe_resources(
             draft_id="draft_x",
             slug="myapp",
             backend_url="https://myapp-api.fly.dev",
             opportunity={"title": "MyApp"},
-            fly_app_name="myapp-api",
         )
 
         prices_arg = product_mock.call_args.kwargs["prices"]

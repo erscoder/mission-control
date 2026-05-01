@@ -192,30 +192,45 @@ DEFAULT_STRIPE_EVENTS = [
 ]
 
 
-def _provision_stripe_for_draft(
+def _provision_stripe_resources(
     *,
     draft_id: str,
     slug: str,
     backend_url: str,
     opportunity: dict,
-    fly_app_name: str,
 ) -> dict:
-    """Provision per-app Stripe Product + Webhook and inject secrets into Fly.
+    """Provision per-app Stripe Product + Webhook BEFORE the deploy crew runs.
 
-    Runs after the deploy crew confirms the backend is live. Idempotent on
-    ``draft_id`` (Stripe metadata search). On retry the existing webhook is
-    deleted and recreated to capture a fresh signing secret (Stripe never
-    returns an existing endpoint's secret).
+    No Fly interaction. Returns the live signing secret + IDs so the deploy
+    crew can stage them as Fly secrets in the same release as DATABASE_URL,
+    so the first boot of the app already has STRIPE_SECRET_KEY +
+    STRIPE_WEBHOOK_SECRET present (otherwise the protected
+    ``stripe.config.ts`` throws at module load and Fly rolls back the
+    release).
 
-    Returns: ``{product_id, price_id, price_ids, webhook_endpoint_id, secret_was_rotated}``.
-    Raises on Stripe API failure or Fly secret-set failure; caller is expected
-    to mark the draft failed and skip the deploy completion.
+    Idempotent on ``draft_id`` (Stripe metadata search). On retry the
+    existing webhook is deleted and recreated so the live signing secret
+    is always returned (Stripe never returns an existing endpoint's
+    secret).
+
+    Returns: ``{product_id, price_id, price_ids, webhook_endpoint_id,
+    webhook_secret, secret_was_rotated}``.
+
+    Raises on Stripe API failure, missing daemon ``STRIPE_SECRET_KEY``, or
+    empty webhook secret (defense against the F-01 empty-string fallback).
+    Caller is expected to abort the deploy on any raise.
     """
-    from sentinel_v2.tools.fly_tool import FlySecretsSetTool
     from sentinel_v2.tools.stripe_tool import (
         provision_product_for_draft,
         provision_webhook_for_draft,
     )
+
+    daemon_secret_key = os.environ.get("STRIPE_SECRET_KEY", "")
+    if not daemon_secret_key:
+        raise RuntimeError(
+            "STRIPE_SECRET_KEY not set on Sentinel daemon; cannot provision "
+            f"Stripe Product/Webhook for {draft_id!r}."
+        )
 
     title = (opportunity or {}).get("title") or slug
     description = (
@@ -247,33 +262,11 @@ def _provision_stripe_for_draft(
         draft_id=draft_id,
     )
 
-    secrets_payload = {
-        "STRIPE_SECRET_KEY": os.environ.get("STRIPE_SECRET_KEY", ""),
-        "STRIPE_WEBHOOK_SECRET": webhook["secret"] or "",
-        "STRIPE_PRODUCT_ID": product["product_id"],
-    }
-    if price_id:
-        secrets_payload["STRIPE_PRICE_ID"] = price_id
-    if not secrets_payload["STRIPE_SECRET_KEY"]:
-        raise RuntimeError(
-            "STRIPE_SECRET_KEY not set on Sentinel daemon; cannot inject into "
-            f"Fly app {fly_app_name!r}."
-        )
-    if not secrets_payload["STRIPE_WEBHOOK_SECRET"]:
+    if not webhook.get("secret"):
         raise RuntimeError(
             f"Stripe webhook {webhook['endpoint_id']} returned no signing secret; "
-            "refusing to inject empty STRIPE_WEBHOOK_SECRET (would re-introduce "
-            "F-01 empty-string fallback)."
-        )
-
-    setter_result = FlySecretsSetTool()._run(
-        app_name=fly_app_name,
-        secrets=secrets_payload,
-        stage=False,
-    )
-    if isinstance(setter_result, str) and setter_result.startswith("error"):
-        raise RuntimeError(
-            f"flyctl secrets set failed for {fly_app_name}: {setter_result[:500]}"
+            "refusing to proceed with empty STRIPE_WEBHOOK_SECRET (would "
+            "re-introduce F-01 empty-string fallback)."
         )
 
     return {
@@ -281,8 +274,8 @@ def _provision_stripe_for_draft(
         "price_id": price_id,
         "price_ids": product["price_ids"],
         "webhook_endpoint_id": webhook["endpoint_id"],
+        "webhook_secret": webhook["secret"],
         "secret_was_rotated": webhook.get("secret_was_rotated", False),
-        "fly_secrets_set": sorted(secrets_payload.keys()),
     }
 
 
@@ -1589,6 +1582,58 @@ class SentinelLoopFlow(Flow[SentinelState]):
         except FileNotFoundError as e:
             log.warning("Skipping pre-bake before deploy: %s", e)
 
+        # Provision Stripe Product + Webhook BEFORE the deploy crew runs so the
+        # secrets land in the SAME release as DATABASE_URL (staged in step 3 of
+        # the crew, applied at fly_deploy in step 4). Otherwise the protected
+        # `stripe.config.ts` throws at module load on the first boot, Fly rolls
+        # back the release, and the QA verifier returns ROLLBACK in a loop.
+        try:
+            stripe_resources = _provision_stripe_resources(
+                draft_id=self.state.draft_id or "unknown",
+                slug=slug,
+                backend_url=expected_backend_url,
+                opportunity=self.state.top_opportunity or {},
+            )
+            log.info(
+                "Stripe resources provisioned for %s: product=%s webhook=%s rotated=%s",
+                self.state.draft_id,
+                stripe_resources["product_id"],
+                stripe_resources["webhook_endpoint_id"],
+                stripe_resources["secret_was_rotated"],
+            )
+            log_event(
+                _trace,
+                "stripe_provisioned",
+                metadata={
+                    k: v
+                    for k, v in stripe_resources.items()
+                    if k != "webhook_secret"
+                },
+            )
+            self.state.stripe_product_id = stripe_resources["product_id"]
+            self.state.stripe_price_id = stripe_resources["price_id"]
+            self.state.stripe_webhook_endpoint_id = stripe_resources["webhook_endpoint_id"]
+        except Exception as stripe_err:  # noqa: BLE001
+            log.error("Stripe provisioning failed: %s", stripe_err)
+            self.state.error = f"stripe_provisioning_failed: {stripe_err}"
+            if self.state.draft_id:
+                from sentinel_v2.dashboard_state import update_draft as _upd
+                try:
+                    _upd(
+                        self.state.draft_id,
+                        status="failed",
+                        revision_notes=(
+                            "Stripe provisioning failed before deploy: "
+                            f"{stripe_err}. App not deployed."
+                        ),
+                    )
+                except Exception as db_err:
+                    log.warning("Could not mark draft failed: %s", db_err)
+            self._save_checkpoint()
+            log_event(_trace, "stripe_failed", level="ERROR", metadata={"error": str(stripe_err)[:500]})
+            end_trace(_trace, output={"stripe_failed": str(stripe_err)[:500]}, level="ERROR")
+            return
+
         # ── Deploy with automatic retry loop ─────────────────────────────
         # Seed feedback with any human revision_notes so a "request changes"
         # actually reaches the deploy agent on the next attempt.
@@ -1628,10 +1673,16 @@ class SentinelLoopFlow(Flow[SentinelState]):
                         "backend_url": expected_backend_url,
                         "erslabs_root": ERSLABS_ROOT_DOMAIN,
                         "stripe_publishable": os.environ.get("STRIPE_API_KEY", ""),
-                        # Stripe needs an idempotency key on webhook creation;
-                        # the draft_id value is the natural key, but we rename
-                        # it so the agent never sees the string "draft_id".
-                        "stripe_idempotency_key": self.state.draft_id or "unknown",
+                        # Sentinel pre-provisioned the Stripe Product +
+                        # Webhook above. The deploy agent stages these as
+                        # Fly secrets in step 3 (alongside DATABASE_URL) so
+                        # the FIRST release boots with stripe.config.ts
+                        # validation passing. No Stripe API call from the
+                        # agent.
+                        "stripe_secret_key": os.environ.get("STRIPE_SECRET_KEY", ""),
+                        "stripe_webhook_secret": stripe_resources["webhook_secret"],
+                        "stripe_product_id": stripe_resources["product_id"],
+                        "stripe_price_id": stripe_resources["price_id"] or "",
                         "deploy_feedback": deploy_feedback,
                     }
                 )
@@ -1758,56 +1809,16 @@ class SentinelLoopFlow(Flow[SentinelState]):
         # here without an early failure the URL resolves.
         backend_url_resolved = parsed.get("backend_url") or expected_backend_url
 
-        # Per-app Stripe Product + Webhook + Fly secret injection. Lifted out
-        # of the deploy crew prompt to remove agent brittleness; F-01 (empty
-        # webhook secret) is closed by raising before mark-deployed when
-        # either Stripe call fails or returns no secret.
-        try:
-            stripe_provision = _provision_stripe_for_draft(
-                draft_id=self.state.draft_id or "unknown",
-                slug=slug,
-                backend_url=backend_url_resolved,
-                opportunity=self.state.top_opportunity or {},
-                fly_app_name=expected_backend_app_name,
-            )
-            log.info(
-                "Stripe provisioned for %s: product=%s webhook=%s rotated=%s",
-                self.state.draft_id,
-                stripe_provision["product_id"],
-                stripe_provision["webhook_endpoint_id"],
-                stripe_provision["secret_was_rotated"],
-            )
-            log_event(_trace, "stripe_provisioned", metadata=stripe_provision)
-        except Exception as stripe_err:  # noqa: BLE001 - Stripe must not silently pass
-            log.error("Stripe provisioning failed: %s", stripe_err)
-            self.state.error = f"stripe_provisioning_failed: {stripe_err}"
-            if self.state.draft_id:
-                from sentinel_v2.dashboard_state import update_draft
-                try:
-                    update_draft(
-                        self.state.draft_id,
-                        status="failed",
-                        revision_notes=(
-                            f"Deploy succeeded but Stripe provisioning failed: "
-                            f"{stripe_err}. App not marked deployed; secrets not set."
-                        ),
-                    )
-                except Exception as db_err:
-                    log.warning("Could not mark draft failed: %s", db_err)
-            self._save_checkpoint()
-            log_event(_trace, "stripe_failed", level="ERROR", metadata={"error": str(stripe_err)[:500]})
-            end_trace(_trace, output={"stripe_failed": str(stripe_err)[:500]}, level="ERROR")
-            return
-
+        # Stripe resources were provisioned BEFORE the crew kicked off and the
+        # IDs/secret were passed to the crew as inputs to be staged with the
+        # other Fly secrets in step 3, so the first Fly release boots with
+        # stripe.config.ts validation passing. State fields already set above.
         self.state.deployed = True
         self.state.deployed_url = expected_frontend_url
         self.state.deployment_id = parsed.get("deployment_id")
         self.state.backend_url = backend_url_resolved
         self.state.fly_app_name = expected_backend_app_name
         self.state.cf_pages_project = expected_cf_project_name
-        self.state.stripe_webhook_endpoint_id = stripe_provision["webhook_endpoint_id"]
-        self.state.stripe_product_id = stripe_provision["product_id"]
-        self.state.stripe_price_id = stripe_provision.get("price_id")
         # Clear revision_notes so they don't bleed into the next cycle.
         self.state.revision_notes = None
 
