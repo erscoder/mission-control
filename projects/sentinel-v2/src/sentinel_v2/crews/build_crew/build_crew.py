@@ -4,7 +4,10 @@ Process (hierarchical): Manager -> Frontend -> Backend -> Code Reviewer -> Secur
 Bias throughout: ruthlessly narrow scope, monetize from day 1 (Stripe), prove the demand signal
 found by research, instrument conversion tracking, ship quality gates that matter.
 """
+from typing import Literal, Optional
+
 from crewai import Agent, Crew, Task, Process
+from pydantic import BaseModel, Field
 
 from sentinel_v2.config.llm_config import get_minimax_llm
 from sentinel_v2.config.embedder_config import get_memory_for_crew_full
@@ -16,6 +19,31 @@ from sentinel_v2.tools import (
     StripeListProductsTool,
     WriteFileTool,
 )
+
+
+class QAGateReport(BaseModel):
+    """Structured output of the QA Lead task.
+
+    Attaching this model via ``output_pydantic`` on the QA task forces CrewAI
+    to retry the agent until its raw output parses cleanly into these fields.
+    The flow's QA gate (``sentinel_loop._parse_deploy_result``) reads this
+    schema and refuses to promote a draft on NO_GO or non-clean build_status.
+    """
+
+    go_no_go: Literal["GO", "NO_GO"] = Field(
+        description="Final ship verdict. GO only when every required check passes."
+    )
+    build_status: Literal["clean", "warnings", "fail"] = Field(
+        description="Result of `npm run build` across frontend and backend."
+    )
+    blocking_issues: list[str] = Field(
+        default_factory=list,
+        description="One-line summaries of issues that forced a NO_GO; empty on GO.",
+    )
+    notes: Optional[str] = Field(
+        default=None,
+        description="Optional human-readable remarks (coverage, smoke test, telemetry).",
+    )
 
 
 def build_crew(cycle: int = 1) -> Crew:
@@ -391,14 +419,18 @@ def build_crew(cycle: int = 1) -> Crew:
             "   core value action end-to-end.\n"
             "9. Funnel telemetry events fire at each step (verified via PostHog capture log).\n"
             "10. README has: setup, env vars list, deploy steps, rollback steps, known issues.\n\n"
-            "Output a final QA gate report with per-check status, metrics, and a single GO / NO-GO."
+            "Output a final QA gate report. Your final answer MUST be a JSON object that matches "
+            "the QAGateReport schema exactly: go_no_go ('GO'|'NO_GO'), build_status "
+            "('clean'|'warnings'|'fail'), blocking_issues (list of strings), notes (optional). "
+            "Do not wrap the JSON in markdown fences or prose; emit only the object."
         ),
         expected_output=(
-            "QA gate report with: coverage_percent (number), tests_passed (int), tests_total (int), "
-            "issues_count (int), build_status ('clean'|'warnings'|'fail'), playwright_smoke "
-            "('pass'|'fail'), funnel_events_ok (bool), go_no_go ('GO'|'NO-GO'), blocking_issues (list)."
+            "A JSON object conforming to the QAGateReport Pydantic schema. Keys: go_no_go "
+            "('GO' or 'NO_GO'), build_status ('clean', 'warnings', or 'fail'), blocking_issues "
+            "(list of strings, empty on GO), notes (optional string). No prose outside the JSON."
         ),
         agent=qa_lead,
+        output_pydantic=QAGateReport,
     )
 
     crew = Crew(

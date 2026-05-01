@@ -1576,7 +1576,38 @@ class SentinelLoopFlow(Flow[SentinelState]):
         return parsed if isinstance(parsed, dict) else {}
 
     def _parse_deploy_result(self, result) -> dict:
+        """Best-effort dict view of a deploy or QA crew result.
+
+        Preference order:
+        1. ``result.pydantic`` is a ``QAGateReport`` (or any BaseModel): emit
+           its ``model_dump()`` so the QA gate sees ``go_no_go`` and
+           ``build_status`` even when the agent emitted prose alongside the
+           structured object.
+        2. Existing string-parse path: pull ``raw`` and coerce via JSON / fenced
+           block / loose substring match. Empty dict on garbage so the QA gate
+           fails closed (build_failed_qa_gate_unparseable).
+        """
+        from pydantic import BaseModel
+
+        pydantic_obj = getattr(result, "pydantic", None)
+        if isinstance(pydantic_obj, BaseModel):
+            try:
+                dumped = pydantic_obj.model_dump()
+                if isinstance(dumped, dict):
+                    return dumped
+            except Exception:
+                pass
+        if isinstance(result, BaseModel):
+            try:
+                dumped = result.model_dump()
+                if isinstance(dumped, dict):
+                    return dumped
+            except Exception:
+                pass
+
         raw = self._extract_raw(result)
+        if isinstance(raw, dict):
+            return raw
         parsed = self._coerce_json(raw)
         return parsed if isinstance(parsed, dict) else {}
 
