@@ -239,6 +239,16 @@ class TestSentinelLoopFlowKickoff:
         ) as mock_crew_cls, patch(
             "sentinel_v2.flows.sentinel_loop._prebake_deploy_files",
             return_value={},
+        ), patch(
+            "sentinel_v2.flows.sentinel_loop._provision_stripe_for_draft",
+            return_value={
+                "product_id": "prod_test",
+                "price_id": "price_test",
+                "price_ids": ["price_test"],
+                "webhook_endpoint_id": "we_test",
+                "secret_was_rotated": False,
+                "fly_secrets_set": ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"],
+            },
         ):
             mock_crew = MagicMock()
             mock_crew.kickoff.return_value = mock_result
@@ -761,7 +771,14 @@ class TestRememberCalls:
 
         with patch(
             "sentinel_v2.crews.deploy_crew.deploy_crew.deploy_crew"
-        ) as mock_crew_cls:
+        ) as mock_crew_cls, patch(
+            "sentinel_v2.flows.sentinel_loop._provision_stripe_for_draft",
+            return_value={
+                "product_id": "prod_t", "price_id": "price_t",
+                "price_ids": ["price_t"], "webhook_endpoint_id": "we_t",
+                "secret_was_rotated": False, "fly_secrets_set": [],
+            },
+        ):
             mock_crew = MagicMock()
             mock_crew.kickoff.return_value = mock_result
             mock_crew_cls.return_value = mock_crew
@@ -984,6 +1001,13 @@ class TestFeedbackLoop:
         ) as mock_crew_cls, patch(
             "sentinel_v2.flows.sentinel_loop._prebake_deploy_files",
             return_value={},
+        ), patch(
+            "sentinel_v2.flows.sentinel_loop._provision_stripe_for_draft",
+            return_value={
+                "product_id": "prod_t", "price_id": "price_t",
+                "price_ids": ["price_t"], "webhook_endpoint_id": "we_t",
+                "secret_was_rotated": False, "fly_secrets_set": [],
+            },
         ):
             mock_crew = MagicMock()
             mock_crew.kickoff.return_value = mock_result
@@ -1011,6 +1035,13 @@ class TestFeedbackLoop:
         ) as mock_crew_cls, patch(
             "sentinel_v2.flows.sentinel_loop._prebake_deploy_files",
             return_value={},
+        ), patch(
+            "sentinel_v2.flows.sentinel_loop._provision_stripe_for_draft",
+            return_value={
+                "product_id": "prod_t", "price_id": "price_t",
+                "price_ids": ["price_t"], "webhook_endpoint_id": "we_t",
+                "secret_was_rotated": False, "fly_secrets_set": [],
+            },
         ):
             mock_crew = MagicMock()
             mock_crew.kickoff.return_value = mock_result
@@ -1193,6 +1224,13 @@ class TestDeployRetryLoop:
         ), patch(
             "sentinel_v2.flows.sentinel_loop._prebake_deploy_files",
             return_value={},
+        ), patch(
+            "sentinel_v2.flows.sentinel_loop._provision_stripe_for_draft",
+            return_value={
+                "product_id": "prod_t", "price_id": "price_t",
+                "price_ids": ["price_t"], "webhook_endpoint_id": "we_t",
+                "secret_was_rotated": False, "fly_secrets_set": [],
+            },
         ):
             with patch.object(flow, "remember"):
                 flow.run_deploy()
@@ -1395,6 +1433,13 @@ class TestRunDeployHealthGate:
         ) as mock_crew_cls, patch(
             "sentinel_v2.flows.sentinel_loop._prebake_deploy_files",
             return_value={},
+        ), patch(
+            "sentinel_v2.flows.sentinel_loop._provision_stripe_for_draft",
+            return_value={
+                "product_id": "prod_t", "price_id": "price_t",
+                "price_ids": ["price_t"], "webhook_endpoint_id": "we_t",
+                "secret_was_rotated": False, "fly_secrets_set": [],
+            },
         ), patch(
             "sentinel_v2.dashboard_state.update_draft"
         ) as mock_update, patch.object(

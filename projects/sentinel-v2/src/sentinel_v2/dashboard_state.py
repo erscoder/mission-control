@@ -475,7 +475,13 @@ _BUILD_FIELDS = {
     "tests_total",
     "issues_count",
 }
-_DEPLOY_FIELDS = {"deployment_url", "deployment_id"}
+_DEPLOY_FIELDS = {
+    "deployment_url",
+    "deployment_id",
+    "stripe_product_id",
+    "stripe_price_id",
+    "stripe_webhook_endpoint_id",
+}
 _STABLE_FIELDS = {"status", "revision_notes"}
 
 

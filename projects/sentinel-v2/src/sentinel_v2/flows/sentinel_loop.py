@@ -63,24 +63,27 @@ def _prebake_deploy_files(workspace_dir: str, slug: str, stack: str = "node_nest
     backend.mkdir(exist_ok=True)  # parents=False on purpose: do not climb to /
     template_dir = Path(__file__).resolve().parent.parent / "data" / "deploy_templates" / stack
 
-    # Files that live under backend/. package.json is included so the build
-    # agent cannot drift the @nestjs/* version matrix and produce ERESOLVE
-    # peer-dep deadlocks at deploy time. If a draft legitimately needs an
-    # extra dependency the agent must install it on top with
-    # `npm install <pkg>@<version>`, never by rewriting this file.
-    written = {}
-    for name in ("fly.toml", "Dockerfile", "package.json"):
-        src_path = template_dir / name
-        if not src_path.exists():
-            raise FileNotFoundError(
-                f"Missing canonical template: {src_path}. The deploy_templates "
-                f"tree for stack {stack!r} is incomplete; refusing to silently "
-                "skip a missing infra file."
-            )
+    if not template_dir.exists():
+        raise FileNotFoundError(
+            f"Missing canonical template tree: {template_dir}. The deploy_templates "
+            f"directory for stack {stack!r} is missing; refusing to silently skip."
+        )
+
+    # Walk the template tree and mirror every file into <workspace>/backend/,
+    # preserving relative paths. This covers infra files (Dockerfile, fly.toml,
+    # package.json) and protected source files (src/config/stripe.config.ts,
+    # src/modules/stripe/stripe.controller.ts) that must not be rewritten by
+    # the build agent. {{SLUG}} substitution applied uniformly.
+    written: dict[str, str] = {}
+    for src_path in template_dir.rglob("*"):
+        if not src_path.is_file():
+            continue
+        rel = src_path.relative_to(template_dir)
+        dst_path = backend / rel
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
         content = src_path.read_text().replace("{{SLUG}}", slug)
-        dst_path = backend / name
         dst_path.write_text(content)
-        written[name] = str(dst_path)
+        written[str(rel)] = str(dst_path)
     return written
 
 
@@ -177,6 +180,112 @@ def _make_slug(title: str) -> str:
     return slug[:30] or "app"
 
 
+# ── Stripe provisioning (per-app Product + Webhook + Fly secret injection) ──
+
+DEFAULT_STRIPE_EVENTS = [
+    "checkout.session.completed",
+    "customer.subscription.created",
+    "customer.subscription.updated",
+    "customer.subscription.deleted",
+    "invoice.paid",
+    "invoice.payment_failed",
+]
+
+
+def _provision_stripe_for_draft(
+    *,
+    draft_id: str,
+    slug: str,
+    backend_url: str,
+    opportunity: dict,
+    fly_app_name: str,
+) -> dict:
+    """Provision per-app Stripe Product + Webhook and inject secrets into Fly.
+
+    Runs after the deploy crew confirms the backend is live. Idempotent on
+    ``draft_id`` (Stripe metadata search). On retry the existing webhook is
+    deleted and recreated to capture a fresh signing secret (Stripe never
+    returns an existing endpoint's secret).
+
+    Returns: ``{product_id, price_id, price_ids, webhook_endpoint_id, secret_was_rotated}``.
+    Raises on Stripe API failure or Fly secret-set failure; caller is expected
+    to mark the draft failed and skip the deploy completion.
+    """
+    from sentinel_v2.tools.fly_tool import FlySecretsSetTool
+    from sentinel_v2.tools.stripe_tool import (
+        provision_product_for_draft,
+        provision_webhook_for_draft,
+    )
+
+    title = (opportunity or {}).get("title") or slug
+    description = (
+        (opportunity or {}).get("tagline")
+        or (opportunity or {}).get("description")
+        or title
+    )[:500]
+    pricing = (opportunity or {}).get("pricing") or {}
+    amount_cents = int(pricing.get("amount_cents") or 1900)
+    interval = pricing.get("interval") or "month"
+
+    product = provision_product_for_draft(
+        draft_id=draft_id,
+        name=title,
+        description=description,
+        prices=[{
+            "amount_cents": amount_cents,
+            "currency": pricing.get("currency", "usd"),
+            "interval": interval,
+            "nickname": f"{slug}-{interval}",
+        }],
+    )
+    price_id = product["price_ids"][0] if product["price_ids"] else None
+
+    webhook_url = f"{backend_url.rstrip('/')}/api/stripe/webhook"
+    webhook = provision_webhook_for_draft(
+        url=webhook_url,
+        events=DEFAULT_STRIPE_EVENTS,
+        draft_id=draft_id,
+    )
+
+    secrets_payload = {
+        "STRIPE_SECRET_KEY": os.environ.get("STRIPE_SECRET_KEY", ""),
+        "STRIPE_WEBHOOK_SECRET": webhook["secret"] or "",
+        "STRIPE_PRODUCT_ID": product["product_id"],
+    }
+    if price_id:
+        secrets_payload["STRIPE_PRICE_ID"] = price_id
+    if not secrets_payload["STRIPE_SECRET_KEY"]:
+        raise RuntimeError(
+            "STRIPE_SECRET_KEY not set on Sentinel daemon; cannot inject into "
+            f"Fly app {fly_app_name!r}."
+        )
+    if not secrets_payload["STRIPE_WEBHOOK_SECRET"]:
+        raise RuntimeError(
+            f"Stripe webhook {webhook['endpoint_id']} returned no signing secret; "
+            "refusing to inject empty STRIPE_WEBHOOK_SECRET (would re-introduce "
+            "F-01 empty-string fallback)."
+        )
+
+    setter_result = FlySecretsSetTool()._run(
+        app_name=fly_app_name,
+        secrets=secrets_payload,
+        stage=False,
+    )
+    if isinstance(setter_result, str) and setter_result.startswith("error"):
+        raise RuntimeError(
+            f"flyctl secrets set failed for {fly_app_name}: {setter_result[:500]}"
+        )
+
+    return {
+        "product_id": product["product_id"],
+        "price_id": price_id,
+        "price_ids": product["price_ids"],
+        "webhook_endpoint_id": webhook["endpoint_id"],
+        "secret_was_rotated": webhook.get("secret_was_rotated", False),
+        "fly_secrets_set": sorted(secrets_payload.keys()),
+    }
+
+
 # ── State ────────────────────────────────────────────────────────────────────
 
 MAX_BUILD_RETRIES = int(os.getenv("SENTINEL_MAX_BUILD_RETRIES", "3"))
@@ -233,6 +342,8 @@ class SentinelState(BaseModel):
     fly_app_name: Optional[str] = None
     cf_pages_project: Optional[str] = None
     stripe_webhook_endpoint_id: Optional[str] = None
+    stripe_product_id: Optional[str] = None
+    stripe_price_id: Optional[str] = None
 
 
 # ── Main Flow ────────────────────────────────────────────────────────────────
@@ -1645,13 +1756,58 @@ class SentinelLoopFlow(Flow[SentinelState]):
         # Use the deterministic URL we pre-baked (not whatever the agent reported).
         # The QA verifier step inside the crew already curl'd it, so if we got
         # here without an early failure the URL resolves.
+        backend_url_resolved = parsed.get("backend_url") or expected_backend_url
+
+        # Per-app Stripe Product + Webhook + Fly secret injection. Lifted out
+        # of the deploy crew prompt to remove agent brittleness; F-01 (empty
+        # webhook secret) is closed by raising before mark-deployed when
+        # either Stripe call fails or returns no secret.
+        try:
+            stripe_provision = _provision_stripe_for_draft(
+                draft_id=self.state.draft_id or "unknown",
+                slug=slug,
+                backend_url=backend_url_resolved,
+                opportunity=self.state.top_opportunity or {},
+                fly_app_name=expected_backend_app_name,
+            )
+            log.info(
+                "Stripe provisioned for %s: product=%s webhook=%s rotated=%s",
+                self.state.draft_id,
+                stripe_provision["product_id"],
+                stripe_provision["webhook_endpoint_id"],
+                stripe_provision["secret_was_rotated"],
+            )
+            log_event(_trace, "stripe_provisioned", metadata=stripe_provision)
+        except Exception as stripe_err:  # noqa: BLE001 - Stripe must not silently pass
+            log.error("Stripe provisioning failed: %s", stripe_err)
+            self.state.error = f"stripe_provisioning_failed: {stripe_err}"
+            if self.state.draft_id:
+                from sentinel_v2.dashboard_state import update_draft
+                try:
+                    update_draft(
+                        self.state.draft_id,
+                        status="failed",
+                        revision_notes=(
+                            f"Deploy succeeded but Stripe provisioning failed: "
+                            f"{stripe_err}. App not marked deployed; secrets not set."
+                        ),
+                    )
+                except Exception as db_err:
+                    log.warning("Could not mark draft failed: %s", db_err)
+            self._save_checkpoint()
+            log_event(_trace, "stripe_failed", level="ERROR", metadata={"error": str(stripe_err)[:500]})
+            end_trace(_trace, output={"stripe_failed": str(stripe_err)[:500]}, level="ERROR")
+            return
+
         self.state.deployed = True
         self.state.deployed_url = expected_frontend_url
         self.state.deployment_id = parsed.get("deployment_id")
-        self.state.backend_url = parsed.get("backend_url") or expected_backend_url
+        self.state.backend_url = backend_url_resolved
         self.state.fly_app_name = expected_backend_app_name
         self.state.cf_pages_project = expected_cf_project_name
-        self.state.stripe_webhook_endpoint_id = parsed.get("stripe_webhook_endpoint_id")
+        self.state.stripe_webhook_endpoint_id = stripe_provision["webhook_endpoint_id"]
+        self.state.stripe_product_id = stripe_provision["product_id"]
+        self.state.stripe_price_id = stripe_provision.get("price_id")
         # Clear revision_notes so they don't bleed into the next cycle.
         self.state.revision_notes = None
 
@@ -1662,6 +1818,9 @@ class SentinelLoopFlow(Flow[SentinelState]):
                 status="deployed",
                 deployment_url=self.state.deployed_url,
                 build_progress=1.0,
+                stripe_product_id=self.state.stripe_product_id,
+                stripe_price_id=self.state.stripe_price_id,
+                stripe_webhook_endpoint_id=self.state.stripe_webhook_endpoint_id,
             )
 
         try:

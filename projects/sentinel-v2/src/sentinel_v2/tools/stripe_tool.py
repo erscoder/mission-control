@@ -46,6 +46,56 @@ class CreateProductInput(BaseModel):
     prices: list[_PriceSpec] = Field(..., description="One or more prices to attach")
 
 
+def provision_product_for_draft(
+    draft_id: str,
+    name: str,
+    description: str,
+    prices: list[dict | _PriceSpec],
+) -> dict:
+    """Idempotent product+prices provisioning by ``metadata.sentinel_draft_id``.
+
+    Returns: {product_id, price_ids, reused}.
+    """
+    stripe = _client()
+    existing = stripe.Product.search(
+        query=f"metadata['sentinel_draft_id']:'{draft_id}'"
+    )
+    if existing.data:
+        product = existing.data[0]
+        product_prices = stripe.Price.list(product=product.id, active=True, limit=100)
+        return {
+            "product_id": product.id,
+            "price_ids": [p.id for p in product_prices.data],
+            "reused": True,
+        }
+
+    product = stripe.Product.create(
+        name=name,
+        description=description,
+        metadata={"sentinel_draft_id": draft_id},
+    )
+    price_ids: list[str] = []
+    for p in prices:
+        spec = _PriceSpec(**p) if isinstance(p, dict) else p
+        kwargs = {
+            "product": product.id,
+            "unit_amount": spec.amount_cents,
+            "currency": spec.currency,
+            "nickname": spec.nickname or None,
+            "metadata": {"sentinel_draft_id": draft_id},
+        }
+        if spec.interval != "one_time":
+            kwargs["recurring"] = {"interval": spec.interval}
+        price = stripe.Price.create(**kwargs)
+        price_ids.append(price.id)
+
+    return {
+        "product_id": product.id,
+        "price_ids": price_ids,
+        "reused": False,
+    }
+
+
 class StripeCreateProductTool(BaseTool):
     name: str = "stripe_create_product"
     description: str = (
@@ -56,44 +106,7 @@ class StripeCreateProductTool(BaseTool):
     args_schema: Type[BaseModel] = CreateProductInput
 
     def _run(self, draft_id: str, name: str, description: str, prices: list[dict]) -> str:
-        stripe = _client()
-
-        # Idempotency: search products by metadata
-        existing = stripe.Product.search(query=f"metadata['sentinel_draft_id']:'{draft_id}'")
-        if existing.data:
-            product = existing.data[0]
-            product_prices = stripe.Price.list(product=product.id, active=True, limit=100)
-            return json.dumps({
-                "product_id": product.id,
-                "price_ids": [p.id for p in product_prices.data],
-                "reused": True,
-            })
-
-        product = stripe.Product.create(
-            name=name,
-            description=description,
-            metadata={"sentinel_draft_id": draft_id},
-        )
-        price_ids: list[str] = []
-        for p in prices:
-            spec = _PriceSpec(**p) if isinstance(p, dict) else p
-            kwargs = {
-                "product": product.id,
-                "unit_amount": spec.amount_cents,
-                "currency": spec.currency,
-                "nickname": spec.nickname or None,
-                "metadata": {"sentinel_draft_id": draft_id},
-            }
-            if spec.interval != "one_time":
-                kwargs["recurring"] = {"interval": spec.interval}
-            price = stripe.Price.create(**kwargs)
-            price_ids.append(price.id)
-
-        return json.dumps({
-            "product_id": product.id,
-            "price_ids": price_ids,
-            "reused": False,
-        })
+        return json.dumps(provision_product_for_draft(draft_id, name, description, prices))
 
 
 # ── StripeListProductsTool ───────────────────────────────────────────────────
@@ -148,38 +161,53 @@ class CreateWebhookInput(BaseModel):
     draft_id: str = Field(..., description="Sentinel draft id — used for idempotency metadata")
 
 
+def provision_webhook_for_draft(url: str, events: list[str], draft_id: str) -> dict:
+    """Idempotent-by-replace webhook provisioning. Returns the live secret.
+
+    Stripe never returns the signing secret of an existing endpoint. To make
+    redeploys actually capture a usable secret, on retry we DELETE the prior
+    endpoint (matched by ``metadata.sentinel_draft_id``) and create a fresh
+    one. Any in-flight Stripe events against the deleted endpoint are queued
+    by Stripe and retried against the new one (same backend URL, no traffic
+    loss).
+
+    Returns: {endpoint_id, secret, secret_was_rotated}.
+    """
+    stripe = _client()
+    deleted: list[str] = []
+    for ep in stripe.WebhookEndpoint.list(limit=100).auto_paging_iter():
+        prior = (getattr(ep, "metadata", None) or {}).get("sentinel_draft_id")
+        if prior == draft_id or ep.url == url:
+            try:
+                stripe.WebhookEndpoint.delete(ep.id)
+                deleted.append(ep.id)
+            except Exception as e:  # noqa: BLE001 - best-effort cleanup
+                log.warning("Could not delete prior webhook %s: %s", ep.id, e)
+    fresh = stripe.WebhookEndpoint.create(
+        url=url,
+        enabled_events=events,
+        metadata={"sentinel_draft_id": draft_id},
+    )
+    return {
+        "endpoint_id": fresh.id,
+        "secret": fresh.secret,
+        "secret_was_rotated": bool(deleted),
+    }
+
+
 class StripeCreateWebhookTool(BaseTool):
     name: str = "stripe_create_webhook"
     description: str = (
-        "Create (or reuse) a Stripe webhook endpoint. Idempotent by (url, draft_id). "
-        "Returns {endpoint_id, secret} — the secret is only shown at creation, so it "
-        "must be stored immediately (e.g. by setting STRIPE_WEBHOOK_SECRET on the backend)."
+        "Provision a Stripe webhook endpoint for a Sentinel draft. Idempotent "
+        "by replacement: any prior endpoint matching the draft_id metadata or "
+        "URL is deleted and recreated, so the live signing secret is always "
+        "returned. Caller MUST persist the secret (e.g. set STRIPE_WEBHOOK_SECRET "
+        "on the backend) before this call returns."
     )
     args_schema: Type[BaseModel] = CreateWebhookInput
 
     def _run(self, url: str, events: list[str], draft_id: str) -> str:
-        stripe = _client()
-        # Look for existing endpoint with matching url
-        for ep in stripe.WebhookEndpoint.list(limit=100).auto_paging_iter():
-            if ep.url == url:
-                # Reuse; secret is not retrievable — caller must have saved it or rotate
-                return json.dumps({
-                    "endpoint_id": ep.id,
-                    "secret": None,
-                    "reused": True,
-                    "note": "existing endpoint; secret unavailable — rotate if lost",
-                })
-
-        ep = stripe.WebhookEndpoint.create(
-            url=url,
-            enabled_events=events,
-            metadata={"sentinel_draft_id": draft_id},
-        )
-        return json.dumps({
-            "endpoint_id": ep.id,
-            "secret": ep.secret,
-            "reused": False,
-        })
+        return json.dumps(provision_webhook_for_draft(url, events, draft_id))
 
 
 # ── StripeDeleteProductTool ─────────────────────────────────────────────────

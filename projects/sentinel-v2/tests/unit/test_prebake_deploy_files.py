@@ -38,11 +38,14 @@ def test_prebake_succeeds_on_valid_stack(tmp_path: Path) -> None:
 
     written = _prebake_deploy_files(str(workspace), "myapp", stack="node_nestjs")
 
-    assert set(written.keys()) == {"fly.toml", "Dockerfile", "package.json"}
     backend = workspace / "backend"
     assert (backend / "fly.toml").exists()
     assert (backend / "Dockerfile").exists()
     assert (backend / "package.json").exists()
+    # Walk-recursive prebake also writes any nested protected source files
+    # (e.g. src/config/stripe.config.ts). The infra trio must always be present;
+    # nested files are stack-dependent and listed by relative path in `written`.
+    assert {"fly.toml", "Dockerfile", "package.json"}.issubset(set(written.keys()))
 
 
 def test_prebake_substitutes_slug_correctly(tmp_path: Path) -> None:
@@ -54,9 +57,11 @@ def test_prebake_substitutes_slug_correctly(tmp_path: Path) -> None:
 
     pkg = json.loads((workspace / "backend" / "package.json").read_text())
     assert pkg["name"] == "myslug-backend"
-    # Sanity: the unsubstituted token must not survive in any baked file.
-    for name in ("fly.toml", "Dockerfile", "package.json"):
-        assert "{{SLUG}}" not in (workspace / "backend" / name).read_text()
+    # Sanity: the unsubstituted token must not survive in any baked file (walk
+    # the whole baked tree, including nested protected source files).
+    for path in (workspace / "backend").rglob("*"):
+        if path.is_file():
+            assert "{{SLUG}}" not in path.read_text(), f"unsubstituted token in {path}"
 
 
 def test_prebake_raises_when_workspace_missing(tmp_path: Path) -> None:

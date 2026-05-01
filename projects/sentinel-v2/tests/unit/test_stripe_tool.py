@@ -111,11 +111,19 @@ def test_create_webhook_creates_when_no_existing():
     data = json.loads(result)
     assert data["endpoint_id"] == "we_abc"
     assert data["secret"] == "whsec_zzz"
-    assert data["reused"] is False
+    assert data["secret_was_rotated"] is False
 
 
-def test_create_webhook_reuses_existing_by_url():
-    existing = SimpleNamespace(id="we_existing", url="https://app.fly.dev/api/stripe/webhook")
+def test_create_webhook_replaces_existing_by_url_to_capture_fresh_secret():
+    """Idempotency-by-replace: prior endpoint at the same URL is deleted and
+    a fresh one is created so the live signing secret is always returned.
+    Closes audit blocker F-01 at the provisioning layer.
+    """
+    existing = SimpleNamespace(
+        id="we_existing",
+        url="https://app.fly.dev/api/stripe/webhook",
+        metadata={},
+    )
     mock_stripe = _mock_stripe_module()
     mock_stripe.WebhookEndpoint.list.return_value.auto_paging_iter.return_value = [existing]
 
@@ -126,10 +134,10 @@ def test_create_webhook_reuses_existing_by_url():
             draft_id="draft_c0_dup",
         )
     data = json.loads(result)
-    assert data["reused"] is True
-    assert data["endpoint_id"] == "we_existing"
-    assert data["secret"] is None
-    mock_stripe.WebhookEndpoint.create.assert_not_called()
+    assert data["secret_was_rotated"] is True
+    assert data["secret"] == "whsec_zzz"  # the fresh secret, not the lost old one
+    mock_stripe.WebhookEndpoint.delete.assert_called_once_with("we_existing")
+    mock_stripe.WebhookEndpoint.create.assert_called_once()
 
 
 # ── StripeListProductsTool ───────────────────────────────────────────────────

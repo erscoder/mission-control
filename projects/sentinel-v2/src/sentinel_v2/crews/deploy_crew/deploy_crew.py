@@ -21,7 +21,6 @@ from sentinel_v2.tools import (
     FlyStatusTool,
     ListFilesTool,
     RunShellTool,
-    StripeCreateWebhookTool,
     WriteFileTool,
 )
 
@@ -47,7 +46,6 @@ def deploy_crew(cycle: int = 1) -> Crew:
     cf_pages_set_env = CloudflarePagesSetEnvTool()
     cf_dns_cname = CloudflareDnsCnameTool()
     cf_pages_custom_domain = CloudflarePagesAddCustomDomainTool()
-    stripe_create_webhook = StripeCreateWebhookTool()
     write_file = WriteFileTool()
     list_files = ListFilesTool()
     run_shell = RunShellTool()
@@ -74,25 +72,26 @@ def deploy_crew(cycle: int = 1) -> Crew:
             "  2. Apply Postgres migrations (prisma migrate deploy / drizzle-kit migrate) "
             "     using `run_shell` in `<workspace_dir>/backend/` against the DATABASE_URL "
             "     the build plan requires.\n"
-            "  3. `fly_secrets_set(app_name=backend_app_name, secrets={DATABASE_URL, "
-            "     STRIPE_SECRET_KEY, ...}, stage=True)` so they are present at first boot.\n"
+            "  3. `fly_secrets_set(app_name=backend_app_name, "
+            "     secrets={DATABASE_URL: <db_url>, ...non-Stripe vars}, stage=True)` so "
+            "     non-Stripe secrets are present at first boot. Sentinel itself sets the "
+            "     STRIPE_* secrets after this crew finishes; do NOT include any STRIPE_* "
+            "     key in your fly_secrets_set call.\n"
             "  4. `fly_deploy(app_name=backend_app_name, source_dir='<workspace_dir>/backend')`. "
             "     The Dockerfile and fly.toml are pre-baked from the canonical NestJS "
             "     template before you start; do NOT inspect, edit, or rewrite them. Just "
             "     deploy. The tool returns the backend URL; verify it equals backend_url. "
             "     If not, you passed the wrong app name in step 1.\n"
-            "  5. `stripe_create_webhook(url=f'{backend_url}/api/stripe/webhook', "
-            "     events=['checkout.session.completed', 'customer.subscription.created', "
-            "     'customer.subscription.updated', 'customer.subscription.deleted', "
-            "     'invoice.payment_succeeded', 'invoice.payment_failed'], "
-            "     draft_id=stripe_idempotency_key)`. The draft_id parameter on this tool "
-            "     is just an idempotency key for Stripe metadata; pass the "
-            "     stripe_idempotency_key value verbatim. Returns {endpoint_id, secret}.\n"
-            "  6. `fly_secrets_set(app_name=backend_app_name, "
-            "     secrets={STRIPE_WEBHOOK_SECRET: <secret>})`. Triggers a release with "
-            "     the webhook secret now present.\n\n"
+            "  5. STRIPE PROVISIONING IS NOT YOUR JOB. Sentinel itself creates the Stripe "
+            "     Product, the Webhook Endpoint, and injects STRIPE_SECRET_KEY + "
+            "     STRIPE_WEBHOOK_SECRET + STRIPE_PRODUCT_ID + STRIPE_PRICE_ID via "
+            "     `flyctl secrets set` after this crew returns GO. Do NOT call any "
+            "     `stripe_*` tool, do NOT set any STRIPE_* secret, do NOT create a "
+            "     webhook endpoint by hand. The pre-baked controller at "
+            "     `backend/src/modules/stripe/stripe.controller.ts` already validates the "
+            "     signature against whatever secret Sentinel injects.\n\n"
             "FRONTEND (Cloudflare Pages + erslabs.net):\n"
-            "  7. BUILD STEP. Verify `<workspace_dir>/frontend/out/` exists with `list_files`. "
+            "  6. BUILD STEP. Verify `<workspace_dir>/frontend/out/` exists with `list_files`. "
             "     If it does NOT exist:\n"
             "       a. `run_shell('npm ci', cwd='<workspace_dir>/frontend')`\n"
             "       b. `run_shell('npm run build', cwd='<workspace_dir>/frontend')`\n"
@@ -102,15 +101,15 @@ def deploy_crew(cycle: int = 1) -> Crew:
             "          then re-run the build. Without an `out/` directory you CANNOT "
             "          deploy to Cloudflare Pages.\n"
             "     Do NOT proceed past this step until `out/` is populated.\n"
-            "  8. `cloudflare_pages_create(project_name=cf_project_name)`.\n"
-            "  9. `cloudflare_pages_set_env(project_name=cf_project_name, env_vars={"
+            "  7. `cloudflare_pages_create(project_name=cf_project_name)`.\n"
+            "  8. `cloudflare_pages_set_env(project_name=cf_project_name, env_vars={"
             "     NEXT_PUBLIC_API_URL: backend_url, "
             "     NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: stripe_publishable})`.\n"
-            " 10. `cloudflare_pages_deploy(project_name=cf_project_name, "
+            "  9. `cloudflare_pages_deploy(project_name=cf_project_name, "
             "     dist_dir='<workspace_dir>/frontend/out')`.\n"
-            " 11. `cloudflare_dns_cname(subdomain=slug, target=f'{cf_project_name}.pages.dev')`. "
+            " 10. `cloudflare_dns_cname(subdomain=slug, target=f'{cf_project_name}.pages.dev')`. "
             "     Attaches frontend_url to the Pages project.\n"
-            " 12. `cloudflare_pages_add_custom_domain(project_name=cf_project_name, "
+            " 11. `cloudflare_pages_add_custom_domain(project_name=cf_project_name, "
             "     domain=f'{slug}.{erslabs_root}')`.\n\n"
             "You never hardcode secrets into generated code or logs. You never touch `.env` "
             "files that contain live keys. You use the tools idempotently so retries do not "
@@ -126,7 +125,6 @@ def deploy_crew(cycle: int = 1) -> Crew:
             cf_pages_set_env,
             cf_dns_cname,
             cf_pages_custom_domain,
-            stripe_create_webhook,
             write_file,
             list_files,
             run_shell,
