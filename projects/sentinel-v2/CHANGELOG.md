@@ -5,6 +5,14 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-30 · 84ff29b - QA Lead structured output via Pydantic schema (F1.4)
+
+QA Lead in `build_crew` sometimes returned prose instead of JSON when CrewAI's hierarchical manager pressured it for "a quick summary". `_parse_deploy_result` then yielded `{}`, hit the new fail-closed gate at `sentinel_loop.py:873`, and auto-failed the draft with `go_no_go='unknown'`. Real failure mode reproduced by `draft_c1_compliancedesk-hipaa-compliance-tracker`.
+
+Fix: new `QAGateReport` Pydantic model exported from `crews/build_crew` with `go_no_go: Literal["GO","NO_GO"]`, `build_status: Literal["clean","warnings","fail"]`, `blocking_issues: list[str]`, `notes: str | None`. The QA task now declares `output_pydantic=QAGateReport`, which makes CrewAI re-prompt the agent until its raw output parses cleanly. `_parse_deploy_result` short-circuits when `result.pydantic` is a `BaseModel` and emits `model_dump()`; the legacy JSON-string path is kept for back-compat with crews that have not migrated yet.
+
+10 new unit tests in `tests/unit/test_qa_gate_pydantic.py` pin the four paths from the audit brief: Pydantic GO+clean, Pydantic NO_GO, legacy string GO+clean, garbage prose. Full unit suite green at 292 tests (282 prior + 10 new). Closes audit finding F1.4.
+
 ## 2026-04-28 · f072a30 - Escape http_code Jinja interpolation in deploy verify task
 
 CrewAI Task description strings are rendered via Python `str.format(**inputs)` before the agent sees them. The literal `%{http_code}` in `deploy_crew.py:204` (verify_task) was being treated as `{http_code}` template var, raising `Missing required template variable 'http_code' not found in inputs dictionary` on every deploy attempt. Six drafts in the SQLite store (`draft_c1_proposalsiq`, `draft_c1_poolroute-pro`, `draft_c2_caseping`, `draft_c2846_fitlead`, etc.) failed with this exact error after burning all 2 deploy retries. Fix: double the braces (`%{{http_code}}`) so `str.format` renders the literal `%{http_code}` that curl needs. Closes audit finding F1.2.
