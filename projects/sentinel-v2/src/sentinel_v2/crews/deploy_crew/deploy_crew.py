@@ -201,7 +201,7 @@ def deploy_crew(cycle: int = 1) -> Crew:
     verify_task = Task(
         description=(
             "Verify the live deployment for the canonical URLs:\n\n"
-            "1. `run_shell('curl -o /dev/null -s -w \"%{http_code}\" {frontend_url}/')` "
+            "1. `run_shell('curl -o /dev/null -s -w \"%{{http_code}}\" {frontend_url}/')` "
             "   and confirm it returns 200. If DNS does not resolve, the deploy never "
             "   completed; report ROLLBACK with the exact curl output.\n"
             "2. `run_shell('curl -fsS {backend_url}/api/health')` and confirm the JSON "
