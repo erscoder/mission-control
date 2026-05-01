@@ -29,7 +29,9 @@ services:
       - ./sentinel.db:/app/sentinel.db
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import os, time, sys; p='/tmp/sentinel_shared/sentinel_v2_state.json'; sys.exit(0 if os.path.exists(p) and (time.time() - os.path.getmtime(p)) < 7200 else 1)\""]
+      # find -mmin avoids spawning the Python interpreter (slow under cycle load).
+      # 120 minutes = 7200 s, matches 2x SENTINEL_LOOP_INTERVAL_HOURS=1.
+      test: ["CMD-SHELL", "find /tmp/sentinel_shared/sentinel_v2_state.json -mmin -120 | grep -q ."]
       interval: 60s
       timeout: 10s
       retries: 3
