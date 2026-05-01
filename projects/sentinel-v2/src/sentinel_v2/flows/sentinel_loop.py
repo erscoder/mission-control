@@ -106,7 +106,7 @@ def _verify_package_json_unchanged(workspace_dir: str, stack: str = "node_nestjs
     )
 
     if not template_pkg.exists():
-        # No canonical template for this stack — nothing to verify.
+        # No canonical template for this stack, nothing to verify.
         return True
 
     # Recover slug used at bake time. Workspace pkg "name" is "<slug>-backend";
