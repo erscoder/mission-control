@@ -5,6 +5,14 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-05-01 · 2240175 - Auto-patch main.ts NestFactory rawBody bootstrap
+
+Closes KG MED-3 (sibling of MED-2). NestJS only populates `req.rawBody` when `NestFactory.create` receives `{ rawBody: true }`. The Stripe webhook controller reads `rawBody` to verify the Stripe-Signature header; without the bootstrap option every webhook fails signature verification. New `_ensure_main_ts_raw_body` helper auto-patches three common shapes (single-arg, empty-options, existing-options object), no-op when already correct, returns `{patched: bool, reason: str}`. Same defensive contract as the AppModule helper: never raises, never fails the build. Call site forms a defensive trio in `run_build`: package.json revert -> AppModule registration -> main.ts bootstrap. 7 new unit tests; 349 unit tests green.
+
+## 2026-05-01 · 2b2ce19 - Auto-register StripeWebhookController in AppModule
+
+Closes KG MED-2 from the Stripe S1-S4 review. Build agent prompt requires importing `StripeWebhookController` in AppModule, but prompt-only enforcement is brittle. If the agent forgets, the per-app webhook URL returns 404 silently while Stripe retries indefinitely (an invisible failure mode). New `_ensure_stripe_controller_registered` helper parses `backend/src/app.module.ts` after every successful build and idempotently auto-patches: inserts the canonical import line if missing, inserts `StripeWebhookController` into the `controllers: [...]` array if missing, no-op if already registered. Defensive contract: never raises, never fails the build. On unparseable AppModule shape (no controllers array) or missing file, logs a WARNING and returns `registered=False` so the deploy QA verifier surfaces the failure. Call site mirrors `_verify_package_json_unchanged`. 7 new unit tests covering already-registered, full-patch, partial-patch, empty-array, trailing-comma, missing-file, and unparseable-shape paths. 342 unit tests green.
+
 ## 2026-05-01 · 1a2b006 - Stripe provisioning runs BEFORE deploy crew
 
 Reviewer concern on `0e9abbb` (S1-S4): the post-crew Stripe injection ordering broke first-boot. The deploy crew's QA verifier curls the backend after `fly_deploy`. With Stripe secrets injected only AFTER the crew returned GO, the first Fly release booted with empty `STRIPE_SECRET_KEY`/`STRIPE_WEBHOOK_SECRET`. The protected `stripe.config.ts` throws at module load on missing values, so the NestJS process exits, Fly health-check fails, `fly_status` returns crashed, and the QA verifier returns ROLLBACK. Sentinel retries with the same broken ordering, exhausts retries, marks the draft failed.
