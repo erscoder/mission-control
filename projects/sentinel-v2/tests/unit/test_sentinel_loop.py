@@ -805,6 +805,89 @@ class TestFeedbackLoop:
 
         assert flow.state.revision_notes is None
 
+    def test_start_cycle_clears_revision_notes_for_new_draft(self, flow):
+        """A queued draft with a different id than the previous cycle's draft
+        must NOT inherit stale revision_notes from state."""
+        # Prior draft id and stale notes survived in state but cycle_count=0
+        # keeps the is_resume guard False so start_cycle proceeds into the
+        # new-cycle path and triggers the diff check.
+        flow.state.cycle_count = 0
+        flow.state.draft_id = "draft_c1_old"
+        flow.state.revision_notes = "stale notes from rejected draft A"
+
+        new_draft = {
+            "id": "draft_c2_new",
+            "title": "Fresh App",
+            "revision_notes": None,
+            "status": "queued",
+            "tech_fit": 0.7,
+            "complexity": 2,
+        }
+        with patch("sentinel_v2.dashboard_state.list_drafts_by_status", return_value=[new_draft]), \
+             patch("sentinel_v2.dashboard_state.clear_agent_messages"), \
+             patch.object(flow, "_save_checkpoint"):
+            flow.start_cycle()
+
+        assert flow.state.draft_id == "draft_c2_new"
+        assert flow.state.revision_notes is None
+
+    def test_start_cycle_preserves_on_same_queued_draft(self, flow):
+        """When the same draft id is re-queued (retry button on the same
+        draft), the draft's revision_notes win, but if the draft has none,
+        state's existing notes are preserved (same draft, same context)."""
+        flow.state.cycle_count = 0
+        flow.state.draft_id = "draft_c1_same"
+        flow.state.revision_notes = "user feedback to address"
+
+        same_draft = {
+            "id": "draft_c1_same",
+            "title": "Same App",
+            "revision_notes": None,
+            "status": "queued",
+            "tech_fit": 0.7,
+            "complexity": 2,
+        }
+        with patch("sentinel_v2.dashboard_state.list_drafts_by_status", return_value=[same_draft]), \
+             patch("sentinel_v2.dashboard_state.clear_agent_messages"), \
+             patch.object(flow, "_save_checkpoint"):
+            flow.start_cycle()
+
+        assert flow.state.revision_notes == "user feedback to address"
+
+    def test_start_cycle_handles_no_previous_draft(self, flow):
+        """First-ever cycle has prev_draft_id=None and revision_notes=None,
+        and must not crash."""
+        first_draft = {
+            "id": "draft_c1_first",
+            "title": "First App",
+            "revision_notes": "initial feedback",
+            "status": "queued",
+            "tech_fit": 0.6,
+            "complexity": 1,
+        }
+        with patch("sentinel_v2.dashboard_state.list_drafts_by_status", return_value=[first_draft]), \
+             patch("sentinel_v2.dashboard_state.clear_agent_messages"), \
+             patch.object(flow, "_save_checkpoint"):
+            flow.start_cycle()
+
+        assert flow.state.draft_id == "draft_c1_first"
+        assert flow.state.revision_notes == "initial feedback"
+
+    def test_start_cycle_clears_revision_notes_when_no_queued_draft(self, flow):
+        """Research-path fall-through: no queued draft, but state still
+        carries stale revision_notes from a previous draft. start_cycle must
+        clear them so the upcoming research-driven build does not chase
+        ghosts."""
+        flow.state.cycle_count = 0
+        flow.state.draft_id = "draft_c1_old"
+        flow.state.revision_notes = "stale notes from rejected deploy"
+
+        with patch("sentinel_v2.dashboard_state.list_drafts_by_status", return_value=[]), \
+             patch("sentinel_v2.dashboard_state.clear_agent_messages"):
+            flow.start_cycle()
+
+        assert flow.state.revision_notes is None
+
     def test_run_build_passes_revision_notes_in_inputs(self, flow):
         """run_build() passes revision_notes to crew.kickoff inputs."""
         flow.state.top_opportunity = {"title": "SaaS Tool"}

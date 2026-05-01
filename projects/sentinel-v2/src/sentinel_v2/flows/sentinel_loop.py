@@ -258,6 +258,12 @@ class SentinelLoopFlow(Flow[SentinelState]):
             print(f"\n{'='*50}\nResuming Cycle #{self.state.cycle_count} (phase: {self.state.current_phase})\n{'='*50}")
             return
 
+        # Remember the prior cycle's draft id so we can detect when a new draft
+        # enters the loop and avoid bleeding revision_notes from a rejected
+        # previous draft into the fresh one. Resume path returned above, so
+        # reaching here means a new cycle is starting.
+        prev_draft_id = self.state.draft_id
+
         self.state.cycle_count += 1
         self.state.current_phase = "research"
         self._touch()
@@ -274,11 +280,13 @@ class SentinelLoopFlow(Flow[SentinelState]):
         # Before spawning new research, pick up any draft that was already approved
         # for build (status="queued") in a previous cycle — typically from the retry
         # button or from a rejected approval gate leaving an orphan behind.
+        picked_queued_draft = False
         try:
             from sentinel_v2.dashboard_state import list_drafts_by_status
             queued = list_drafts_by_status({"queued"})
             if queued:
                 draft = queued[0]
+                picked_queued_draft = True
                 log.info(
                     "Found queued draft %s from previous cycle — skipping research",
                     draft["id"],
@@ -297,8 +305,17 @@ class SentinelLoopFlow(Flow[SentinelState]):
                 }
                 self.state.opportunities = [self.state.top_opportunity]
                 self.state.approved = True  # user already approved via retry
-                # Carry revision_notes from the draft so build crew can use them
-                self.state.revision_notes = draft.get("revision_notes") or None
+                # Carry revision_notes from the draft so build crew can use them.
+                # When the queued draft id differs from the previous cycle's,
+                # any stale notes carried in state must NOT bleed into the new
+                # draft's first build. When it matches (same draft re-queued),
+                # the draft record's notes are still authoritative.
+                if prev_draft_id is None or draft["id"] != prev_draft_id:
+                    self.state.revision_notes = draft.get("revision_notes") or None
+                else:
+                    self.state.revision_notes = (
+                        draft.get("revision_notes") or self.state.revision_notes
+                    )
                 # Reset phase outputs so phases actually run
                 self.state.build_output = None
                 self.state.workspace_dir = None
@@ -330,6 +347,18 @@ class SentinelLoopFlow(Flow[SentinelState]):
                 self._save_checkpoint()
         except Exception as e:
             log.warning("Could not check for queued drafts at cycle start: %s", e)
+
+        # Research-path fall-through: when no queued draft was picked, the
+        # state still carries the previous cycle's draft_id (run_research will
+        # overwrite it with a new id later). Stale revision_notes from that
+        # prior draft must be cleared so the upcoming build crew does not
+        # chase ghost feedback against a brand new opportunity.
+        if not picked_queued_draft and prev_draft_id is not None and self.state.revision_notes:
+            log.info(
+                "Clearing stale revision_notes from prior draft %s before new cycle",
+                prev_draft_id,
+            )
+            self.state.revision_notes = None
 
     @listen(start_cycle)
     def run_research(self):
