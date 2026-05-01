@@ -5,6 +5,14 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-04-30 · 7fd43de - Clear stale revision_notes on new draft cycle (F2.2)
+
+`flows/sentinel_loop.py:run_build` and `:run_deploy` seed crew feedback from `self.state.revision_notes`. `run_deploy` clears the field on success, but a rejection at the deploy gate (or a fresh research cycle that produces a new opportunity) left the previous draft's notes in state. CrewAI Flow checkpointing persists `SentinelState` across cycles, so the next draft entering the loop inherited "fix the login button" feedback that had nothing to do with it. The build crew chased ghosts on the very first attempt of a brand-new app.
+
+Fix: `start_cycle` now captures `prev_draft_id` before mutating state, then takes one of three paths. Resume (same draft, mid-flow) early-returns and preserves notes. Queued-draft pickup compares `draft["id"]` against `prev_draft_id`: if different, `state.revision_notes` is overwritten by the draft's own notes (or None) instead of inheriting state; if same, the draft's notes win when present, otherwise state's notes are kept (same draft, same context). Research-path fall-through (no queued draft picked) clears `state.revision_notes` whenever a previous cycle's `draft_id` is still in state and notes survived, since `run_research` will assign a fresh `draft_id` and the prior notes do not apply.
+
+4 new unit tests in `tests/unit/test_sentinel_loop.py::TestFeedbackLoop`: `test_start_cycle_clears_revision_notes_for_new_draft`, `test_start_cycle_preserves_on_same_queued_draft`, `test_start_cycle_handles_no_previous_draft`, and the research-path regression `test_start_cycle_clears_revision_notes_when_no_queued_draft`. Full unit suite green at 311 tests (307 prior + 4 new). Closes audit finding F2.2.
+
 ## 2026-04-30 · 10a2180 - Transient network patterns in error classifier (F2.1)
 
 `flows/error_classifier.py` had no patterns for transient network failures (`ECONNREFUSED`, `ECONNRESET`, `ETIMEDOUT`, `socket hang up`, `ENOTFOUND`, `read timeout`, `network is unreachable`, generic `timed out`). When a 30-second npm-registry blip surfaced one of these, `classify_error` correctly returned `None` so the build/deploy retry loop kept going, but the operator had no signal that the failure was environmental rather than a code bug. Worse, an error string that combined a transient hit with a generic `429` could be misclassified as a quota escalation and burn the operator's escalation budget.
