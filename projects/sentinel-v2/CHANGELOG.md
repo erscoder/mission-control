@@ -5,6 +5,16 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-05-01 · f883c81 - Sentinel healthcheck + SQLite WAL/busy_timeout=30s (F3.2/F3.3)
+
+`docker-compose.yml` had a healthcheck on the `flask` service but none on `sentinel`. If the daemon crashed mid-cycle (hung HTTP call, OOM, unhandled exception in a phase), Docker `restart: unless-stopped` only triggers on container exit; a wedged-but-running process kept the container "up" while no cycles advanced. Separately, `sentinel.db` is bind-mounted into both `sentinel` and `flask`. The previous `db.connect()` used `timeout=5.0`, `busy_timeout=5000`, and `synchronous=FULL` (default). Concurrent writes from the daemon's phase progress and the dashboard's status flips tripped `database is locked` under load.
+
+Fix part 1 (F3.2): healthcheck on `sentinel` service that probes the cycle state file at `/tmp/sentinel_shared/sentinel_v2_state.json`. Asserts the file exists and its mtime is within 7200s (2x `SENTINEL_LOOP_INTERVAL_HOURS=1`) so an idle cycle still passes but a wedged daemon goes unhealthy after one missed cycle and gets restarted by Docker. `start_period: 120s` lets the first cycle write the file before any failure counts. `interval: 60s`, `timeout: 10s`, `retries: 3` matches the cadence already in use on the `flask` service.
+
+Fix part 2 (F3.3): new `_apply_pragmas(conn)` helper in `db.py` runs on every `connect()` call. Sets `journal_mode=WAL`, `busy_timeout=30000` (30s), `synchronous=NORMAL`. Python-level `sqlite3.connect(..., timeout=30.0)` raised from 5s so the C-side lock-wait matches. WAL is sticky per-DB-file but we still set it each time so a fresh DB (tests, first run) lands in WAL without an extra round-trip. `_ensure_schema` no longer sets pragmas itself (the new helper covers it before `_ensure_schema` runs).
+
+5 new unit tests in `tests/unit/test_db_pragmas.py::TestPragmasOnConnect`: `test_journal_mode_is_wal`, `test_busy_timeout_is_30000`, `test_synchronous_is_normal`, `test_pragmas_reapplied_on_each_connection` (per-connection settings survive a re-open on the same DB file), `test_connect_uses_30s_python_timeout` (spies on `sqlite3.connect` to confirm the C-side timeout matches busy_timeout). Full unit suite green at 322 tests (317 prior + 5 new). Diff size 23 lines net (well under the 200 cap). Closes audit findings F3.2 and F3.3. Manual verification of the healthcheck deferred to rebuild step.
+
 ## 2026-05-01 · c608f07 - Health gate before run_deploy (F3.1)
 
 `flows/sentinel_loop.py:request_approval` already refuses to park a broken draft for human review when `vulnerability_scan_error` is set or `state.build_ok` is False. `run_deploy` had no equivalent gate. A force-approval, race condition, or a resumed state with stale flags could enter the deploy phase carrying `build_ok=False` or a scan error, fire the deploy crew, and burn Fly/Cloudflare tokens on a draft that was never green. The dashboard would also flip into a "deploying" state for a build that should have been auto-rejected.
