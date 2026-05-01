@@ -17,7 +17,7 @@ from typing import Optional
 from crewai.flow.flow import Flow, listen, start, router
 from pydantic import BaseModel, Field
 
-from sentinel_v2.flows.error_classifier import classify_error, write_escalation
+from sentinel_v2.flows.error_classifier import classify_error, is_transient, write_escalation
 from sentinel_v2.observability.tracing import end_trace, log_event, start_trace
 
 log = logging.getLogger("sentinel_v2.flow")
@@ -768,6 +768,18 @@ class SentinelLoopFlow(Flow[SentinelState]):
                 error_msg = str(e)
                 log.error("Build attempt %d/%d failed: %s", attempt, MAX_BUILD_RETRIES, error_msg)
 
+                # Tag transient network blips so the operator can tell at a
+                # glance that a retry was caused by infrastructure, not by
+                # a bug in the generated code. The retry feedback string is
+                # left intact so the LLM still sees the original error.
+                if is_transient(error_msg):
+                    log.info(
+                        "Transient network error on attempt %d/%d: %s. Retrying.",
+                        attempt,
+                        MAX_BUILD_RETRIES,
+                        error_msg[:200],
+                    )
+
                 # Unrecoverable errors (rate-limit, expired key, payment) get
                 # escalated immediately. Retrying just wastes the budget and
                 # masks the real action item from the operator.
@@ -1366,6 +1378,18 @@ class SentinelLoopFlow(Flow[SentinelState]):
             except Exception as e:
                 error_msg = str(e)
                 log.error("Deploy attempt %d/%d failed: %s", attempt, MAX_DEPLOY_RETRIES, error_msg)
+
+                # Mirror the build loop: transient network blips get an
+                # INFO line so the operator does not chase a phantom code
+                # bug, while the retry feedback string keeps the original
+                # error verbatim for the deploy crew.
+                if is_transient(error_msg):
+                    log.info(
+                        "Transient network error on attempt %d/%d: %s. Retrying.",
+                        attempt,
+                        MAX_DEPLOY_RETRIES,
+                        error_msg[:200],
+                    )
 
                 # Same escalation policy as the build retry loop: an
                 # unrecoverable failure (provider rate-limit, expired key,

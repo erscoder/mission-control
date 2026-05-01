@@ -8,7 +8,9 @@ import pytest
 
 from sentinel_v2.flows.error_classifier import (
     ACTION_HINTS,
+    RECOVERABLE_PATTERNS,
     classify_error,
+    is_transient,
     write_escalation,
 )
 
@@ -95,6 +97,67 @@ class TestClassifyError:
         seen.discard(None)
         for category in seen:
             assert category in ACTION_HINTS, f"Missing hint for {category}"
+
+
+class TestIsTransient:
+    """Transient-network short-circuit (F2.1)."""
+
+    def test_false_for_empty_input(self):
+        assert is_transient("") is False
+        assert is_transient(None) is False  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize(
+        "msg",
+        [
+            "connect ECONNREFUSED 127.0.0.1:5432",
+            "Error: read ECONNRESET",
+            "request to https://registry.npmjs.org failed, ETIMEDOUT",
+            "Error: socket hang up",
+            "getaddrinfo ENOTFOUND registry.npmjs.org",
+            "Error: read timeout after 30000ms",
+            "connect EHOSTUNREACH: network is unreachable",
+            "Operation timed out after 60s",
+        ],
+    )
+    def test_recognises_each_transient_pattern(self, msg):
+        assert is_transient(msg) is True
+        # And classify_error must NOT escalate on a transient hit.
+        assert classify_error(msg) is None
+
+    @pytest.mark.parametrize(
+        "msg",
+        [
+            "ERESOLVE unable to resolve dependency tree",
+            "TypeError: Cannot read property 'foo' of undefined",
+            "npm ERR! peer dep missing: react@^18",
+        ],
+    )
+    def test_recoverable_code_errors_are_not_transient(self, msg):
+        # Code-shaped errors must NOT be flagged as transient and must NOT
+        # escalate (regression guard around the false-positive surface).
+        assert is_transient(msg) is False
+        assert classify_error(msg) is None
+
+    def test_quota_still_escalates_when_no_transient_overlap(self):
+        # Regression: real escalation patterns keep escalating after the
+        # transient short-circuit was added.
+        assert classify_error("HTTP 429 Too Many Requests") == "blocked_quota"
+        assert classify_error("401 Unauthorized") == "blocked_auth"
+        assert classify_error("402 Payment Required") == "blocked_payment"
+
+    def test_transient_overlap_wins_over_escalation(self):
+        # Option A contract: when an error string matches both a transient
+        # pattern AND an escalation pattern, transient wins so we retry
+        # without burning the operator's escalation budget.
+        msg = "429 from registry, request timed out after 30s"
+        assert is_transient(msg) is True
+        assert classify_error(msg) is None
+
+    def test_recoverable_patterns_share_single_category(self):
+        # Documents the design choice: every recoverable pattern is filed
+        # under "transient_network" so callers can branch on a single tag.
+        categories = {category for category, _ in RECOVERABLE_PATTERNS}
+        assert categories == {"transient_network"}
 
 
 class TestWriteEscalation:

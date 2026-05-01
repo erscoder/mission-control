@@ -64,6 +64,29 @@ ESCALATION_FILE = resolve_state_path(
 )
 
 
+# Transient network failures (DNS blips, registry hiccups, idle TCP resets,
+# upstream socket timeouts) look like exceptions but are not bugs in the
+# generated code and are not escalations either. The retry loop already
+# tries again with feedback, so the only thing missing was a way to tell
+# the operator (and the LLM, downstream) that the error is environmental.
+# Patterns are matched against the lowercased error message with re.search.
+# Order does not matter here because all patterns share the same category;
+# the most generic pattern is listed last as documentation.
+RECOVERABLE_PATTERNS: list[tuple[str, str]] = [
+    ("transient_network", r"econnrefused"),
+    ("transient_network", r"econnreset"),
+    ("transient_network", r"etimedout"),
+    ("transient_network", r"socket hang up"),
+    ("transient_network", r"enotfound"),
+    ("transient_network", r"read timeout"),
+    ("transient_network", r"network is unreachable"),
+    # Generic last-resort. Matches "request timed out", "operation timed
+    # out", etc. Kept last so a more specific pattern wins if one is added
+    # later that needs different handling.
+    ("transient_network", r"timed out"),
+]
+
+
 # Order matters: more specific patterns first. Each pattern is matched against
 # the lowercased error message with re.search.
 ESCALATION_PATTERNS: list[tuple[str, str]] = [
@@ -121,19 +144,43 @@ ACTION_HINTS: dict[str, str] = {
 }
 
 
+def is_transient(error_msg: str) -> bool:
+    """Return True if ``error_msg`` looks like a transient network failure.
+
+    Used by the build/deploy retry loops to log a clearly-tagged INFO line
+    when a retry is caused by an environmental blip (DNS, TCP reset, upstream
+    timeout) rather than a bug in the generated code. Always safe to call
+    with ``None`` or an empty string.
+    """
+    if not error_msg:
+        return False
+    msg_low = error_msg.lower()
+    for _category, pattern in RECOVERABLE_PATTERNS:
+        if re.search(pattern, msg_low):
+            return True
+    return False
+
+
 def classify_error(error_msg: str) -> Optional[str]:
     """Return an escalation category for ``error_msg`` or None if recoverable.
 
     Categories:
-        ``blocked_token_plan`` — Anthropic Token Plan limiter
-        ``blocked_quota``       — generic rate-limit or quota exhaustion
-        ``blocked_auth``        — auth/key/token issue
-        ``blocked_payment``     — payment / billing issue
-        None                    — recoverable, retry with feedback
+        ``blocked_token_plan`` - Anthropic Token Plan limiter
+        ``blocked_quota``       - generic rate-limit or quota exhaustion
+        ``blocked_auth``        - auth/key/token issue
+        ``blocked_payment``     - payment / billing issue
+        None                    - recoverable, retry with feedback
+
+    Option A short-circuit: if the message matches a transient-network
+    pattern we return ``None`` even if it would also match an escalation
+    pattern. A flapping registry that happens to spit "timed out" must not
+    burn the token budget by being treated as a quota block.
     """
     if not error_msg:
         return None
     msg_low = error_msg.lower()
+    if is_transient(error_msg):
+        return None
     for category, pattern in ESCALATION_PATTERNS:
         if re.search(pattern, msg_low):
             return category
