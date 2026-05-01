@@ -153,6 +153,122 @@ def _verify_package_json_unchanged(workspace_dir: str, stack: str = "node_nestjs
     return False
 
 
+_STRIPE_CONTROLLER_IMPORT = (
+    "import { StripeWebhookController } from "
+    "'./modules/stripe/stripe.controller';"
+)
+_STRIPE_CONTROLLER_NAME = "StripeWebhookController"
+
+
+def _ensure_stripe_controller_registered(workspace_dir: str) -> dict:
+    """Defense-in-depth for the per-app Stripe wiring.
+
+    The build agent is told (in build_crew.py backstory) to import
+    ``StripeWebhookController`` in ``AppModule`` and add it to the
+    ``controllers`` array. Prompt-only enforcement is brittle. This helper
+    parses ``backend/src/app.module.ts`` and patches it idempotently when
+    the controller is missing from either the import list or the
+    ``controllers`` array. Webhook URLs would otherwise return 404 silently
+    while Stripe quietly retries.
+
+    Returns ``{registered: bool, patched: bool, reason: str}``. Never raises;
+    on file missing or unparseable shape, returns ``registered=False`` and
+    logs a WARNING. The deploy phase will surface the resulting 404 via the
+    QA verifier, which is loud enough that the operator can see it.
+    """
+    from pathlib import Path
+
+    app_module = Path(workspace_dir) / "backend" / "src" / "app.module.ts"
+    if not app_module.exists():
+        log.warning(
+            "app.module.ts missing: %s. Stripe webhook controller cannot be auto-registered.",
+            app_module,
+        )
+        return {"registered": False, "patched": False, "reason": "app_module_missing"}
+
+    try:
+        text = app_module.read_text()
+    except OSError as exc:
+        log.warning("Could not read %s: %s", app_module, exc)
+        return {"registered": False, "patched": False, "reason": f"read_error:{exc}"}
+
+    has_import = _STRIPE_CONTROLLER_NAME in text and "stripe.controller" in text
+    has_controllers_entry = bool(
+        re.search(
+            r"controllers\s*:\s*\[[^\]]*\b" + _STRIPE_CONTROLLER_NAME + r"\b[^\]]*\]",
+            text,
+            flags=re.DOTALL,
+        )
+    )
+    if has_import and has_controllers_entry:
+        return {"registered": True, "patched": False, "reason": "already_registered"}
+
+    patched_text = text
+    if not has_import:
+        last_import = list(re.finditer(r"^\s*import\s+.+?;\s*$", patched_text, flags=re.MULTILINE))
+        if last_import:
+            insert_at = last_import[-1].end()
+            patched_text = (
+                patched_text[:insert_at]
+                + "\n"
+                + _STRIPE_CONTROLLER_IMPORT
+                + patched_text[insert_at:]
+            )
+        else:
+            patched_text = _STRIPE_CONTROLLER_IMPORT + "\n" + patched_text
+
+    if not has_controllers_entry:
+        controllers_match = re.search(
+            r"(controllers\s*:\s*\[)([^\]]*)(\])",
+            patched_text,
+            flags=re.DOTALL,
+        )
+        if controllers_match:
+            head, body, tail = controllers_match.groups()
+            stripped = body.strip()
+            if stripped:
+                if stripped.endswith(","):
+                    new_body = body + " " + _STRIPE_CONTROLLER_NAME
+                else:
+                    new_body = body + ", " + _STRIPE_CONTROLLER_NAME
+            else:
+                new_body = _STRIPE_CONTROLLER_NAME
+            patched_text = (
+                patched_text[: controllers_match.start()]
+                + head
+                + new_body
+                + tail
+                + patched_text[controllers_match.end():]
+            )
+        else:
+            log.warning(
+                "app.module.ts has no controllers: [...] array; cannot auto-register %s. "
+                "Build agent must add it manually. File: %s",
+                _STRIPE_CONTROLLER_NAME,
+                app_module,
+            )
+            return {
+                "registered": False,
+                "patched": False,
+                "reason": "no_controllers_array",
+            }
+
+    try:
+        app_module.write_text(patched_text)
+    except OSError as exc:
+        log.warning("Could not write patched %s: %s", app_module, exc)
+        return {"registered": False, "patched": False, "reason": f"write_error:{exc}"}
+
+    log.warning(
+        "AppModule was missing StripeWebhookController. Auto-patched: %s "
+        "(import added=%s, controllers entry added=%s).",
+        app_module,
+        not has_import,
+        not has_controllers_entry,
+    )
+    return {"registered": True, "patched": True, "reason": "auto_patched"}
+
+
 def _make_slug(title: str) -> str:
     """Extract the product name from an opportunity title and return a DNS-safe slug.
 
@@ -1049,6 +1165,21 @@ class SentinelLoopFlow(Flow[SentinelState]):
             _verify_package_json_unchanged(self.state.workspace_dir)
         except Exception as e:
             log.warning("package.json verification skipped: %s", e)
+
+        # Defense-in-depth: build agent may have skipped the prompt rule about
+        # importing the protected StripeWebhookController in AppModule. Without
+        # registration the webhook URL returns 404 and Stripe quietly retries.
+        # Auto-patch idempotently; never fail the build here (the deploy QA
+        # verifier will catch a totally broken AppModule downstream).
+        try:
+            stripe_reg = _ensure_stripe_controller_registered(self.state.workspace_dir)
+            log_event(
+                _trace,
+                "stripe_controller_check",
+                metadata=stripe_reg,
+            )
+        except Exception as e:  # noqa: BLE001 - defensive only
+            log.warning("StripeWebhookController auto-registration skipped: %s", e)
 
         # ── QA gate: refuse to promote a draft the QA Lead failed ────────
         # Reads the QA Lead's structured output (go_no_go, build_status,
