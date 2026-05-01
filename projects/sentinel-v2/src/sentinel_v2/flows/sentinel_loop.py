@@ -72,7 +72,11 @@ def _prebake_deploy_files(workspace_dir: str, slug: str, stack: str = "node_nest
     for name in ("fly.toml", "Dockerfile", "package.json"):
         src_path = template_dir / name
         if not src_path.exists():
-            continue
+            raise FileNotFoundError(
+                f"Missing canonical template: {src_path}. The deploy_templates "
+                f"tree for stack {stack!r} is incomplete; refusing to silently "
+                "skip a missing infra file."
+            )
         content = src_path.read_text().replace("{{SLUG}}", slug)
         dst_path = backend / name
         dst_path.write_text(content)
@@ -1468,8 +1472,11 @@ class SentinelLoopFlow(Flow[SentinelState]):
         # agent has no business writing infra files: every backend ships with the
         # same NestJS stack, so we overwrite whatever it produced with the known-
         # good template, slug-substituted. Same defense for the Dockerfile.
-        prebaked = _prebake_deploy_files(workspace_dir, slug)
-        log.info("Prebaked deploy files: %s", prebaked)
+        try:
+            prebaked = _prebake_deploy_files(workspace_dir, slug)
+            log.info("Prebaked deploy files: %s", prebaked)
+        except FileNotFoundError as e:
+            log.warning("Skipping pre-bake before deploy: %s", e)
 
         # ── Deploy with automatic retry loop ─────────────────────────────
         # Seed feedback with any human revision_notes so a "request changes"

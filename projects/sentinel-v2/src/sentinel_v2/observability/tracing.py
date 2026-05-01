@@ -25,6 +25,13 @@ from typing import Any, Optional
 
 log = logging.getLogger("sentinel_v2.tracing")
 
+# Cap OTel exporter timeout BEFORE the Langfuse import (which loads the OTel
+# SDK transitively). The v4 SDK reads these env vars on first instantiation.
+# Default of 10s lets a missing Langfuse hold each `flush()` open long enough
+# to stall the cycle. 2s keeps tracing best-effort without blocking phases.
+os.environ.setdefault("OTEL_EXPORTER_OTLP_TIMEOUT", "2000")
+os.environ.setdefault("OTEL_EXPORTER_OTLP_TRACES_TIMEOUT", "2000")
+
 _client: Any = None
 _enabled: bool = False
 

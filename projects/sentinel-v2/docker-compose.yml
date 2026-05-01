@@ -20,6 +20,10 @@ services:
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-pk-lf-synapseia-dev}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-sk-lf-synapseia-dev}
       LANGFUSE_ENABLED: ${LANGFUSE_ENABLED:-true}
+      # Cap OTel exporter timeout at 2s (default is 10s). Stops phases from
+      # stalling on `flush()` when langfuse-web is unreachable. See F3.5.
+      OTEL_EXPORTER_OTLP_TIMEOUT: ${OTEL_EXPORTER_OTLP_TIMEOUT:-2000}
+      OTEL_EXPORTER_OTLP_TRACES_TIMEOUT: ${OTEL_EXPORTER_OTLP_TRACES_TIMEOUT:-2000}
     volumes:
       - sentinel_tmp:/tmp/sentinel_shared
       - ./sentinel.db:/app/sentinel.db
