@@ -1363,6 +1363,41 @@ class SentinelLoopFlow(Flow[SentinelState]):
             self._shutdown_requested = True  # end this cycle cleanly
             return
 
+        # Health gate: mirrors request_approval(). A force-approval or
+        # resumed state could otherwise carry build_ok=False or a scan
+        # error into Fly/CF deploys and burn tokens on a never-green draft.
+        if self.state.vulnerability_scan_error or not self.state.build_ok:
+            reason = (
+                self.state.vulnerability_scan_error
+                or f"build_ok={self.state.build_ok}"
+            )
+            log.error("Skipping deploy gate - broken build/security: %s", reason)
+            _gate_trace = start_trace(
+                "run_deploy_health_gate",
+                cycle=self.state.cycle_count,
+                draft_id=self.state.draft_id,
+            )
+            log_event(
+                _gate_trace,
+                "deploy_health_gate_fail",
+                level="ERROR",
+                metadata={"reason": reason, "build_ok": self.state.build_ok},
+            )
+            end_trace(_gate_trace, output={"gate": "fail", "reason": reason}, level="ERROR")
+            if self.state.draft_id:
+                try:
+                    from sentinel_v2.dashboard_state import update_draft
+                    update_draft(
+                        self.state.draft_id,
+                        status="failed",
+                        revision_notes=f"Auto-rejected before deploy. {reason}",
+                    )
+                except Exception as db_err:
+                    log.warning("Could not mark draft failed: %s", db_err)
+            self._clear_checkpoint()
+            self._shutdown_requested = True
+            return
+
         self.state.current_phase = "deploy"
         self._touch()
         log.info("Phase 5: DEPLOY")

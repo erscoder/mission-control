@@ -226,6 +226,7 @@ class TestSentinelLoopFlowKickoff:
         even if the agent invents a URL.
         """
         flow.state.approved = True
+        flow.state.build_ok = True  # required to pass deploy health gate
         flow.state.build_output = "Built: SaaS app"
         flow.state.top_opportunity = {"title": "Opportunity"}
 
@@ -678,6 +679,7 @@ class TestWriteState:
     def test_run_deploy_calls_write_state(self, flow):
         """run_deploy() calls write_state for deploy phase."""
         flow.state.approved = True
+        flow.state.build_ok = True  # required to pass deploy health gate
         flow.state.build_output = "Built: app"
         flow.state.top_opportunity = {"title": "Op"}
         mock_result = Mock(spec=["raw"])
@@ -751,6 +753,7 @@ class TestRememberCalls:
     def test_run_deploy_calls_remember(self, flow):
         """run_deploy() stores deployment result in CrewAI memory."""
         flow.state.approved = True
+        flow.state.build_ok = True  # required to pass deploy health gate
         flow.state.build_output = "Built: app"
         flow.state.top_opportunity = {"title": "Op"}
         mock_result = Mock(spec=["raw"])
@@ -933,6 +936,7 @@ class TestFeedbackLoop:
     def test_run_deploy_fails_without_frontend_url(self, flow):
         """run_deploy() marks draft as failed when crew returns no frontend_url."""
         flow.state.approved = True
+        flow.state.build_ok = True  # required to pass deploy health gate
         flow.state.build_output = "Built: app"
         flow.state.top_opportunity = {"title": "Op"}
         flow.state.draft_id = "draft_c1_test"
@@ -967,6 +971,7 @@ class TestFeedbackLoop:
         not whatever string the crew returned — keeps DNS predictable.
         """
         flow.state.approved = True
+        flow.state.build_ok = True  # required to pass deploy health gate
         flow.state.build_output = "Built: app"
         flow.state.top_opportunity = {"title": "Op"}
 
@@ -993,6 +998,7 @@ class TestFeedbackLoop:
     def test_run_deploy_succeeds_with_url_key(self, flow):
         """run_deploy() also accepts 'url' key as fallback for frontend_url."""
         flow.state.approved = True
+        flow.state.build_ok = True  # required to pass deploy health gate
         flow.state.build_output = "Built: app"
         flow.state.top_opportunity = {"title": "Op"}
 
@@ -1167,6 +1173,7 @@ class TestDeployRetryLoop:
     def test_deploy_retries_on_rollback_then_succeeds(self, flow):
         """Deploy gets ROLLBACK, retries, then succeeds."""
         flow.state.approved = True
+        flow.state.build_ok = True  # required to pass deploy health gate
         flow.state.build_output = "Built: app"
         flow.state.top_opportunity = {"title": "Opportunity"}
 
@@ -1196,6 +1203,7 @@ class TestDeployRetryLoop:
     def test_deploy_exhausts_retries_marks_failed(self, flow):
         """Deploy fails all retries."""
         flow.state.approved = True
+        flow.state.build_ok = True  # required to pass deploy health gate
         flow.state.build_output = "Built: app"
         flow.state.top_opportunity = {"title": "Opportunity"}
         flow.state.draft_id = "draft_deploy_retry"
@@ -1300,3 +1308,109 @@ class TestVerifyPackageJsonUnchanged:
         assert (backend / "package.json").read_text() == canonical
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert any("missing" in r.getMessage() for r in warnings)
+
+
+class TestRunDeployHealthGate:
+    """Tests for run_deploy()'s health gate (Step 9 / F3.1).
+
+    Sits after the early-returns and before current_phase is flipped to
+    "deploy". Mirrors request_approval()'s gate.
+    """
+
+    def test_run_deploy_refuses_when_build_ok_false(self, flow):
+        """build_ok=False blocks deploy even with approved=True."""
+        flow.state.approved = True
+        flow.state.build_ok = False
+        flow.state.draft_id = "draft_c1_broken_build"
+        flow.state.cycle_count = 1
+        flow.state.top_opportunity = {"title": "Broken App"}
+
+        with patch(
+            "sentinel_v2.crews.deploy_crew.deploy_crew.deploy_crew"
+        ) as mock_crew_cls, patch(
+            "sentinel_v2.dashboard_state.update_draft"
+        ) as mock_update, patch.object(
+            flow, "_clear_checkpoint"
+        ) as mock_clear:
+            flow.run_deploy()
+
+        # Deploy crew never instantiated
+        mock_crew_cls.assert_not_called()
+        # Draft marked failed with the reason in the notes
+        mock_update.assert_called_once()
+        kwargs = mock_update.call_args.kwargs
+        assert kwargs.get("status") == "failed"
+        assert "build_ok=False" in (kwargs.get("revision_notes") or "")
+        # Cycle terminated cleanly
+        mock_clear.assert_called_once()
+        assert flow._shutdown_requested is True
+        assert flow.state.deployed is False
+        assert flow.state.current_phase != "deploy"
+
+    def test_run_deploy_refuses_when_security_scan_errored(self, flow):
+        """vulnerability_scan_error set blocks deploy even with build_ok=True."""
+        flow.state.approved = True
+        flow.state.build_ok = True
+        flow.state.vulnerability_scan_error = "osv-scanner crashed"
+        flow.state.draft_id = "draft_c1_scan_err"
+        flow.state.cycle_count = 1
+        flow.state.top_opportunity = {"title": "Scan Crash App"}
+
+        with patch(
+            "sentinel_v2.crews.deploy_crew.deploy_crew.deploy_crew"
+        ) as mock_crew_cls, patch(
+            "sentinel_v2.dashboard_state.update_draft"
+        ) as mock_update, patch.object(
+            flow, "_clear_checkpoint"
+        ) as mock_clear:
+            flow.run_deploy()
+
+        mock_crew_cls.assert_not_called()
+        notes = mock_update.call_args.kwargs.get("revision_notes") or ""
+        assert "osv-scanner crashed" in notes
+        assert mock_update.call_args.kwargs.get("status") == "failed"
+        mock_clear.assert_called_once()
+        assert flow._shutdown_requested is True
+        assert flow.state.deployed is False
+
+    def test_run_deploy_passes_when_healthy(self, flow):
+        """Both flags clean: gate does NOT trigger and deploy logic proceeds."""
+        flow.state.approved = True
+        flow.state.build_ok = True
+        flow.state.vulnerability_scan_error = None
+        flow.state.draft_id = "draft_c1_healthy"
+        flow.state.cycle_count = 1
+        flow.state.top_opportunity = {"title": "Healthy App"}
+        flow.state.build_output = "Built: Healthy App"
+
+        mock_result = Mock(spec=["raw"])
+        mock_result.raw = {
+            "frontend_url": "https://healthy-app.erslabs.net",
+            "deployment_id": "dep-xyz",
+            "go_no_go": "GO",
+        }
+
+        with patch(
+            "sentinel_v2.crews.deploy_crew.deploy_crew.deploy_crew"
+        ) as mock_crew_cls, patch(
+            "sentinel_v2.flows.sentinel_loop._prebake_deploy_files",
+            return_value={},
+        ), patch(
+            "sentinel_v2.dashboard_state.update_draft"
+        ) as mock_update, patch.object(
+            flow, "remember"
+        ):
+            mock_crew = MagicMock()
+            mock_crew.kickoff.return_value = mock_result
+            mock_crew_cls.return_value = mock_crew
+            flow.run_deploy()
+
+            # Deploy crew was actually invoked: gate did NOT short-circuit
+            mock_crew.kickoff.assert_called_once()
+
+        # Healthy path landed in deploy state, not failed
+        assert flow.state.deployed is True
+        assert flow._shutdown_requested is False
+        # No update_draft call carries status="failed" from the gate path
+        for call in mock_update.call_args_list:
+            assert call.kwargs.get("status") != "failed"
