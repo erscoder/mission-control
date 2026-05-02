@@ -85,7 +85,15 @@ def build_crew(cycle: int = 1) -> Crew:
         llm=minimax_smart,
         verbose=True,
         allow_delegation=True,
-        max_iter=5,
+        # 25 (CrewAI default) so the manager can delegate, evaluate, and refine
+        # all 6 tasks (plan, frontend, backend, code review, security audit, QA)
+        # without hitting max_iter on a tool_call final-answer. The previous
+        # cap of 5 reliably triggered TaskOutput.raw ValidationError on every
+        # build attempt, escalated as `blocked_agent_loop`, and burned the
+        # full retry budget on the same wall. Token cost grows linearly with
+        # complexity but a NO-iteration cap is worse than a permissive one
+        # for a 6-task hierarchical crew.
+        max_iter=25,
     )
 
     frontend_lead = Agent(
