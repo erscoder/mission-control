@@ -5,6 +5,10 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-05-02 · 0dc21ad - Pin Stripe apiVersion to 2023-10-16 in canonical template
+
+The canonical NestJS template package.json pins `stripe@14.25.0`, whose TypeScript typings only accept the literal `apiVersion: '2023-10-16'`. The pre-baked `stripe.controller.ts` had `'2024-06-20'`, so every post-build verification failed with TS2322 even AFTER the post-crew rebake correctly reverted agent writes to canonical. The bug was in the canonical itself, not the agent. Bumping apiVersion would require lifting the SDK pin in lockstep across package.json and any code that imports Stripe types; not in scope. Pinned to `'2023-10-16'` with an inline comment for the next operator who tries to bump in isolation.
+
 ## 2026-05-02 · 6cdc45a - Set _shutdown_requested when build escalation fires
 
 `run_build`'s escalation branch (on `classify_error` match - rate-limit, auth, payment, agent-tool-call loop) marked the draft `blocked` and returned, but never set `self._shutdown_requested = True`. The CrewAI `@listen` chain then carried on into `run_security_remediation` -> `request_approval` -> `run_deploy`, running a full security crew (5 iterations) on a workspace that never produced a clean build. Observed live: a TaskOutput.raw ValidationError escalated correctly, status flipped to `blocked`, then security spent ~10 minutes grinding on build_ok=False output before the deploy gate finally rejected. The QA gate fail-closed branch already sets the flag; mirror it here. Deploy escalation branch left alone (last `@listen` target). 384 unit tests green.
