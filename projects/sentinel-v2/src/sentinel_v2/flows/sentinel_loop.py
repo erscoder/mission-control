@@ -679,7 +679,7 @@ def _provision_stripe_resources(
 
 # ── State ────────────────────────────────────────────────────────────────────
 
-MAX_BUILD_RETRIES = int(os.getenv("SENTINEL_MAX_BUILD_RETRIES", "3"))
+MAX_BUILD_RETRIES = int(os.getenv("SENTINEL_MAX_BUILD_RETRIES", "6"))
 MAX_DEPLOY_RETRIES = int(os.getenv("SENTINEL_MAX_DEPLOY_RETRIES", "2"))
 
 
