@@ -5,6 +5,10 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-05-02 · 6cdc45a - Set _shutdown_requested when build escalation fires
+
+`run_build`'s escalation branch (on `classify_error` match - rate-limit, auth, payment, agent-tool-call loop) marked the draft `blocked` and returned, but never set `self._shutdown_requested = True`. The CrewAI `@listen` chain then carried on into `run_security_remediation` -> `request_approval` -> `run_deploy`, running a full security crew (5 iterations) on a workspace that never produced a clean build. Observed live: a TaskOutput.raw ValidationError escalated correctly, status flipped to `blocked`, then security spent ~10 minutes grinding on build_ok=False output before the deploy gate finally rejected. The QA gate fail-closed branch already sets the flag; mirror it here. Deploy escalation branch left alone (last `@listen` target). 384 unit tests green.
+
 ## 2026-05-02 · 1332356 - Re-bake protected template files after build crew kickoff
 
 Build agent routinely clobbers protected template sources despite the prompt forbidding it. Observed live: rewritten `src/modules/stripe/stripe.controller.ts` pinned `apiVersion='2024-06-20'` against the canonical `stripe@14.25.0` typing that requires `'2023-10-16'`; the TS2322 mismatch killed `nest build` at the post-build verification gate. `run_build` now calls `_prebake_deploy_files` a second time after `crew.kickoff()` succeeds and before the verification gate. The walk-recursive bake overwrites every template file back to its canonical, slug-substituted contents in one pass; idempotent and touches only files inside the template tree (agent-added legitimate files are preserved). `_verify_package_json_unchanged` hash-log kept so operators still see when the agent tried to drift the dep matrix. New `TestPostBuildRebake::test_run_build_calls_prebake_twice` pins the hook (1 pre-crew + 1 post-crew). 384 unit tests green.
