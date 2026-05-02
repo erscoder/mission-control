@@ -5,6 +5,10 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-05-02 · 45d401c - Forbid agent-written duplicate webhooks module
+
+Backend agent kept hallucinating `src/modules/webhooks/webhooks.service.ts` calling `stripeConfig.webhooks.constructEvent(...)`. Two folded mistakes: (1) duplicates the canonical `stripe.controller.ts` webhook handler, breaking idempotency; (2) type-confuses the plain `stripeConfig` record with a Stripe SDK client (no `.webhooks` property exists). `nest build` then fails TS2339 and the post-build verification rejects. Backend task prompt gains an explicit blacklist (`src/modules/webhooks/`, `src/modules/stripe-webhook/`, `src/webhooks/`, etc.) plus clarification that `stripeConfig` exposes only `secretKey` / `webhookSecret` / `productId` / `priceId`. Services that genuinely need the SDK must instantiate locally with the canonical `apiVersion: '2023-10-16'`.
+
 ## 2026-05-02 · 0dc21ad - Pin Stripe apiVersion to 2023-10-16 in canonical template
 
 The canonical NestJS template package.json pins `stripe@14.25.0`, whose TypeScript typings only accept the literal `apiVersion: '2023-10-16'`. The pre-baked `stripe.controller.ts` had `'2024-06-20'`, so every post-build verification failed with TS2322 even AFTER the post-crew rebake correctly reverted agent writes to canonical. The bug was in the canonical itself, not the agent. Bumping apiVersion would require lifting the SDK pin in lockstep across package.json and any code that imports Stripe types; not in scope. Pinned to `'2023-10-16'` with an inline comment for the next operator who tries to bump in isolation.
