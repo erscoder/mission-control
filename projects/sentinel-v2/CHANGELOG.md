@@ -5,6 +5,10 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-05-02 · a4499a8 - Pre-bake canonical PrismaModule + PrismaService
+
+Backend agent consistently imports `PrismaService` from `'../../prisma/prisma.service'` in every feature service / controller / spec but does not always emit the file. Post-build verification gate then fails `npm run build` with TS2307 missing-module errors (observed live: complianceDesk attempt 1 stderr showed identical TS2307 across auth.service.spec.ts and several modules, no prisma.service.ts on disk). Adds `src/prisma/prisma.service.ts` (PrismaClient subclass with `OnModuleInit`/`OnModuleDestroy` lifecycle hooks for clean Fly rolling deploys) and `src/prisma/prisma.module.ts` (`@Global()` module exporting PrismaService) to the node_nestjs deploy template. Existing `_prebake_deploy_files` walk-recursive pattern mirrors them automatically. Backend task description gains a 'PRISMA PROTECTED FILES' section parallel to the Stripe section. 362 unit tests green.
+
 ## 2026-05-02 · bb79625 - Drop output_pydantic from QA Lead task to stop ValidationError crash loop
 
 QA Lead (MiniMax-M2.7) emitted Prisma schema fragments (`provider = "prisma-client-js"`) mixed with the QAGateReport JSON envelope. With `output_pydantic=QAGateReport` attached to the qa_task, CrewAI strict-parsed the raw output and raised `pydantic.ValidationError` inside `crew.kickoff()`. The outer `run_build` retry loop then burned MAX_BUILD_RETRIES on the same root cause without ever reaching the QA gate, the security loop, or the deterministic `_verify_npm_build` gate. Fix removes `output_pydantic` from `qa_task`; raw output now flows to `sentinel_loop._parse_deploy_result`, which already extracts JSON from prose (json.loads + markdown-fence stripping + regex fallback). When parsing fails completely, the QA gate fail-closed branch plus `_verify_npm_build` both still mark the draft failed. QAGateReport class kept as documentation contract for the parser. 361 unit tests green.
