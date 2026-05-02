@@ -112,20 +112,51 @@ class TestBuildCrew:
         crew = build_crew()
         assert len(crew.agents) == 6
 
-    def test_build_crew_hierarchical_process(self):
-        """Crew uses hierarchical process."""
+    def test_build_crew_sequential_process(self):
+        """Crew uses sequential process. Hierarchical wraps the crew in an LLM
+        manager that re-evaluates outputs and crashes on MiniMax-M2.7's
+        tool-call-heavy final answers, so the crew runs sequentially with an
+        explicit context chain instead.
+        """
         from sentinel_v2.crews.build_crew.build_crew import build_crew
         from crewai import Process
 
         crew = build_crew()
-        assert crew.process == Process.hierarchical
+        assert crew.process == Process.sequential
 
-    def test_build_crew_has_manager_llm(self):
-        """Crew has a manager_llm configured for delegation."""
+    def test_build_crew_has_eleven_tasks(self):
+        """Crew has six planner tasks (architecture, domain, services, api,
+        infra, files) followed by frontend, backend, code review, security
+        audit, and QA. The planner chain replaces the prior monolithic
+        plan_task to constrain agent output and reduce hallucinations.
+        """
         from sentinel_v2.crews.build_crew.build_crew import build_crew
 
         crew = build_crew()
-        assert crew.manager_llm is not None
+        assert len(crew.tasks) == 11
+
+    def test_build_crew_planner_chain_uses_strategic_manager(self):
+        """The first six tasks are the planning stages, all driven by
+        strategic_manager. Splitting one agent across six smaller tasks
+        constrains output structure without forcing new agent prompts.
+        """
+        from sentinel_v2.crews.build_crew.build_crew import build_crew
+
+        crew = build_crew()
+        for task in crew.tasks[:6]:
+            assert task.agent.role == "Strategic Product Manager"
+
+    def test_build_crew_plan_files_in_frontend_context(self):
+        """The frontend lead must read the file-by-file write plan so it
+        knows exactly which files to write and in what order. Without it
+        the lead invents paths and breaks downstream code review.
+        """
+        from sentinel_v2.crews.build_crew.build_crew import build_crew
+
+        crew = build_crew()
+        plan_files = crew.tasks[5]
+        frontend_task = crew.tasks[6]
+        assert plan_files in (frontend_task.context or [])
 
     def test_build_crew_tasks_have_descriptions(self):
         """All tasks have non-empty descriptions."""

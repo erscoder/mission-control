@@ -244,42 +244,198 @@ def build_crew(cycle: int = 1) -> Crew:
 
     # ── Tasks ────────────────────────────────────────────────────────────────
 
-    plan_task = Task(
+    # ── Six-stage planner chain ──────────────────────────────────────────
+    # The build crew's leads (frontend, backend) consistently hallucinated
+    # imports, types, and entire modules when handed a single 11-section
+    # monolithic plan. Replacing it with six smaller, sequential planning
+    # tasks lets each stage constrain agent output and forces internal
+    # consistency before any code is written. All six stages reuse
+    # `strategic_manager` (same LLM = MiniMax-M2.7); structure, not agent
+    # identity, is what reduces hallucination room. Outputs are markdown
+    # with strict section headings — no `output_pydantic` because strict
+    # JSON parsing crashes `crew.kickoff()` on malformed MiniMax output.
+
+    _shared_inputs_block = (
+        "SHARED INPUTS (use literally; do not invent variants):\n"
+        "  opportunity        = {opportunity}\n"
+        "  operator_capacity  = {operator_capacity}\n"
+        "  workspace_dir      = {workspace_dir}\n"
+        "  slug               = {slug}\n"
+        "  draft_id           = {draft_id}\n"
+        "  revision_notes     = {revision_notes}\n"
+        "If revision_notes is non-empty, this is a RETRY: read previously written "
+        "files via list_files (NOT now, you have no tools — defer to the leads), "
+        "patch only the offending sections, do NOT regenerate the workspace.\n"
+    )
+
+    plan_architecture = Task(
         description=(
-            "INPUT: opportunity = {opportunity}; operator_capacity = {operator_capacity}; "
-            "workspace_dir = {workspace_dir}; slug = {slug}; draft_id = {draft_id}.\n\n"
-            "REVISION FEEDBACK (if any): {revision_notes}\n"
-            "If revision feedback is provided, this is NOT a fresh build. The workspace "
-            "already has previous code. Focus ONLY on the feedback. Read existing files "
-            "first, then make surgical changes. Do not rebuild from scratch.\n\n"
-            "Produce a 1-page shipping plan. Rules:\n"
-            "- MVP must be shippable in 20-60 engineering hours.\n"
-            "- Scope MUST cut to ONE headline value prop and ONE primary user journey.\n"
-            "- Stripe Checkout is included from day 1. No free-forever; free trial only if friction "
-            "  is unacceptable without it.\n"
-            "- Event tracking (PostHog or Plausible) must instrument every funnel step.\n"
-            "- Do NOT plan admin dashboards, settings pages, or teams/orgs unless explicitly justified "
-            "  by the ICP and the headline value prop.\n\n"
-            "Deliverables:\n"
-            "1. One-line value proposition (the headline for the landing page).\n"
-            "2. ICP statement (echo from qualification).\n"
-            "3. Primary user journey in 5-7 steps, from landing page to first paid action.\n"
-            "4. MVP feature list (max 8 items). Mark each: [core | nice-to-have | cut].\n"
-            "5. Tech stack decision with one-line justification per choice.\n"
-            "6. **Design template slug** — pick ONE slug from the design template index at "
-            "   `src/sentinel_v2/data/design_templates.md`. Match the app domain to the table. "
-            "   If unsure, use `linear.app`. Output the slug as `design_template: <slug>`.\n"
-            "7. PostgreSQL schema: tables + columns + indexes + FK relationships (keep it tight).\n"
-            "8. API surface: endpoints, methods, auth, request/response shapes (Zod/DTO pseudocode).\n"
-            "9. Pricing: one paid tier + trial length + Stripe product/price IDs as env vars.\n"
-            "10. Telemetry plan: event names for every funnel step.\n"
-            "11. Risk list: 3 things that could break the ship-in-2-weeks timeline, with mitigations.\n"
+            f"{_shared_inputs_block}\n"
+            "Produce the architecture stage of the build plan.\n\n"
+            "Rules:\n"
+            "- Tech stack is FIXED: backend = NestJS 10 + Prisma 5 + PostgreSQL, "
+            "  frontend = Next.js 14 App Router + Tailwind + Radix. Justify any "
+            "  deviation in 1 line; otherwise leave the defaults and move on.\n"
+            "- The protected pre-baked files MUST appear in the file tree exactly "
+            "  at their canonical paths: `backend/{Dockerfile,fly.toml,package.json,"
+            "tsconfig.json,tsconfig.build.json,nest-cli.json}`, "
+            "`backend/src/{config/stripe.config.ts,modules/stripe/stripe.controller.ts,"
+            "prisma/prisma.service.ts,prisma/prisma.module.ts}`, "
+            "`frontend/package.json`. Do NOT propose alternative paths or names.\n"
+            "- Pick ONE design_template slug from "
+            "`src/sentinel_v2/data/design_templates.md`. If unsure, use `linear`.\n\n"
+            "Output exactly three top-level markdown sections, in order:\n"
+            "  ## File Tree         : `frontend/` then `backend/` paths as a markdown "
+            "                          bullet tree, one-line description per file.\n"
+            "  ## Tech Stack        : bullet list, each line `<choice> - <one-line "
+            "                          justification>`.\n"
+            "  ## Design Template   : exactly one line `design_template: <slug>`."
         ),
         expected_output=(
-            "A concrete shipping plan in structured markdown (or JSON) with the 11 sections above. "
-            "MUST include `design_template: <slug>` with a valid slug from the index. "
-            "The Feature list MUST be <= 8 items. The schema MUST be in DDL or Prisma schema syntax. "
-            "The API surface MUST be in OpenAPI-style YAML or a terse table."
+            "Markdown with three sections under the EXACT headings: `## File Tree`, "
+            "`## Tech Stack`, `## Design Template`. The Design Template section "
+            "MUST contain the literal line `design_template: <slug>`."
+        ),
+        agent=strategic_manager,
+    )
+
+    plan_domain = Task(
+        description=(
+            f"{_shared_inputs_block}\n"
+            "Produce the domain stage of the build plan.\n\n"
+            "Rules:\n"
+            "- Output the FULL `prisma/schema.prisma` content: datasource, generator, "
+            "  every model with fields, indexes, and foreign-key relations.\n"
+            "- Datasource MUST be `provider = \"postgresql\"`. Generator MUST be "
+            "  `provider = \"prisma-client-js\"`.\n"
+            "- Forbid `Json` columns unless the ICP explicitly requires schemaless "
+            "  data (justify inline with a `// reason: ...` comment if you use one).\n"
+            "- Forbid soft-delete columns (`deletedAt`) unless the ICP demands a "
+            "  recovery flow.\n"
+            "- After the schema, list TypeScript entity interfaces matching every "
+            "  model, with the same field names and types.\n\n"
+            "Output, in this exact order with NO prose between them:\n"
+            "```prisma\n<full schema.prisma content>\n```\n"
+            "```typescript\n<entity interfaces>\n```"
+        ),
+        expected_output=(
+            "Two fenced code blocks: a ```prisma block with the full schema, then a "
+            "```typescript block with entity interfaces. No prose, no other sections."
+        ),
+        agent=strategic_manager,
+    )
+
+    plan_services = Task(
+        description=(
+            f"{_shared_inputs_block}\n"
+            "Produce the services stage of the build plan.\n\n"
+            "Rules:\n"
+            "- List every NestJS provider class needed for the application.\n"
+            "- For each class, list method signatures only as `methodName(arg: Type, "
+            "  ...): ReturnType`. NO method bodies.\n"
+            "- Inject `PrismaService` from `'../../prisma/prisma.service'` (the "
+            "  canonical pre-baked path). Reference `stripeConfig` from "
+            "  `'../../config/stripe.config'` (a plain config object exposing "
+            "  `secretKey`, `webhookSecret`, `productId`, `priceId` only, NOT a "
+            "  Stripe SDK client; instantiate `new Stripe(stripeConfig.secretKey, "
+            "  { apiVersion: '2023-10-16' })` locally if a service needs the SDK).\n"
+            "- DO NOT propose a separate webhooks service / controller; the "
+            "  canonical `stripe.controller.ts` is the sole webhook handler.\n\n"
+            "Output, in this exact order:\n"
+            "```typescript\n<class skeletons with method signatures only>\n```\n"
+            "## Dependencies\n"
+            "<bullet list of which service injects which, e.g. "
+            "`OrdersService -> PrismaService, BillingService`>"
+        ),
+        expected_output=(
+            "One ```typescript fenced block with class skeletons (signatures only) "
+            "followed by a `## Dependencies` heading and a bullet list."
+        ),
+        agent=strategic_manager,
+    )
+
+    plan_api = Task(
+        description=(
+            f"{_shared_inputs_block}\n"
+            "Produce the API surface stage of the build plan.\n\n"
+            "Rules:\n"
+            "- `## Endpoints` is a markdown table with columns "
+            "`method | path | auth | request | response | service.method`. "
+            "  Use Zod-pseudocode for request/response shapes (e.g. "
+            "  `z.object({ email: z.string().email() })`).\n"
+            "- Auth column values: `public`, `jwt`, `webhook` (Stripe).\n"
+            "- Include `GET /api/health` and the canonical `POST /api/stripe/webhook` "
+            "  rows; the latter is handled by the protected stripe.controller.ts so "
+            "  mark its `service.method` cell `(protected controller)`.\n"
+            "- `## Frontend Pages` is a markdown table with columns "
+            "`url | purpose | auth-gated?`. Include landing (`/`), pricing, "
+            "checkout success/cancel, and the core app journey pages.\n\n"
+            "Output exactly two top-level markdown sections under those exact "
+            "headings, no other prose."
+        ),
+        expected_output=(
+            "Two markdown tables under the EXACT headings `## Endpoints` and "
+            "`## Frontend Pages`. The Endpoints table MUST include the rows "
+            "`GET /api/health` and `POST /api/stripe/webhook`."
+        ),
+        agent=strategic_manager,
+    )
+
+    plan_infra = Task(
+        description=(
+            f"{_shared_inputs_block}\n"
+            "Produce the infrastructure stage of the build plan.\n\n"
+            "Rules:\n"
+            "- `## Auth`: choose JWT or session, list cookie flags (HttpOnly, Secure, "
+            "  SameSite=Lax minimum), and enumerate every protected route from "
+            "  the API plan.\n"
+            "- `## Stripe`: which routes invoke Checkout Session creation, where the "
+            "  webhook lands. The webhook handler is `backend/src/modules/stripe/"
+            "stripe.controller.ts` (PROTECTED — do not propose changes to it). The "
+            "  `STRIPE_*` env vars are injected as Fly secrets by Sentinel; do NOT "
+            "  read them with `|| ''` fallbacks.\n"
+            "- `## Telemetry`: PostHog event names for every funnel step from the "
+            "  Frontend Pages table (e.g. `landing_view`, `pricing_view`, "
+            "  `checkout_started`, `checkout_succeeded`, `core_action_completed`).\n"
+            "- `## Env Vars`: consolidated list of every env var the app reads at "
+            "  runtime, marked `[backend]` or `[frontend]`. The four `STRIPE_*` and "
+            "  `DATABASE_URL` are always present on backend.\n\n"
+            "Output the four sections in that order, no other prose."
+        ),
+        expected_output=(
+            "Markdown with the EXACT four headings `## Auth`, `## Stripe`, "
+            "`## Telemetry`, `## Env Vars`, in that order, each populated."
+        ),
+        agent=strategic_manager,
+    )
+
+    plan_files = Task(
+        description=(
+            f"{_shared_inputs_block}\n"
+            "Produce the file-by-file write plan. This is the AUTHORITATIVE work "
+            "order the leads will follow.\n\n"
+            "Rules:\n"
+            "- Synthesise the prior five planning stages into a single ordered, "
+            "  numbered list of files to write.\n"
+            "- Group by side: backend files first (in `backend/src/...` order), then "
+            "  frontend (in `frontend/{app,components,lib,...}` order). "
+            "  Backend follows the dependency order: prisma schema -> entities -> "
+            "  services -> controllers/dtos -> auth/middleware -> app.module.ts -> "
+            "  main.ts. Frontend follows: lib/utilities -> components -> app/(routes).\n"
+            "- SKIP every protected pre-baked file (Dockerfile, fly.toml, "
+            "  package.json on either side, tsconfig*.json, nest-cli.json, "
+            "  prisma.{service,module}.ts, stripe.{config,controller}.ts).\n"
+            "- For each file, one paragraph that names: imports it pulls from where, "
+            "  exports it provides, and which prior plan section it implements.\n"
+            "- DO NOT include code blocks. The leads write the code; this stage "
+            "  only writes the schedule.\n\n"
+            "Output a single markdown numbered list. Each item formatted: "
+            "`N. <relative_path> - <one paragraph>`. Aim for 25-50 entries total."
+        ),
+        expected_output=(
+            "Markdown numbered list. Each item starts with the index, the "
+            "workspace-relative file path, a hyphen, and a one-paragraph scope. "
+            "No code blocks, no other top-level headings."
         ),
         agent=strategic_manager,
     )
@@ -517,16 +673,22 @@ def build_crew(cycle: int = 1) -> Crew:
         agent=qa_lead,
     )
 
-    # Pipe each task's output to the next via `context` so a sequential crew
-    # carries the plan into frontend/backend, those into code review +
-    # security audit, and all of them into the final QA gate. CrewAI's
-    # default sequential context only includes immediate predecessors; we are
-    # explicit so the QA task can read the full chain.
-    frontend_task.context = [plan_task]
-    backend_task.context = [plan_task]
-    code_review_task.context = [frontend_task, backend_task]
-    security_audit_task.context = [frontend_task, backend_task]
-    qa_task.context = [code_review_task, security_audit_task]
+    # Pipe each task's output to the next via `context`. The six-stage
+    # planner chain hands its synthesised output (`plan_files`) to the leads.
+    # Frontend gets a tighter slice (architecture + api + files); backend
+    # gets the full plan because it needs domain + services as well as infra.
+    # Code review and security audit each see the relevant slice plus the
+    # leads' code. QA reads everything plus the file plan.
+    plan_domain.context        = [plan_architecture]
+    plan_services.context      = [plan_architecture, plan_domain]
+    plan_api.context           = [plan_architecture, plan_domain, plan_services]
+    plan_infra.context         = [plan_architecture, plan_api]
+    plan_files.context         = [plan_architecture, plan_domain, plan_services, plan_api, plan_infra]
+    frontend_task.context      = [plan_architecture, plan_api, plan_files]
+    backend_task.context       = [plan_architecture, plan_domain, plan_services, plan_api, plan_infra, plan_files]
+    code_review_task.context   = [frontend_task, backend_task, plan_files]
+    security_audit_task.context = [frontend_task, backend_task, plan_infra]
+    qa_task.context            = [code_review_task, security_audit_task, plan_files]
 
     crew = Crew(
         agents=[
@@ -538,7 +700,12 @@ def build_crew(cycle: int = 1) -> Crew:
             qa_lead,
         ],
         tasks=[
-            plan_task,
+            plan_architecture,
+            plan_domain,
+            plan_services,
+            plan_api,
+            plan_infra,
+            plan_files,
             frontend_task,
             backend_task,
             code_review_task,
