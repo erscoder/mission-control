@@ -2,8 +2,17 @@ FROM python:3.12-slim
 
 # System deps: curl for flyctl installer + git for some npm workflows the agents may run
 RUN apt-get update \
- && apt-get install -y --no-install-recommends curl ca-certificates git \
+ && apt-get install -y --no-install-recommends curl ca-certificates git gnupg \
  && rm -rf /var/lib/apt/lists/*
+
+# Node 20 LTS + npm: required by the post-build verification gate that runs
+# `npm install` and `npm run build` in backend/ and frontend/ subdirs to catch
+# hallucinated QA Lead 'GO' verdicts on workspaces that will not compile.
+# NodeSource setup script handles distro detection and apt sources idempotently.
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+ && apt-get install -y --no-install-recommends nodejs \
+ && rm -rf /var/lib/apt/lists/* \
+ && node --version && npm --version
 
 # flyctl — required by fly_tool.py to deploy backends
 RUN curl -L https://fly.io/install.sh | sh
