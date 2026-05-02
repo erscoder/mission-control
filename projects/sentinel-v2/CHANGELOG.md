@@ -5,6 +5,14 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-05-02 · bb79625 - Drop output_pydantic from QA Lead task to stop ValidationError crash loop
+
+QA Lead (MiniMax-M2.7) emitted Prisma schema fragments (`provider = "prisma-client-js"`) mixed with the QAGateReport JSON envelope. With `output_pydantic=QAGateReport` attached to the qa_task, CrewAI strict-parsed the raw output and raised `pydantic.ValidationError` inside `crew.kickoff()`. The outer `run_build` retry loop then burned MAX_BUILD_RETRIES on the same root cause without ever reaching the QA gate, the security loop, or the deterministic `_verify_npm_build` gate. Fix removes `output_pydantic` from `qa_task`; raw output now flows to `sentinel_loop._parse_deploy_result`, which already extracts JSON from prose (json.loads + markdown-fence stripping + regex fallback). When parsing fails completely, the QA gate fail-closed branch plus `_verify_npm_build` both still mark the draft failed. QAGateReport class kept as documentation contract for the parser. 361 unit tests green.
+
+## 2026-05-02 · 83ffc34 - Install Node 20 LTS and npm in sentinel docker image
+
+The verification gate from 640e2c3 calls `npm install` + `npm run build` in `backend/` and `frontend/` subdirs, but the python:3.12-slim base had no node binaries. Every verification short-circuited with `first_failure='npm_not_found'`, masking real build outcomes. Adds NodeSource setup_20.x apt source and installs nodejs (which ships npm together). Verified post-rebuild: `node v20.20.2`, `npm 10.8.2`.
+
 ## 2026-05-02 · 640e2c3 - Deterministic build verification before security/deploy gates
 
 Trust-but-verify: the QA Lead self-reports `build_status` but a hallucinating LLM can claim `clean` on a workspace that will not `npm install` (observed live: build crew shipped a workspace with no `package-lock.json` / `node_modules`; osv-scanner returned 0 vulns + build_ok=False, security loop spun 5 times, cycle still reached the deploy health gate before being rejected, wasting tokens). New `_verify_npm_build` helper runs the real `npm install --no-audit --no-fund --prefer-offline` and `npm run build` (or `npx tsc --noEmit` fallback when no build script exists but tsconfig is present) in `backend/` and `frontend/`, captures exit codes and stderr tails. Hooked in `run_build` after the auto-patches and before the QA gate; on failure marks the draft `failed` with the npm output tail in revision_notes, clears the checkpoint, requests shutdown. Security and deploy phases never run on a broken build. 10 new unit tests cover skip/install-fail/build-fail/both-pass/tsc-fallback/install-only/timeout/corrupt-pkg/first-failure-ordering. Three existing QA-gate tests now mock the new helper so they stay isolated from real subprocess calls. 361 unit tests green.
