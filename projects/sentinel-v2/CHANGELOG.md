@@ -5,6 +5,10 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-05-02 · e26f827 - Switch build_crew hierarchical -> sequential to remove manager loop
+
+`Process.hierarchical` wraps the crew in an LLM "manager" that re-evaluates every task's output and may re-delegate. With MiniMax-M2.7 (tool-call-heavy) the manager routinely exhausted iteration budget mid-orchestration and crashed with `TaskOutput.raw` ValidationError. Bumping `max_iter` from 5 to 25 (c0b9e8a) only delayed the failure; root cause is the manager pattern itself. Build crew has six tasks in fixed deterministic order with no genuine re-delegation need, so `Process.sequential` is the correct shape. Each agent runs its task once, output flows down an explicit `context` chain (plan -> frontend+backend -> code_review+security -> qa), no manager-loop overhead. Removed `manager_llm` parameter (sequential-incompatible). Memory + hook integration preserved. 385 unit tests green.
+
 ## 2026-05-02 · c0b9e8a - Bump strategic_manager max_iter from 5 to 25
 
 The hierarchical build manager orchestrates 6 tasks (plan, frontend, backend, code review, security audit, QA gate). Each task needs ~2-3 manager rounds (delegate -> evaluate -> ask), so the prior cap of 5 reliably exhausted the budget mid-orchestration. CrewAI then asked the manager for a final answer, MiniMax-M2.7 returned another tool_calls list, and the build attempt crashed with TaskOutput.raw ValidationError, escalated as `blocked_agent_loop`. With every cycle hitting that wall, the pipeline could never reach deploy. Bumped to 25 (CrewAI default) so the manager has headroom for all six tasks; token cost rises per cycle but produces a green build instead of zero output.
