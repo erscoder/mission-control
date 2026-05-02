@@ -48,6 +48,38 @@ def test_prebake_succeeds_on_valid_stack(tmp_path: Path) -> None:
     assert {"fly.toml", "Dockerfile", "package.json"}.issubset(set(written.keys()))
 
 
+def test_prebake_writes_canonical_typescript_configs(tmp_path: Path) -> None:
+    """tsconfig.json + tsconfig.build.json + nest-cli.json must be pre-baked.
+
+    Without these the agent's `nest build` fails with "Could not find
+    TypeScript configuration file 'tsconfig.json'" (observed live: backend
+    agent imported PrismaService and Stripe modules but never wrote a
+    tsconfig, post-build verification then rejected the draft on attempt 1).
+    Pinning here so a future template refactor cannot quietly drop them.
+    """
+    workspace = tmp_path / "draft_c1_app"
+    workspace.mkdir()
+
+    written = _prebake_deploy_files(str(workspace), "myapp", stack="node_nestjs")
+
+    backend = workspace / "backend"
+    tsconfig = backend / "tsconfig.json"
+    tsconfig_build = backend / "tsconfig.build.json"
+    nest_cli = backend / "nest-cli.json"
+    assert tsconfig.is_file()
+    assert tsconfig_build.is_file()
+    assert nest_cli.is_file()
+    # Canonical NestJS keys the build pipeline depends on.
+    cfg = json.loads(tsconfig.read_text())
+    assert cfg["compilerOptions"]["emitDecoratorMetadata"] is True
+    assert cfg["compilerOptions"]["experimentalDecorators"] is True
+    assert "src/**/*" in cfg["include"]
+    nest_cfg = json.loads(nest_cli.read_text())
+    assert nest_cfg["sourceRoot"] == "src"
+    expected_rels = {"tsconfig.json", "tsconfig.build.json", "nest-cli.json"}
+    assert expected_rels.issubset(set(written.keys()))
+
+
 def test_prebake_writes_canonical_prisma_module_and_service(tmp_path: Path) -> None:
     """PrismaModule + PrismaService must land at the canonical path.
 
