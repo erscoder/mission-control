@@ -1345,8 +1345,17 @@ class SentinelLoopFlow(Flow[SentinelState]):
             log.warning("Skipping frontend pre-bake: %s", e)
 
         # ── Build with automatic retry loop ──────────────────────────────
+        # Each iteration: crew.kickoff -> re-bake protected files ->
+        # deterministic `npm install` + `npm run build`. A green verification
+        # exits the loop; a red verification feeds the stderr tail back to the
+        # next attempt as `revision_notes` so the agent fixes the specific
+        # TypeScript / install errors instead of regenerating the whole tree.
+        # Without this in-loop verification, every agent code-quality bug
+        # (zod missing, this.config typed wrong, duplicate webhooks module)
+        # ate a full cycle plus a manual reset.
         feedback = self.state.revision_notes or ""
         result = None
+        verify_timeout = int(os.environ.get("SENTINEL_BUILD_VERIFY_TIMEOUT", "600"))
 
         while self.state.build_attempts < MAX_BUILD_RETRIES:
             self.state.build_attempts += 1
@@ -1375,8 +1384,6 @@ class SentinelLoopFlow(Flow[SentinelState]):
                         "revision_notes": feedback,
                     }
                 )
-                # Success — break out of retry loop
-                break
             except Exception as e:
                 error_msg = str(e)
                 log.error("Build attempt %d/%d failed: %s", attempt, MAX_BUILD_RETRIES, error_msg)
@@ -1453,102 +1460,55 @@ class SentinelLoopFlow(Flow[SentinelState]):
                     return
 
                 self._save_checkpoint()
+                continue  # next attempt
 
-        self.state.build_output = str(result.raw) if hasattr(result, "raw") else str(result)
+            # === Crew kickoff succeeded — re-bake + verify before promoting ===
+            # Re-bake every protected template so any agent overwrite is
+            # reverted before npm sees the workspace.
+            try:
+                rebaked = _prebake_deploy_files(self.state.workspace_dir, slug)
+                log.info("Re-baked protected backend templates (attempt %d): %s", attempt, list(rebaked))
+                log_event(_trace, "post_build_rebake", metadata={"files": list(rebaked), "attempt": attempt})
+            except FileNotFoundError as e:
+                log.warning("Post-build backend re-bake skipped: %s", e)
+            try:
+                rebaked_fe = _prebake_frontend_files(self.state.workspace_dir, slug)
+                log.info("Re-baked canonical frontend templates (attempt %d): %s", attempt, list(rebaked_fe))
+                log_event(_trace, "post_build_frontend_rebake", metadata={"files": list(rebaked_fe), "attempt": attempt})
+            except FileNotFoundError as e:
+                log.warning("Post-build frontend re-bake skipped: %s", e)
 
-        # ── Defensive re-bake: revert ALL protected template files in one pass.
-        # The build_crew prompt forbids overwriting Dockerfile, fly.toml,
-        # backend/package.json, the Stripe + Prisma protected sources, and
-        # the tsconfig / nest-cli configs, but the backend Lead still has the
-        # write_file tool and routinely clobbers them (observed live: a
-        # rewritten src/modules/stripe/stripe.controller.ts pinned
-        # apiVersion='2024-06-20' but the canonical stripe@14.25.0 type only
-        # accepts '2023-10-16', and the TS2322 mismatch killed `nest build`).
-        # Re-running the walk-recursive bake overwrites every template file
-        # back to its canonical, slug-substituted contents. Idempotent and
-        # cheap; touches only files that exist in the template tree.
-        try:
-            rebaked = _prebake_deploy_files(self.state.workspace_dir, slug)
-            log.info("Re-baked protected template files post-build: %s", list(rebaked))
-            log_event(
-                _trace,
-                "post_build_rebake",
-                metadata={"files": list(rebaked)},
-            )
-        except FileNotFoundError as e:
-            log.warning("Post-build re-bake skipped: %s", e)
+            # Defensive helpers (kept inside loop so each retry runs them too).
+            try:
+                _verify_package_json_unchanged(self.state.workspace_dir)
+            except Exception as e:  # noqa: BLE001 - defensive only
+                log.warning("package.json verification skipped: %s", e)
+            try:
+                stripe_reg = _ensure_stripe_controller_registered(self.state.workspace_dir)
+                log_event(_trace, "stripe_controller_check", metadata=stripe_reg)
+            except Exception as e:  # noqa: BLE001 - defensive only
+                log.warning("StripeWebhookController auto-registration skipped: %s", e)
+            try:
+                raw_body_check = _ensure_main_ts_raw_body(self.state.workspace_dir)
+                log_event(_trace, "main_ts_raw_body_check", metadata=raw_body_check)
+            except Exception as e:  # noqa: BLE001 - defensive only
+                log.warning("main.ts rawBody auto-patch skipped: %s", e)
 
-        # Mirror for the frontend canonical pin (package.json). The agent has
-        # write_file and routinely clobbers the pinned matrix with newer
-        # majors that break peer-deps.
-        try:
-            rebaked_fe = _prebake_frontend_files(self.state.workspace_dir, slug)
-            log.info("Re-baked canonical frontend templates post-build: %s", list(rebaked_fe))
-            log_event(
-                _trace,
-                "post_build_frontend_rebake",
-                metadata={"files": list(rebaked_fe)},
-            )
-        except FileNotFoundError as e:
-            log.warning("Post-build frontend re-bake skipped: %s", e)
+            # Deterministic verification: real `npm install` + `npm run build`
+            # in backend and frontend. Failure feeds stderr tail back to the
+            # next attempt as revision_notes so the agent fixes the specific
+            # TypeScript / install errors instead of regenerating the tree.
+            try:
+                verify = _verify_npm_build(self.state.workspace_dir, timeout=verify_timeout)
+            except Exception as e:  # noqa: BLE001 - defensive only
+                log.error("Build verification raised on attempt %d; treating as failure: %s", attempt, e)
+                verify = {"ok": False, "first_failure": f"exception:{type(e).__name__}", "details": {}}
 
-        # Defensive: revert any agent-side rewrites of the pinned package.json.
-        # Kept for the per-file hash log: tells the operator at a glance
-        # whether the agent tried to drift the dependency matrix this run.
-        try:
-            _verify_package_json_unchanged(self.state.workspace_dir)
-        except Exception as e:
-            log.warning("package.json verification skipped: %s", e)
+            if verify.get("ok"):
+                log_event(_trace, "build_verification_pass", metadata={"attempt": attempt, **(verify.get("details") or {})})
+                break  # green build, exit retry loop
 
-        # Defense-in-depth: build agent may have skipped the prompt rule about
-        # importing the protected StripeWebhookController in AppModule. Without
-        # registration the webhook URL returns 404 and Stripe quietly retries.
-        # Auto-patch idempotently; never fail the build here (the deploy QA
-        # verifier will catch a totally broken AppModule downstream).
-        try:
-            stripe_reg = _ensure_stripe_controller_registered(self.state.workspace_dir)
-            log_event(
-                _trace,
-                "stripe_controller_check",
-                metadata=stripe_reg,
-            )
-        except Exception as e:  # noqa: BLE001 - defensive only
-            log.warning("StripeWebhookController auto-registration skipped: %s", e)
-
-        # Sibling defense: webhook controller reads req.rawBody, which NestJS
-        # only populates when bootstrap passes { rawBody: true }. Auto-patch
-        # main.ts when the agent forgot. Same defensive contract: never raises,
-        # never fails the build.
-        try:
-            raw_body_check = _ensure_main_ts_raw_body(self.state.workspace_dir)
-            log_event(
-                _trace,
-                "main_ts_raw_body_check",
-                metadata=raw_body_check,
-            )
-        except Exception as e:  # noqa: BLE001 - defensive only
-            log.warning("main.ts rawBody auto-patch skipped: %s", e)
-
-        # ── Deterministic build verification ─────────────────────────────
-        # Trust-but-verify gate. The QA Lead self-reports build_status, but a
-        # hallucinating LLM can claim 'clean' on a workspace that won't even
-        # `npm install`. Run the real commands ourselves; if they fail,
-        # short-circuit before security/approval/deploy. This is the only
-        # way to guarantee a broken build never reaches the deploy queue.
-        verify_timeout = int(os.environ.get("SENTINEL_BUILD_VERIFY_TIMEOUT", "600"))
-        try:
-            verify = _verify_npm_build(self.state.workspace_dir, timeout=verify_timeout)
-        except Exception as e:  # noqa: BLE001 - defensive only
-            log.error("Build verification raised; treating as failure: %s", e)
-            verify = {
-                "ok": False,
-                "first_failure": f"exception:{type(e).__name__}",
-                "details": {},
-            }
-
-        if not verify.get("ok"):
-            self.state.build_ok = False
-            self.state.error = "build_verification_failed"
+            # Verification red — build feedback for the next attempt.
             details = verify.get("details") or {}
             tail = ""
             for sub in ("backend", "frontend"):
@@ -1556,37 +1516,54 @@ class SentinelLoopFlow(Flow[SentinelState]):
                 if d.get("tail"):
                     tail = d["tail"]
                     break
-            reason = (
-                f"npm verify failed at {verify.get('first_failure') or 'unknown'}. "
-                f"Last output: {tail[:400]!r}"
+            first_failure = verify.get("first_failure") or "unknown"
+            log.error(
+                "Build verification failed on attempt %d/%d at %s. Tail: %s",
+                attempt, MAX_BUILD_RETRIES, first_failure, tail[:300],
             )
-            log.error("Build verification failed - %s", reason)
-            if self.state.draft_id:
-                from sentinel_v2.dashboard_state import update_draft
-                try:
-                    update_draft(
-                        self.state.draft_id,
-                        status="failed",
-                        revision_notes=f"Auto-rejected by build verification. {reason}",
-                    )
-                except Exception as db_err:
-                    log.warning("Could not mark draft failed: %s", db_err)
-            self._clear_checkpoint()
-            self._shutdown_requested = True
             log_event(
                 _trace,
                 "build_verification_fail",
-                level="ERROR",
-                metadata={"first_failure": verify.get("first_failure"), "details": details},
+                level="WARNING",
+                metadata={"attempt": attempt, "first_failure": first_failure},
             )
-            end_trace(_trace, output={"build_verification": "fail"}, level="ERROR")
-            return
 
-        log_event(
-            _trace,
-            "build_verification_pass",
-            metadata=verify.get("details") or {},
-        )
+            if attempt >= MAX_BUILD_RETRIES:
+                self.state.build_ok = False
+                self.state.error = "build_verification_exhausted"
+                reason = (
+                    f"npm verify failed at {first_failure} after {MAX_BUILD_RETRIES} "
+                    f"attempts. Last output: {tail[:400]!r}"
+                )
+                log.error("Build verification exhausted all %d retries: %s", MAX_BUILD_RETRIES, reason)
+                if self.state.draft_id:
+                    from sentinel_v2.dashboard_state import update_draft
+                    try:
+                        update_draft(
+                            self.state.draft_id,
+                            status="failed",
+                            revision_notes=f"Auto-rejected by build verification. {reason}",
+                        )
+                    except Exception as db_err:
+                        log.warning("Could not mark draft failed: %s", db_err)
+                self._clear_checkpoint()
+                self._shutdown_requested = True
+                end_trace(_trace, output={"build_verification": "exhausted"}, level="ERROR")
+                return
+
+            feedback = (
+                f"Build attempt {attempt} produced code that fails `npm install` / "
+                f"`npm run build` at {first_failure}. Stderr tail:\n{tail[:1500]}\n\n"
+                "Read the errors carefully. Use `list_files` to identify the "
+                "offending file(s) and patch ONLY the broken imports, types, or "
+                "missing files. Do NOT regenerate the workspace from scratch; the "
+                "previous attempt's code is on disk."
+            )
+            self._save_checkpoint()
+            continue  # next attempt
+
+        # Loop exited via `break` -> green verification. Promote build_output.
+        self.state.build_output = str(result.raw) if hasattr(result, "raw") else str(result)
 
         # ── QA gate: refuse to promote a draft the QA Lead failed ────────
         # Reads the QA Lead's structured output (go_no_go, build_status,

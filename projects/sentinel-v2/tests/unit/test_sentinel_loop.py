@@ -197,7 +197,10 @@ class TestSentinelLoopFlowKickoff:
 
         with patch(
             "sentinel_v2.crews.build_crew.build_crew.build_crew"
-        ) as mock_crew_cls:
+        ) as mock_crew_cls, patch(
+            "sentinel_v2.flows.sentinel_loop._verify_npm_build",
+            return_value={"ok": True, "first_failure": None, "details": {}},
+        ):
             mock_crew = MagicMock()
             mock_crew.kickoff.return_value = mock_result
             mock_crew_cls.return_value = mock_crew
@@ -967,7 +970,10 @@ class TestFeedbackLoop:
 
         with patch(
             "sentinel_v2.crews.build_crew.build_crew.build_crew"
-        ) as mock_crew_cls:
+        ) as mock_crew_cls, patch(
+            "sentinel_v2.flows.sentinel_loop._verify_npm_build",
+            return_value={"ok": True, "first_failure": None, "details": {}},
+        ):
             mock_crew = MagicMock()
             mock_crew.kickoff.return_value = mock_result
             mock_crew_cls.return_value = mock_crew
@@ -988,7 +994,10 @@ class TestFeedbackLoop:
 
         with patch(
             "sentinel_v2.crews.build_crew.build_crew.build_crew"
-        ) as mock_crew_cls:
+        ) as mock_crew_cls, patch(
+            "sentinel_v2.flows.sentinel_loop._verify_npm_build",
+            return_value={"ok": True, "first_failure": None, "details": {}},
+        ):
             mock_crew = MagicMock()
             mock_crew.kickoff.return_value = mock_result
             mock_crew_cls.return_value = mock_crew
@@ -1244,6 +1253,9 @@ class TestBuildRetryLoop:
         with patch(
             "sentinel_v2.crews.build_crew.build_crew.build_crew",
             return_value=mock_crew,
+        ), patch(
+            "sentinel_v2.flows.sentinel_loop._verify_npm_build",
+            return_value={"ok": True, "first_failure": None, "details": {}},
         ):
             with patch.object(flow, "remember"):
                 flow.run_build()
@@ -1293,6 +1305,9 @@ class TestBuildRetryLoop:
         with patch(
             "sentinel_v2.crews.build_crew.build_crew.build_crew",
             return_value=mock_crew,
+        ), patch(
+            "sentinel_v2.flows.sentinel_loop._verify_npm_build",
+            return_value={"ok": True, "first_failure": None, "details": {}},
         ):
             with patch.object(flow, "remember"):
                 flow.run_build()
