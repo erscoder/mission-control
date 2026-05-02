@@ -48,6 +48,34 @@ def test_prebake_succeeds_on_valid_stack(tmp_path: Path) -> None:
     assert {"fly.toml", "Dockerfile", "package.json"}.issubset(set(written.keys()))
 
 
+def test_prebake_frontend_files_writes_canonical_package_json(tmp_path: Path) -> None:
+    """Frontend canonical package.json must land at frontend/ with pinned majors.
+
+    Pinned to eliminate ERESOLVE drift between eslint and eslint-config-next
+    that the frontend agent triggered repeatedly. The eslint and
+    eslint-config-next majors MUST stay in lockstep; this test pins the
+    contract so a future template refactor cannot quietly bump one without
+    the other.
+    """
+    from sentinel_v2.flows.sentinel_loop import _prebake_frontend_files
+
+    workspace = tmp_path / "draft_c1_app"
+    workspace.mkdir()
+
+    written = _prebake_frontend_files(str(workspace), "myapp")
+
+    pkg = workspace / "frontend" / "package.json"
+    assert pkg.is_file()
+    data = json.loads(pkg.read_text())
+    assert data["name"] == "myapp-frontend"
+    eslint_major = data["devDependencies"]["eslint"].split(".")[0]
+    next_eslint_major = data["devDependencies"]["eslint-config-next"].split(".")[0]
+    # eslint-config-next@14 peer requires eslint v7 || v8. v9+ produces ERESOLVE.
+    assert eslint_major == "8", f"eslint pinned to non-v8 major: {data['devDependencies']['eslint']}"
+    assert next_eslint_major == "14"
+    assert "package.json" in written
+
+
 def test_prebake_writes_canonical_typescript_configs(tmp_path: Path) -> None:
     """tsconfig.json + tsconfig.build.json + nest-cli.json must be pre-baked.
 

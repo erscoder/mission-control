@@ -87,6 +87,50 @@ def _prebake_deploy_files(workspace_dir: str, slug: str, stack: str = "node_nest
     return written
 
 
+def _prebake_frontend_files(workspace_dir: str, slug: str, stack: str = "nextjs_frontend") -> dict:
+    """Mirror canonical Next.js 14 frontend files into ``<workspace>/frontend/``.
+
+    Pinned counterpart to ``_prebake_deploy_files``. The frontend agent
+    routinely drifts the eslint major past what eslint-config-next can peer
+    with (observed live: agent wrote eslint@^9.13.0 but eslint-config-next@14
+    requires eslint@^7 || ^8, ERESOLVE). Pinning the package.json deterministically
+    eliminates that whole class of failures while still letting the agent author
+    everything else (pages, components, styles).
+
+    Same walk-recursive pattern as the backend bake; ``{{SLUG}}`` substitution
+    applied uniformly. Idempotent; called both before and after the build crew.
+    """
+    from pathlib import Path
+    ws = Path(workspace_dir)
+    if not ws.exists():
+        raise FileNotFoundError(
+            f"workspace_dir {workspace_dir!r} does not exist. The build phase "
+            "may have written to a different path (e.g. inside a container)."
+        )
+    frontend = ws / "frontend"
+    frontend.mkdir(exist_ok=True)
+    template_dir = Path(__file__).resolve().parent.parent / "data" / "deploy_templates" / stack
+
+    if not template_dir.exists():
+        raise FileNotFoundError(
+            f"Missing canonical frontend template tree: {template_dir}. The "
+            f"deploy_templates directory for stack {stack!r} is missing; refusing "
+            "to silently skip."
+        )
+
+    written: dict[str, str] = {}
+    for src_path in template_dir.rglob("*"):
+        if not src_path.is_file():
+            continue
+        rel = src_path.relative_to(template_dir)
+        dst_path = frontend / rel
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+        content = src_path.read_text().replace("{{SLUG}}", slug)
+        dst_path.write_text(content)
+        written[str(rel)] = str(dst_path)
+    return written
+
+
 def _verify_package_json_unchanged(workspace_dir: str, stack: str = "node_nestjs") -> bool:
     """Return True if backend/package.json matches the canonical template, False if it diverged.
 
@@ -1289,6 +1333,17 @@ class SentinelLoopFlow(Flow[SentinelState]):
         except FileNotFoundError as e:
             log.warning("Skipping pre-bake: %s", e)
 
+        # Frontend canonical pinning. Mirror of _prebake_deploy_files for the
+        # Next.js side. Pinned to eliminate ERESOLVE drift between eslint and
+        # eslint-config-next that the frontend agent triggers on roughly every
+        # other build.
+        try:
+            written_fe = _prebake_frontend_files(self.state.workspace_dir, slug)
+            if written_fe:
+                log.info("Pre-baked canonical frontend templates: %s", list(written_fe))
+        except FileNotFoundError as e:
+            log.warning("Skipping frontend pre-bake: %s", e)
+
         # ── Build with automatic retry loop ──────────────────────────────
         feedback = self.state.revision_notes or ""
         result = None
@@ -1422,6 +1477,20 @@ class SentinelLoopFlow(Flow[SentinelState]):
             )
         except FileNotFoundError as e:
             log.warning("Post-build re-bake skipped: %s", e)
+
+        # Mirror for the frontend canonical pin (package.json). The agent has
+        # write_file and routinely clobbers the pinned matrix with newer
+        # majors that break peer-deps.
+        try:
+            rebaked_fe = _prebake_frontend_files(self.state.workspace_dir, slug)
+            log.info("Re-baked canonical frontend templates post-build: %s", list(rebaked_fe))
+            log_event(
+                _trace,
+                "post_build_frontend_rebake",
+                metadata={"files": list(rebaked_fe)},
+            )
+        except FileNotFoundError as e:
+            log.warning("Post-build frontend re-bake skipped: %s", e)
 
         # Defensive: revert any agent-side rewrites of the pinned package.json.
         # Kept for the per-file hash log: tells the operator at a glance
