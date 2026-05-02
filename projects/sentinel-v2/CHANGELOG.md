@@ -5,6 +5,10 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-05-03 · 556f493 - Bump build retries to 6 and pre-pin next-auth in frontend canonical
+
+Two co-located fixes targeting different failure shapes in the same observed cycle. (1) `MAX_BUILD_RETRIES` default 3 -> 6. Verify-in-loop feeds the agent each failed `npm run build` stderr, but for a 30+ file NestJS+Next.js MVP the agent introduces a new hallucinated import on roughly every retry (zod, `next-auth/react`, `@prisma/client` enums never declared). Three attempts was not enough budget to converge on one consistent surface; six gives the dominant error shapes room to drop out one by one. Cost ceiling rises proportionally (~75 min build phase worst case) but the cycle still terminates cleanly via the existing exhausted-retries path. (2) Add `next-auth@4.24.10` to canonical frontend `package.json`. Frontend agent imports `next-auth/react` from auth-gated layouts every time and never installs it because the prompt forbids overwriting `package.json`. Pre-pinning eliminates that gap. Tests stay green.
+
 ## 2026-05-02 · acae129 - Relax canonical NestJS tsconfig `noImplicitAny` to false
 
 Strict mode + `noImplicitAny: true` was the dominant verification-fail signature on the 6-stage planner test cycle: every retry hit `TS7006: Parameter '<name>' implicitly has an 'any' type` inside a service callback like `.filter((d) => ...)`. Backend agent forgets to annotate arrow function params, post-build verify rejects, three attempts wasted ~1h without converging. For a paying MVP whose ship gate is "compiles + runs", type perfection is not what we are gating on. `strictNullChecks` stays `true` (catches real null bugs); `noImplicitAny` drops to `false` so the agent can ship code that compiles cleanly even when it forgets one annotation in a callback.
