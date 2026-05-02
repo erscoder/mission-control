@@ -504,6 +504,17 @@ def build_crew(cycle: int = 1) -> Crew:
         agent=qa_lead,
     )
 
+    # Pipe each task's output to the next via `context` so a sequential crew
+    # carries the plan into frontend/backend, those into code review +
+    # security audit, and all of them into the final QA gate. CrewAI's
+    # default sequential context only includes immediate predecessors; we are
+    # explicit so the QA task can read the full chain.
+    frontend_task.context = [plan_task]
+    backend_task.context = [plan_task]
+    code_review_task.context = [frontend_task, backend_task]
+    security_audit_task.context = [frontend_task, backend_task]
+    qa_task.context = [code_review_task, security_audit_task]
+
     crew = Crew(
         agents=[
             strategic_manager,
@@ -521,10 +532,17 @@ def build_crew(cycle: int = 1) -> Crew:
             security_audit_task,
             qa_task,
         ],
-        process=Process.hierarchical,
+        # Sequential, not hierarchical. The hierarchical pattern wraps the
+        # crew in an LLM "manager" that re-evaluates every task's output and
+        # may re-delegate; with MiniMax-M2.7 (tool-call-heavy) the manager
+        # routinely exhausts iteration budget mid-orchestration and crashes
+        # with TaskOutput.raw ValidationError. Task order here is fixed and
+        # deterministic, so a sequential crew is the right shape: each agent
+        # runs its task once, output flows down the explicit context chain
+        # above, no manager-loop overhead.
+        process=Process.sequential,
         verbose=True,
         memory=memory,
-        manager_llm=minimax_smart,
     )
 
     crew = hook_crew_full(crew, phase="build", cycle=cycle)
