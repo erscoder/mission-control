@@ -126,6 +126,13 @@ def build_crew(cycle: int = 1) -> Crew:
         llm=minimax,
         verbose=True,
         allow_delegation=False,
+        # Frontend writes 30+ files (app/, components/, lib/, hooks/, types/),
+        # fetches DESIGN.md via curl, edits tailwind/tsconfig/next configs,
+        # and may need install/build runs. Default max_iter=25 routinely
+        # exhausts mid-write, MiniMax then emits tool_calls as the forced
+        # final answer, and the build attempt crashes with TaskOutput.raw
+        # ValidationError.
+        max_iter=50,
     )
 
     backend_lead = Agent(
@@ -167,6 +174,12 @@ def build_crew(cycle: int = 1) -> Crew:
         llm=minimax,
         verbose=True,
         allow_delegation=False,
+        # Backend writes the most files of any agent (src/, prisma/schema,
+        # tests, .env.example) plus calls Stripe APIs and may install extra
+        # deps via run_shell. Same default-cap wall as the frontend lead;
+        # bump to 50 to keep the sequential build attempt out of the
+        # TaskOutput.raw escalation pit.
+        max_iter=50,
     )
 
     code_reviewer = Agent(
