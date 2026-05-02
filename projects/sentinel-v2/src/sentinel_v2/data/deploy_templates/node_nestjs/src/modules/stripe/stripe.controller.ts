@@ -24,8 +24,11 @@ import Stripe from 'stripe';
 
 import { stripeConfig } from '../../config/stripe.config';
 
+// apiVersion must match the literal expected by the pinned stripe SDK type
+// (package.json pins stripe@14.25.0, whose typings only accept '2023-10-16').
+// Bumping requires lifting the SDK pin in unison or `nest build` fails TS2322.
 const stripeClient = new Stripe(stripeConfig.secretKey, {
-  apiVersion: '2024-06-20',
+  apiVersion: '2023-10-16',
 });
 
 @Controller('api/stripe')
