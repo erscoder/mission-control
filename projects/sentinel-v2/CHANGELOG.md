@@ -5,6 +5,10 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-05-02 · f24cb6a - Move build verification inside the retry loop with feedback
+
+Each agent code-quality bug (zod missing, `this.config` typed wrong, duplicate webhooks module) used to consume a whole cycle: build crew completed, verification ran post-loop, failed, draft marked failed, cycle ended; operator had to manually requeue. Refactor `run_build` so re-bake + defensive helpers + `_verify_npm_build` all run INSIDE the retry loop after each `crew.kickoff`. Green verification breaks the loop and promotes `build_output`. Red verification captures the stderr tail (up to 1500 chars) and feeds it back to the next attempt as `revision_notes`, so the agent reads the specific TS / install errors and patches the broken files instead of regenerating the workspace. After MAX_BUILD_RETRIES exhausted retries the draft is marked failed with the last verify reason. Five run_build tests gain `_verify_npm_build` mocks so they exercise the kickoff/retry path without real subprocess. 385 unit tests green.
+
 ## 2026-05-02 · 8a80cef - Bump frontend_lead and backend_lead max_iter to 50
 
 Sequential mode removed the hierarchical manager-loop crash but exposed individual write-heavy agents hitting their default `max_iter=25` mid-task. Frontend writes 30+ files plus fetches DESIGN.md and tweaks configs; backend writes src/ + prisma + tests + env example and calls Stripe APIs. Both routinely exhausted 25 iter, MiniMax returned a tool_calls list as forced final answer, and `crew.kickoff()` crashed with `TaskOutput.raw` ValidationError, escalated as `blocked_agent_loop`. Bumped both leads to `max_iter=50`; strategic_manager is already at 25 (sequential, only owns plan_task). Token cost rises proportionally, but produces a green build instead of zero output.
