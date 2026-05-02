@@ -24,10 +24,15 @@ from sentinel_v2.tools import (
 class QAGateReport(BaseModel):
     """Structured output of the QA Lead task.
 
-    Attaching this model via ``output_pydantic`` on the QA task forces CrewAI
-    to retry the agent until its raw output parses cleanly into these fields.
-    The flow's QA gate (``sentinel_loop._parse_deploy_result``) reads this
-    schema and refuses to promote a draft on NO_GO or non-clean build_status.
+    Documents the contract the flow's QA gate reads via
+    ``sentinel_loop._parse_deploy_result``: ``go_no_go`` and ``build_status``
+    drive the promote/reject decision. The model is no longer attached via
+    ``output_pydantic`` on the QA task because MiniMax-M2.7 routinely emits
+    Prisma schema fragments mixed with JSON, and strict Pydantic parsing
+    would raise ``ValidationError`` inside ``crew.kickoff()``, killing the
+    whole build attempt for a token-cost zero-info reason. The flow's
+    permissive parser plus ``_verify_npm_build`` (deterministic gate) plus
+    the QA gate fail-closed branch together provide the safety net.
     """
 
     go_no_go: Literal["GO", "NO_GO"] = Field(
@@ -444,7 +449,6 @@ def build_crew(cycle: int = 1) -> Crew:
             "(list of strings, empty on GO), notes (optional string). No prose outside the JSON."
         ),
         agent=qa_lead,
-        output_pydantic=QAGateReport,
     )
 
     crew = Crew(

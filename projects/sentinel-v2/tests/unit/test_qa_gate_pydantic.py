@@ -1,10 +1,13 @@
 """Tests for the QA gate's Pydantic-vs-legacy parsing in `_parse_deploy_result`.
 
-Pins finding F1.4: when CrewAI returns a `QAGateReport` Pydantic instance
-(via `output_pydantic` on the QA Lead task) the gate must read its fields
-directly. The legacy string path is kept for back-compat with crews that
-still emit JSON-as-text. Garbage output must produce an empty dict so the
-QA gate at `sentinel_loop.py` fails closed.
+Pins finding F1.4: when a future crew configuration returns a `QAGateReport`
+Pydantic instance (e.g. by re-attaching `output_pydantic` on the QA Lead
+task) the gate must read its fields directly. The string path is the
+default in the current build crew config because MiniMax-M2.7 routinely
+mixes Prisma schema fragments with JSON, and strict Pydantic enforcement
+inside `crew.kickoff()` raised `ValidationError` and killed the build
+attempt. Garbage output must produce an empty dict so the QA gate at
+`sentinel_loop.py` fails closed.
 """
 from __future__ import annotations
 
