@@ -116,6 +116,16 @@ ESCALATION_PATTERNS: list[tuple[str, str]] = [
     ("blocked_payment", r"insufficient.*balance"),
     ("blocked_payment", r"insufficient.*funds"),
     ("blocked_payment", r"billing.*issue"),
+
+    # CrewAI agent emitted tool_calls instead of a plain-text final answer
+    # after hitting max_iter. CrewAI then tries to set TaskOutput.raw=<list of
+    # ChatCompletionMessageFunctionTool> and Pydantic raises because the field
+    # requires str. Retrying never helps: a max-iter agent on the next attempt
+    # will hit the same wall with the same model. Better to escalate so the
+    # operator can either bump the agent's max_iter, simplify the task, or
+    # switch to a less tool-call-happy model.
+    ("blocked_agent_loop", r"validation error for taskoutput"),
+    ("blocked_agent_loop", r"chatcompletionmessagefunctiontool"),
 ]
 
 
@@ -140,6 +150,13 @@ ACTION_HINTS: dict[str, str] = {
     "blocked_payment": (
         "Provider reports payment required. Check the billing dashboard "
         "for the affected provider and update the payment method."
+    ),
+    "blocked_agent_loop": (
+        "Agent hit max_iter and emitted tool_calls as its final answer; "
+        "CrewAI cannot coerce list[FunctionTool] into TaskOutput.raw (str). "
+        "Retrying will reproduce the same failure. Bump the failing agent's "
+        "max_iter in the crew config, simplify its task description so it "
+        "converges sooner, or swap to a less tool-call-happy model."
     ),
 }
 

@@ -93,10 +93,34 @@ class TestClassifyError:
             classify_error("401"),
             classify_error("402"),
             classify_error("token plan is designed"),
+            classify_error("1 validation error for TaskOutput raw"),
         }
         seen.discard(None)
         for category in seen:
             assert category in ACTION_HINTS, f"Missing hint for {category}"
+
+    def test_classifies_agent_tool_call_loop_taskoutput(self):
+        # When an agent hits max_iter and emits tool_calls instead of plain
+        # text, CrewAI raises a Pydantic ValidationError on TaskOutput.raw.
+        # Retrying never helps; the build retry loop must escalate so the
+        # operator can bump max_iter / simplify the prompt / swap models.
+        msg = (
+            "1 validation error for TaskOutput\nraw\n  Input should be a "
+            "valid string [type=string_type, input_value=[ChatCompletion"
+            "MessageFunctionTool(...)], input_type=list]"
+        )
+        assert classify_error(msg) == "blocked_agent_loop"
+
+    def test_classifies_agent_tool_call_loop_chatcompletion_signature(self):
+        # Even if CrewAI internals re-wrap the error and drop the leading
+        # "validation error for TaskOutput" line, the ChatCompletionMessage
+        # FunctionTool class name in the input_value is a strong-enough
+        # signal that an agent emitted tool_calls as its final answer.
+        msg = (
+            "Pydantic could not coerce list[ChatCompletionMessageFunctionTool"
+            "(name='write_file')] into the expected str field."
+        )
+        assert classify_error(msg) == "blocked_agent_loop"
 
 
 class TestIsTransient:
