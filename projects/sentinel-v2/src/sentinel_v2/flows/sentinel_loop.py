@@ -1366,6 +1366,14 @@ class SentinelLoopFlow(Flow[SentinelState]):
                         except Exception as db_err:
                             log.warning("Could not mark draft blocked: %s", db_err)
                     self.state.error = f"escalated:{category}"
+                    # Stop the cycle here. Without this flag the @listen chain
+                    # carries on into run_security_remediation -> request_approval
+                    # -> run_deploy, all of which run a full crew on a workspace
+                    # that never produced a clean build. Observed live: an
+                    # escalation marked the draft 'blocked' but the cycle still
+                    # spent 5 security iterations grinding on build_ok=False
+                    # output before the deploy gate finally rejected it.
+                    self._shutdown_requested = True
                     self._save_checkpoint()
                     log_event(_trace, "build_escalated", level="ERROR", metadata={"category": category, "attempt": attempt, "error": error_msg[:500]})
                     end_trace(_trace, output={"escalated": category}, level="ERROR")

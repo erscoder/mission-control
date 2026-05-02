@@ -570,6 +570,11 @@ class TestEscalationOnUnrecoverableErrors:
         # Escalation file written
         esc_file = tmp_path / "esc.json"
         assert esc_file.exists()
+        # Shutdown flag set so the @listen chain stops here. Without this the
+        # cycle continued into security + approval + deploy on a workspace
+        # that never produced a clean build (observed live: 5 security iters
+        # grinding on build_ok=False before the deploy gate finally rejected).
+        assert flow._shutdown_requested is True
 
     def test_build_recoverable_error_still_retries(self, flow, tmp_path, monkeypatch):
         """A normal code error must NOT trigger escalation — full retry budget used."""
