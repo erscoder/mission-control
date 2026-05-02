@@ -5,6 +5,10 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-05-02 · 8a80cef - Bump frontend_lead and backend_lead max_iter to 50
+
+Sequential mode removed the hierarchical manager-loop crash but exposed individual write-heavy agents hitting their default `max_iter=25` mid-task. Frontend writes 30+ files plus fetches DESIGN.md and tweaks configs; backend writes src/ + prisma + tests + env example and calls Stripe APIs. Both routinely exhausted 25 iter, MiniMax returned a tool_calls list as forced final answer, and `crew.kickoff()` crashed with `TaskOutput.raw` ValidationError, escalated as `blocked_agent_loop`. Bumped both leads to `max_iter=50`; strategic_manager is already at 25 (sequential, only owns plan_task). Token cost rises proportionally, but produces a green build instead of zero output.
+
 ## 2026-05-02 · d6d230c - Add zod to canonical NestJS backend dependencies
 
 Backend agent imported `zod` for DTO validation in `src/modules/stripe/dto/stripe-billing.dto.ts`, but the canonical backend package.json only shipped class-validator / class-transformer. `nest build` failed TS2307 'Cannot find module zod' at the post-build verification gate (first failure observed once Process.sequential let the build crew complete cleanly). Adds `zod@3.23.8` (matching the frontend pin) so agents can mix class-validator and zod validation patterns freely.
