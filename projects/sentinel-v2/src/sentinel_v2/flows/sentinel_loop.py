@@ -2024,6 +2024,78 @@ class SentinelLoopFlow(Flow[SentinelState]):
         except FileNotFoundError as e:
             log.warning("Skipping pre-bake before deploy: %s", e)
 
+        # ── Shared Fly Postgres cluster: lazy-create + attach this app's DB ─
+        # Cluster spin-up is gated by run_deploy entry: build verification
+        # already passed and the user already approved the deploy gate, so
+        # this is the first irreversible piece of infra spend. Subsequent
+        # deploys reuse the cluster (idempotent infra_state lookup) and just
+        # attach a new database per app.
+        database_url: Optional[str] = None
+        try:
+            from sentinel_v2.flows import shared_postgres as _spg
+            cluster_info = _spg.ensure_shared_pg_cluster()
+            log.info(
+                "Shared PG cluster ready: name=%s region=%s source=%s created=%s",
+                cluster_info["cluster_name"],
+                cluster_info["region"],
+                cluster_info["source"],
+                cluster_info["created"],
+            )
+            log_event(_trace, "shared_pg_ready", metadata=cluster_info)
+
+            attach_info = _spg.attach_db_for_app(
+                cluster_name=cluster_info["cluster_name"],
+                backend_app_name=expected_backend_app_name,
+            )
+            database_url = attach_info["database_url"]
+            log.info(
+                "Per-app DB attached: app=%s db=%s user=%s already_attached=%s url=%s",
+                expected_backend_app_name,
+                attach_info["database_name"],
+                attach_info["database_user"],
+                attach_info["already_attached"],
+                "<set>" if database_url else "<absent>",
+            )
+            log_event(
+                _trace,
+                "shared_pg_attached",
+                metadata={
+                    "database_name": attach_info["database_name"],
+                    "database_user": attach_info["database_user"],
+                    "already_attached": attach_info["already_attached"],
+                    "has_url": bool(database_url),
+                },
+            )
+        except Exception as pg_err:  # noqa: BLE001
+            log.error("Shared Postgres provisioning failed: %s", pg_err)
+            self.state.error = f"shared_pg_provisioning_failed: {pg_err}"
+            if self.state.draft_id:
+                from sentinel_v2.dashboard_state import update_draft as _upd
+                try:
+                    _upd(
+                        self.state.draft_id,
+                        status="failed",
+                        revision_notes=(
+                            "Shared Fly Postgres provisioning failed before deploy: "
+                            f"{pg_err}. App not deployed."
+                        ),
+                    )
+                except Exception as db_err:
+                    log.warning("Could not mark draft failed: %s", db_err)
+            self._save_checkpoint()
+            log_event(
+                _trace,
+                "shared_pg_failed",
+                level="ERROR",
+                metadata={"error": str(pg_err)[:500]},
+            )
+            end_trace(
+                _trace,
+                output={"shared_pg_failed": str(pg_err)[:500]},
+                level="ERROR",
+            )
+            return
+
         # Provision Stripe Product + Webhook BEFORE the deploy crew runs so the
         # secrets land in the SAME release as DATABASE_URL (staged in step 3 of
         # the crew, applied at fly_deploy in step 4). Otherwise the protected
@@ -2125,6 +2197,10 @@ class SentinelLoopFlow(Flow[SentinelState]):
                         "stripe_webhook_secret": stripe_resources["webhook_secret"],
                         "stripe_product_id": stripe_resources["product_id"],
                         "stripe_price_id": stripe_resources["price_id"] or "",
+                        # Shared Postgres cluster: empty string when the app
+                        # was already attached on a previous cycle (Fly secret
+                        # already set; the deploy crew skips re-staging).
+                        "database_url": database_url or "",
                         "deploy_feedback": deploy_feedback,
                     }
                 )

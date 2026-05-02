@@ -249,6 +249,22 @@ class TestSentinelLoopFlowKickoff:
                 "webhook_secret": "whsec_test",
                 "secret_was_rotated": False,
             },
+        ), patch(
+            "sentinel_v2.flows.shared_postgres.ensure_shared_pg_cluster",
+            return_value={
+                "cluster_name": "sentinel-shared-pg",
+                "region": "fra",
+                "created": False,
+                "source": "state",
+            },
+        ), patch(
+            "sentinel_v2.flows.shared_postgres.attach_db_for_app",
+            return_value={
+                "database_url": "postgres://test_user:pw@h:5432/test_db",
+                "database_name": "test_db",
+                "database_user": "test_user",
+                "already_attached": False,
+            },
         ):
             mock_crew = MagicMock()
             mock_crew.kickoff.return_value = mock_result
@@ -790,6 +806,22 @@ class TestRememberCalls:
                 "price_ids": ["price_t"], "webhook_endpoint_id": "we_t",
                 "webhook_secret": "whsec_t", "secret_was_rotated": False,
             },
+        ), patch(
+            "sentinel_v2.flows.shared_postgres.ensure_shared_pg_cluster",
+            return_value={
+                "cluster_name": "sentinel-shared-pg",
+                "region": "fra",
+                "created": False,
+                "source": "state",
+            },
+        ), patch(
+            "sentinel_v2.flows.shared_postgres.attach_db_for_app",
+            return_value={
+                "database_url": "postgres://t_user:pw@h:5432/t_db",
+                "database_name": "t_db",
+                "database_user": "t_user",
+                "already_attached": False,
+            },
         ):
             mock_crew = MagicMock()
             mock_crew.kickoff.return_value = mock_result
@@ -985,6 +1017,22 @@ class TestFeedbackLoop:
                 "price_ids": ["price_t"], "webhook_endpoint_id": "we_t",
                 "webhook_secret": "whsec_t", "secret_was_rotated": False,
             },
+        ), patch(
+            "sentinel_v2.flows.shared_postgres.ensure_shared_pg_cluster",
+            return_value={
+                "cluster_name": "sentinel-shared-pg",
+                "region": "fra",
+                "created": False,
+                "source": "state",
+            },
+        ), patch(
+            "sentinel_v2.flows.shared_postgres.attach_db_for_app",
+            return_value={
+                "database_url": "postgres://t_user:pw@h:5432/t_db",
+                "database_name": "t_db",
+                "database_user": "t_user",
+                "already_attached": False,
+            },
         ):
             mock_crew = MagicMock()
             mock_crew.kickoff.return_value = mock_result
@@ -1027,6 +1075,22 @@ class TestFeedbackLoop:
                 "price_ids": ["price_t"], "webhook_endpoint_id": "we_t",
                 "webhook_secret": "whsec_t", "secret_was_rotated": False,
             },
+        ), patch(
+            "sentinel_v2.flows.shared_postgres.ensure_shared_pg_cluster",
+            return_value={
+                "cluster_name": "sentinel-shared-pg",
+                "region": "fra",
+                "created": False,
+                "source": "state",
+            },
+        ), patch(
+            "sentinel_v2.flows.shared_postgres.attach_db_for_app",
+            return_value={
+                "database_url": "postgres://t_user:pw@h:5432/t_db",
+                "database_name": "t_db",
+                "database_user": "t_user",
+                "already_attached": False,
+            },
         ):
             mock_crew = MagicMock()
             mock_crew.kickoff.return_value = mock_result
@@ -1060,6 +1124,22 @@ class TestFeedbackLoop:
                 "product_id": "prod_t", "price_id": "price_t",
                 "price_ids": ["price_t"], "webhook_endpoint_id": "we_t",
                 "webhook_secret": "whsec_t", "secret_was_rotated": False,
+            },
+        ), patch(
+            "sentinel_v2.flows.shared_postgres.ensure_shared_pg_cluster",
+            return_value={
+                "cluster_name": "sentinel-shared-pg",
+                "region": "fra",
+                "created": False,
+                "source": "state",
+            },
+        ), patch(
+            "sentinel_v2.flows.shared_postgres.attach_db_for_app",
+            return_value={
+                "database_url": "postgres://t_user:pw@h:5432/t_db",
+                "database_name": "t_db",
+                "database_user": "t_user",
+                "already_attached": False,
             },
         ):
             mock_crew = MagicMock()
@@ -1250,6 +1330,22 @@ class TestDeployRetryLoop:
                 "price_ids": ["price_t"], "webhook_endpoint_id": "we_t",
                 "webhook_secret": "whsec_t", "secret_was_rotated": False,
             },
+        ), patch(
+            "sentinel_v2.flows.shared_postgres.ensure_shared_pg_cluster",
+            return_value={
+                "cluster_name": "sentinel-shared-pg",
+                "region": "fra",
+                "created": False,
+                "source": "state",
+            },
+        ), patch(
+            "sentinel_v2.flows.shared_postgres.attach_db_for_app",
+            return_value={
+                "database_url": "postgres://t_user:pw@h:5432/t_db",
+                "database_name": "t_db",
+                "database_user": "t_user",
+                "already_attached": False,
+            },
         ):
             with patch.object(flow, "remember"):
                 flow.run_deploy()
@@ -1280,6 +1376,22 @@ class TestDeployRetryLoop:
                 "product_id": "prod_t", "price_id": "price_t",
                 "price_ids": ["price_t"], "webhook_endpoint_id": "we_t",
                 "webhook_secret": "whsec_t", "secret_was_rotated": False,
+            },
+        ), patch(
+            "sentinel_v2.flows.shared_postgres.ensure_shared_pg_cluster",
+            return_value={
+                "cluster_name": "sentinel-shared-pg",
+                "region": "fra",
+                "created": False,
+                "source": "state",
+            },
+        ), patch(
+            "sentinel_v2.flows.shared_postgres.attach_db_for_app",
+            return_value={
+                "database_url": "postgres://t_user:pw@h:5432/t_db",
+                "database_name": "t_db",
+                "database_user": "t_user",
+                "already_attached": False,
             },
         ), patch("sentinel_v2.dashboard_state.update_draft") as mock_update:
             with patch.object(flow, "remember"):
@@ -1465,6 +1577,22 @@ class TestRunDeployHealthGate:
                 "product_id": "prod_t", "price_id": "price_t",
                 "price_ids": ["price_t"], "webhook_endpoint_id": "we_t",
                 "webhook_secret": "whsec_t", "secret_was_rotated": False,
+            },
+        ), patch(
+            "sentinel_v2.flows.shared_postgres.ensure_shared_pg_cluster",
+            return_value={
+                "cluster_name": "sentinel-shared-pg",
+                "region": "fra",
+                "created": False,
+                "source": "state",
+            },
+        ), patch(
+            "sentinel_v2.flows.shared_postgres.attach_db_for_app",
+            return_value={
+                "database_url": "postgres://t_user:pw@h:5432/t_db",
+                "database_name": "t_db",
+                "database_user": "t_user",
+                "already_attached": False,
             },
         ), patch(
             "sentinel_v2.dashboard_state.update_draft"
