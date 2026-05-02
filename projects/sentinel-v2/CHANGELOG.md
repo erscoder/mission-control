@@ -5,6 +5,10 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-05-02 · 1332356 - Re-bake protected template files after build crew kickoff
+
+Build agent routinely clobbers protected template sources despite the prompt forbidding it. Observed live: rewritten `src/modules/stripe/stripe.controller.ts` pinned `apiVersion='2024-06-20'` against the canonical `stripe@14.25.0` typing that requires `'2023-10-16'`; the TS2322 mismatch killed `nest build` at the post-build verification gate. `run_build` now calls `_prebake_deploy_files` a second time after `crew.kickoff()` succeeds and before the verification gate. The walk-recursive bake overwrites every template file back to its canonical, slug-substituted contents in one pass; idempotent and touches only files inside the template tree (agent-added legitimate files are preserved). `_verify_package_json_unchanged` hash-log kept so operators still see when the agent tried to drift the dep matrix. New `TestPostBuildRebake::test_run_build_calls_prebake_twice` pins the hook (1 pre-crew + 1 post-crew). 384 unit tests green.
+
 ## 2026-05-02 · 35bd3ac - Pre-bake canonical NestJS tsconfig + nest-cli configs
 
 Backend agent imports PrismaService and Stripe modules from the canonical paths but does not always emit the TypeScript / NestJS CLI configs required for `nest build`. Observed live: complianceDesk attempt 1 was rejected by the post-build verification gate with "Could not find TypeScript configuration file 'tsconfig.json'. Please, ensure that you are running this command in the appropriate directory." Adds three protected files to the node_nestjs deploy template picked up automatically by `_prebake_deploy_files`: `tsconfig.json` (ES2022, decorators metadata + experimental, strict null checks, baseUrl=./), `tsconfig.build.json` (extends root, excludes test + spec), `nest-cli.json` (sourceRoot=src, deleteOutDir, @nestjs/schematics). Backend task description gains the three new filenames in the 'INFRA FILES (DO NOT WRITE)' list. New `test_prebake_writes_canonical_typescript_configs` pins the files and the build-critical keys against template refactors. 383 unit tests green.
