@@ -5,6 +5,10 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-05-02 · 4ea0118 - Pre-bake canonical Next.js 14 frontend package.json
+
+The frontend agent drifted `eslint` to v9 while the canonical `eslint-config-next@14.2.15` still requires `v7 || v8`, producing ERESOLVE at the post-build verification gate. Backend already had a pinned canonical; mirror for Next.js. New template `data/deploy_templates/nextjs_frontend/package.json` pins `next@14.2.15`, `react@18.3.1`, `eslint@8.57.1`, `eslint-config-next@14.2.15`, Tailwind, Radix, Stripe.js, Lucide, Zod, react-hook-form, posthog-js. New `_prebake_frontend_files` helper walks that template into `<workspace>/frontend/`; called twice in `run_build` (pre-crew + post-crew) parallel to `_prebake_deploy_files`. Frontend task description gains a 'FRONTEND PROTECTED FILES' section forbidding overwrites of `frontend/package.json`; the agent can still install new deps with `npm install <pkg>` on top of the canonical. New `test_prebake_frontend_files_writes_canonical_package_json` pins the eslint/eslint-config-next major lockstep. 385 unit tests green.
+
 ## 2026-05-02 · 45d401c - Forbid agent-written duplicate webhooks module
 
 Backend agent kept hallucinating `src/modules/webhooks/webhooks.service.ts` calling `stripeConfig.webhooks.constructEvent(...)`. Two folded mistakes: (1) duplicates the canonical `stripe.controller.ts` webhook handler, breaking idempotency; (2) type-confuses the plain `stripeConfig` record with a Stripe SDK client (no `.webhooks` property exists). `nest build` then fails TS2339 and the post-build verification rejects. Backend task prompt gains an explicit blacklist (`src/modules/webhooks/`, `src/modules/stripe-webhook/`, `src/webhooks/`, etc.) plus clarification that `stripeConfig` exposes only `secretKey` / `webhookSecret` / `productId` / `priceId`. Services that genuinely need the SDK must instantiate locally with the canonical `apiVersion: '2023-10-16'`.
