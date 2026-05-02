@@ -5,6 +5,10 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-05-02 · d856848 - Escalate on CrewAI TaskOutput.raw ValidationError
+
+CrewAI raises `pydantic.ValidationError: 1 validation error for TaskOutput` when an agent hits max_iter and emits its tool_calls list as the final answer (observed live: complianceDesk build attempt 1 stderr showed `input_value=[ChatCompletionMessageFunctionTool(...)]` coerced into the str field `raw`). Outer retry loop then burned MAX_BUILD_RETRIES on the same root cause because the next attempt re-spawns identical agents with identical max_iter caps. Adds `blocked_agent_loop` category to `error_classifier.ESCALATION_PATTERNS` matching `validation error for taskoutput` and `chatcompletionmessagefunctiontool`; the existing escalation flow in `run_build` short-circuits on attempt 1, marks the draft `blocked`, and writes an entry to `sentinel_v2_escalations.json` instructing the operator to bump the failing agent's max_iter, simplify the task description, or swap to a less tool-call-happy model. 364 unit tests green.
+
 ## 2026-05-02 · a4499a8 - Pre-bake canonical PrismaModule + PrismaService
 
 Backend agent consistently imports `PrismaService` from `'../../prisma/prisma.service'` in every feature service / controller / spec but does not always emit the file. Post-build verification gate then fails `npm run build` with TS2307 missing-module errors (observed live: complianceDesk attempt 1 stderr showed identical TS2307 across auth.service.spec.ts and several modules, no prisma.service.ts on disk). Adds `src/prisma/prisma.service.ts` (PrismaClient subclass with `OnModuleInit`/`OnModuleDestroy` lifecycle hooks for clean Fly rolling deploys) and `src/prisma/prisma.module.ts` (`@Global()` module exporting PrismaService) to the node_nestjs deploy template. Existing `_prebake_deploy_files` walk-recursive pattern mirrors them automatically. Backend task description gains a 'PRISMA PROTECTED FILES' section parallel to the Stripe section. 362 unit tests green.
