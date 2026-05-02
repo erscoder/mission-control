@@ -5,6 +5,10 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-05-02 · d6d230c - Add zod to canonical NestJS backend dependencies
+
+Backend agent imported `zod` for DTO validation in `src/modules/stripe/dto/stripe-billing.dto.ts`, but the canonical backend package.json only shipped class-validator / class-transformer. `nest build` failed TS2307 'Cannot find module zod' at the post-build verification gate (first failure observed once Process.sequential let the build crew complete cleanly). Adds `zod@3.23.8` (matching the frontend pin) so agents can mix class-validator and zod validation patterns freely.
+
 ## 2026-05-02 · e26f827 - Switch build_crew hierarchical -> sequential to remove manager loop
 
 `Process.hierarchical` wraps the crew in an LLM "manager" that re-evaluates every task's output and may re-delegate. With MiniMax-M2.7 (tool-call-heavy) the manager routinely exhausted iteration budget mid-orchestration and crashed with `TaskOutput.raw` ValidationError. Bumping `max_iter` from 5 to 25 (c0b9e8a) only delayed the failure; root cause is the manager pattern itself. Build crew has six tasks in fixed deterministic order with no genuine re-delegation need, so `Process.sequential` is the correct shape. Each agent runs its task once, output flows down an explicit `context` chain (plan -> frontend+backend -> code_review+security -> qa), no manager-loop overhead. Removed `manager_llm` parameter (sequential-incompatible). Memory + hook integration preserved. 385 unit tests green.
