@@ -1393,12 +1393,31 @@ class SentinelLoopFlow(Flow[SentinelState]):
 
         self.state.build_output = str(result.raw) if hasattr(result, "raw") else str(result)
 
-        # ── Defensive: revert any agent-side rewrites of the pinned package.json.
-        # The build_crew prompt forbids the backend Lead from rewriting
-        # backend/package.json, but the agent still has write_file. If the
-        # canonical NestJS matrix drifted, log a WARNING and re-bake before the
-        # QA gate sees it. The deploy phase re-bakes again, so this never
-        # fails the build.
+        # ── Defensive re-bake: revert ALL protected template files in one pass.
+        # The build_crew prompt forbids overwriting Dockerfile, fly.toml,
+        # backend/package.json, the Stripe + Prisma protected sources, and
+        # the tsconfig / nest-cli configs, but the backend Lead still has the
+        # write_file tool and routinely clobbers them (observed live: a
+        # rewritten src/modules/stripe/stripe.controller.ts pinned
+        # apiVersion='2024-06-20' but the canonical stripe@14.25.0 type only
+        # accepts '2023-10-16', and the TS2322 mismatch killed `nest build`).
+        # Re-running the walk-recursive bake overwrites every template file
+        # back to its canonical, slug-substituted contents. Idempotent and
+        # cheap; touches only files that exist in the template tree.
+        try:
+            rebaked = _prebake_deploy_files(self.state.workspace_dir, slug)
+            log.info("Re-baked protected template files post-build: %s", list(rebaked))
+            log_event(
+                _trace,
+                "post_build_rebake",
+                metadata={"files": list(rebaked)},
+            )
+        except FileNotFoundError as e:
+            log.warning("Post-build re-bake skipped: %s", e)
+
+        # Defensive: revert any agent-side rewrites of the pinned package.json.
+        # Kept for the per-file hash log: tells the operator at a glance
+        # whether the agent tried to drift the dependency matrix this run.
         try:
             _verify_package_json_unchanged(self.state.workspace_dir)
         except Exception as e:

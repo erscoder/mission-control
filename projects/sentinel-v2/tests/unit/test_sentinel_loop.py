@@ -1404,6 +1404,52 @@ class TestDeployRetryLoop:
         assert final_call.kwargs.get("status") == "failed"
 
 
+class TestPostBuildRebake:
+    """Pin the post-crew re-bake of protected template files in run_build.
+
+    The build agent has the write_file tool and routinely clobbers protected
+    sources (Stripe controller, Prisma module, tsconfig, package.json, etc.)
+    despite the prompt forbidding it. Observed live: a rewritten Stripe
+    controller pinned ``apiVersion: '2024-06-20'`` against the canonical
+    ``stripe@14.25.0`` typing that requires ``'2023-10-16'``, killing
+    ``nest build`` with TS2322. The fix re-runs ``_prebake_deploy_files``
+    after ``crew.kickoff()`` succeeds so every protected file is reverted to
+    canonical before the verification gate runs.
+    """
+
+    def test_run_build_calls_prebake_twice(self, flow):
+        flow.state.top_opportunity = {"title": "Demo App"}
+        flow.state.user_profile = {}
+        mock_result = Mock()
+        mock_result.raw = '{"go_no_go": "GO", "build_status": "clean"}'
+
+        with patch(
+            "sentinel_v2.crews.build_crew.build_crew.build_crew"
+        ) as mock_crew_cls, patch(
+            "sentinel_v2.flows.sentinel_loop._prebake_deploy_files",
+            return_value={},
+        ) as mock_prebake, patch(
+            "sentinel_v2.flows.sentinel_loop._verify_npm_build",
+            return_value={"ok": True, "first_failure": None, "details": {}},
+        ), patch.object(
+            flow,
+            "_parse_deploy_result",
+            return_value={"go_no_go": "GO", "build_status": "clean"},
+        ):
+            mock_crew = MagicMock()
+            mock_crew.kickoff.return_value = mock_result
+            mock_crew_cls.return_value = mock_crew
+
+            with patch.object(flow, "remember"):
+                flow.run_build()
+
+        # Once before crew (existing behavior), once after crew (new defense).
+        assert mock_prebake.call_count == 2, (
+            f"Expected 2 prebake calls (pre-crew + post-crew rebake), "
+            f"got {mock_prebake.call_count}"
+        )
+
+
 class TestVerifyPackageJsonUnchanged:
     """Tests for _verify_package_json_unchanged hook-based revert helper."""
 
