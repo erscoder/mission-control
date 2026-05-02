@@ -32,7 +32,7 @@ def test_prebake_raises_on_missing_template(tmp_path: Path) -> None:
 
 
 def test_prebake_succeeds_on_valid_stack(tmp_path: Path) -> None:
-    """Happy path: real ``node_nestjs`` stack writes all three files."""
+    """Happy path: real ``node_nestjs`` stack writes infra files + protected sources."""
     workspace = tmp_path / "draft_c1_app"
     workspace.mkdir()
 
@@ -46,6 +46,36 @@ def test_prebake_succeeds_on_valid_stack(tmp_path: Path) -> None:
     # (e.g. src/config/stripe.config.ts). The infra trio must always be present;
     # nested files are stack-dependent and listed by relative path in `written`.
     assert {"fly.toml", "Dockerfile", "package.json"}.issubset(set(written.keys()))
+
+
+def test_prebake_writes_canonical_prisma_module_and_service(tmp_path: Path) -> None:
+    """PrismaModule + PrismaService must land at the canonical path.
+
+    Build agents reference `import { PrismaService } from '../../prisma/prisma.service'`;
+    if the file is not pre-baked the post-build verification gate fails with
+    TS2307 (observed live: backend agent imported the path in every service +
+    test but never wrote the file, npm run build failed in attempt 1, draft
+    auto-rejected). Pinning here so a future template refactor cannot quietly
+    drop the file.
+    """
+    workspace = tmp_path / "draft_c1_app"
+    workspace.mkdir()
+
+    written = _prebake_deploy_files(str(workspace), "myapp", stack="node_nestjs")
+
+    backend = workspace / "backend"
+    prisma_service = backend / "src" / "prisma" / "prisma.service.ts"
+    prisma_module = backend / "src" / "prisma" / "prisma.module.ts"
+    assert prisma_service.is_file()
+    assert prisma_module.is_file()
+    # Canonical export names the build agent imports must be present.
+    assert "export class PrismaService" in prisma_service.read_text()
+    assert "@Global()" in prisma_module.read_text()
+    assert "export class PrismaModule" in prisma_module.read_text()
+    # Returned dict uses the relative path as its key, matching how the flow
+    # logs the bake summary.
+    expected_rels = {"src/prisma/prisma.service.ts", "src/prisma/prisma.module.ts"}
+    assert expected_rels.issubset(set(written.keys()))
 
 
 def test_prebake_substitutes_slug_correctly(tmp_path: Path) -> None:
