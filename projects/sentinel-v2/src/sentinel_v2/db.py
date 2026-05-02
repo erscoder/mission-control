@@ -54,6 +54,12 @@ CREATE TABLE IF NOT EXISTS flow_checkpoints (
     state_json TEXT NOT NULL,
     saved_at   TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS infra_state (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 _init_lock = threading.Lock()
@@ -270,3 +276,42 @@ def list_by_status(statuses: set[str]) -> list[dict]:
             tuple(statuses),
         ).fetchall()
         return [_row_to_draft(r) for r in rows]
+
+
+# ── infra_state CRUD ─────────────────────────────────────────────────────────
+#
+# Generic key-value store for infrastructure that lives outside any single draft.
+# First user: shared Fly Postgres cluster name + region, persisted on first
+# successful deploy so subsequent deploys reuse the same cluster instead of
+# recreating it. Sized for tens of keys, not millions.
+
+
+def get_infra(key: str) -> str | None:
+    """Return ``infra_state.value`` for ``key`` or None if absent."""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT value FROM infra_state WHERE key = ?", (key,)
+        ).fetchone()
+        return row["value"] if row else None
+
+
+def set_infra(key: str, value: str) -> None:
+    """Upsert an infra_state row. Always overwrites on key conflict."""
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO infra_state (key, value, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+                value      = excluded.value,
+                updated_at = excluded.updated_at
+            """,
+            (key, value, now_iso()),
+        )
+
+
+def delete_infra(key: str) -> int:
+    """Delete an infra_state row. Returns 1 if deleted, 0 if absent."""
+    with connect() as conn:
+        cur = conn.execute("DELETE FROM infra_state WHERE key = ?", (key,))
+        return cur.rowcount or 0
