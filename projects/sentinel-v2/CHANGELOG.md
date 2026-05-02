@@ -5,6 +5,10 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-05-02 · c0b9e8a - Bump strategic_manager max_iter from 5 to 25
+
+The hierarchical build manager orchestrates 6 tasks (plan, frontend, backend, code review, security audit, QA gate). Each task needs ~2-3 manager rounds (delegate -> evaluate -> ask), so the prior cap of 5 reliably exhausted the budget mid-orchestration. CrewAI then asked the manager for a final answer, MiniMax-M2.7 returned another tool_calls list, and the build attempt crashed with TaskOutput.raw ValidationError, escalated as `blocked_agent_loop`. With every cycle hitting that wall, the pipeline could never reach deploy. Bumped to 25 (CrewAI default) so the manager has headroom for all six tasks; token cost rises per cycle but produces a green build instead of zero output.
+
 ## 2026-05-02 · 4ea0118 - Pre-bake canonical Next.js 14 frontend package.json
 
 The frontend agent drifted `eslint` to v9 while the canonical `eslint-config-next@14.2.15` still requires `v7 || v8`, producing ERESOLVE at the post-build verification gate. Backend already had a pinned canonical; mirror for Next.js. New template `data/deploy_templates/nextjs_frontend/package.json` pins `next@14.2.15`, `react@18.3.1`, `eslint@8.57.1`, `eslint-config-next@14.2.15`, Tailwind, Radix, Stripe.js, Lucide, Zod, react-hook-form, posthog-js. New `_prebake_frontend_files` helper walks that template into `<workspace>/frontend/`; called twice in `run_build` (pre-crew + post-crew) parallel to `_prebake_deploy_files`. Frontend task description gains a 'FRONTEND PROTECTED FILES' section forbidding overwrites of `frontend/package.json`; the agent can still install new deps with `npm install <pkg>` on top of the canonical. New `test_prebake_frontend_files_writes_canonical_package_json` pins the eslint/eslint-config-next major lockstep. 385 unit tests green.
