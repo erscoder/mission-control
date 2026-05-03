@@ -534,6 +534,156 @@ class TestQAGateAndApprovalGate:
         assert flow.state.build_ok is True
 
 
+class TestExtractReviewCritical:
+    """Defense-in-depth helper that re-parses Code Reviewer + Security
+    Engineer task outputs so the QA gate cannot be hoodwinked by an LLM
+    QA Lead that returns GO while criticals remain open.
+    """
+
+    def _task(self, agent_role: str, raw: str):
+        t = Mock(spec=["agent", "raw", "pydantic", "json_dict"])
+        t.agent = agent_role
+        t.raw = raw
+        t.pydantic = None
+        t.json_dict = None
+        return t
+
+    def test_returns_zeros_when_no_tasks_output(self, flow):
+        result = Mock(spec=["raw"])
+        summary = flow._extract_review_critical(result)
+        assert summary["code_review_critical"] == 0
+        assert summary["security_critical"] == 0
+        assert summary["matched_tasks"] == []
+
+    def test_counts_code_review_critical_from_findings_array(self, flow):
+        review_raw = (
+            '{"go_no_go": "NO_GO", "issues_count": 3, '
+            '"findings": ['
+            '  {"severity": "critical", "file": "a.ts", "fix": "x"},'
+            '  {"severity": "critical", "file": "b.ts", "fix": "y"},'
+            '  {"severity": "high", "file": "c.ts", "fix": "z"}'
+            ']}'
+        )
+        result = Mock(spec=["tasks_output"])
+        result.tasks_output = [self._task("Senior Code Reviewer", review_raw)]
+        summary = flow._extract_review_critical(result)
+        assert summary["code_review_critical"] == 2
+        assert summary["security_critical"] == 0
+
+    def test_counts_security_critical_from_severity_map(self, flow):
+        sec_raw = (
+            '{"go_no_go": "NO_GO", '
+            '"vulnerability_count_by_severity": {"critical": 4, "high": 1}, '
+            '"findings": []}'
+        )
+        result = Mock(spec=["tasks_output"])
+        result.tasks_output = [self._task("Security Engineer", sec_raw)]
+        summary = flow._extract_review_critical(result)
+        assert summary["security_critical"] == 4
+        assert summary["code_review_critical"] == 0
+
+    def test_treats_no_go_with_no_count_as_one_critical(self, flow):
+        review_raw = '{"go_no_go": "NO_GO", "notes": "see report"}'
+        result = Mock(spec=["tasks_output"])
+        result.tasks_output = [self._task("Senior Code Reviewer", review_raw)]
+        summary = flow._extract_review_critical(result)
+        assert summary["code_review_critical"] == 1
+
+    def test_ignores_unrelated_agents(self, flow):
+        review_raw = '{"go_no_go": "NO_GO", "critical": 5}'
+        result = Mock(spec=["tasks_output"])
+        result.tasks_output = [self._task("Senior Frontend Engineer", review_raw)]
+        summary = flow._extract_review_critical(result)
+        assert summary["code_review_critical"] == 0
+        assert summary["security_critical"] == 0
+
+    def test_qa_gate_override_on_review_critical(self, flow):
+        """QA Lead says GO but Code Reviewer reports critical>0: force fail."""
+        flow.state.draft_id = "draft_c1_override_review"
+        flow.state.cycle_count = 1
+        flow.state.top_opportunity = {"title": "Demo App"}
+        flow.state.user_profile = {"name": "Kike"}
+
+        review_task = Mock(spec=["agent", "raw", "pydantic", "json_dict"])
+        review_task.agent = "Senior Code Reviewer"
+        review_task.raw = (
+            '{"go_no_go": "NO_GO", '
+            '"findings": [{"severity": "critical", "file": "x.ts", "fix": "y"}]}'
+        )
+        review_task.pydantic = None
+        review_task.json_dict = None
+
+        mock_result = Mock(spec=["raw", "tasks_output"])
+        mock_result.raw = '{"go_no_go": "GO", "build_status": "clean"}'
+        mock_result.tasks_output = [review_task]
+
+        with patch(
+            "sentinel_v2.crews.build_crew.build_crew.build_crew"
+        ) as mock_crew_cls, patch(
+            "sentinel_v2.dashboard_state.update_draft"
+        ), patch.object(flow, "remember"), patch.object(
+            flow, "_clear_checkpoint"
+        ), patch.object(
+            flow,
+            "_parse_deploy_result",
+            return_value={"go_no_go": "GO", "build_status": "clean"},
+        ), patch(
+            "sentinel_v2.flows.sentinel_loop._verify_npm_build",
+            return_value={"ok": True, "first_failure": None, "details": {}},
+        ):
+            mock_crew = MagicMock()
+            mock_crew.kickoff.return_value = mock_result
+            mock_crew_cls.return_value = mock_crew
+            flow.run_build()
+
+        assert flow.state.build_ok is False
+        assert flow.state.error == "build_failed_qa_gate_critical_override"
+        assert flow._shutdown_requested is True
+
+    def test_qa_gate_override_on_security_critical(self, flow):
+        """QA Lead says GO but Security Engineer reports critical>0: force fail."""
+        flow.state.draft_id = "draft_c1_override_sec"
+        flow.state.cycle_count = 1
+        flow.state.top_opportunity = {"title": "Demo App"}
+        flow.state.user_profile = {"name": "Kike"}
+
+        sec_task = Mock(spec=["agent", "raw", "pydantic", "json_dict"])
+        sec_task.agent = "Security Engineer"
+        sec_task.raw = (
+            '{"go_no_go": "NO_GO", '
+            '"vulnerability_count_by_severity": {"critical": 2, "high": 0}}'
+        )
+        sec_task.pydantic = None
+        sec_task.json_dict = None
+
+        mock_result = Mock(spec=["raw", "tasks_output"])
+        mock_result.raw = '{"go_no_go": "GO", "build_status": "clean"}'
+        mock_result.tasks_output = [sec_task]
+
+        with patch(
+            "sentinel_v2.crews.build_crew.build_crew.build_crew"
+        ) as mock_crew_cls, patch(
+            "sentinel_v2.dashboard_state.update_draft"
+        ), patch.object(flow, "remember"), patch.object(
+            flow, "_clear_checkpoint"
+        ), patch.object(
+            flow,
+            "_parse_deploy_result",
+            return_value={"go_no_go": "GO", "build_status": "clean"},
+        ), patch(
+            "sentinel_v2.flows.sentinel_loop._verify_npm_build",
+            return_value={"ok": True, "first_failure": None, "details": {}},
+        ):
+            mock_crew = MagicMock()
+            mock_crew.kickoff.return_value = mock_result
+            mock_crew_cls.return_value = mock_crew
+            flow.run_build()
+
+        assert flow.state.build_ok is False
+        assert flow.state.error == "build_failed_qa_gate_critical_override"
+        assert flow._shutdown_requested is True
+
+
 class TestEscalationOnUnrecoverableErrors:
     """Build/deploy retry loops escalate on unrecoverable errors instead of
     burning the full retry budget on something only the operator can fix.

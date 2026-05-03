@@ -1574,19 +1574,38 @@ class SentinelLoopFlow(Flow[SentinelState]):
         go_no_go = str(qa_parsed.get("go_no_go") or "").strip().upper()
         build_status = str(qa_parsed.get("build_status") or "").strip().lower()
         blocking_issues = qa_parsed.get("blocking_issues") or []
+        # Defense-in-depth: the QA Lead is an LLM and has historically
+        # emitted go_no_go="GO" while the Code Reviewer / Security Engineer
+        # tasks reported open CRITICALs in their own structured outputs.
+        # Re-parse those task outputs directly and force-fail the gate when
+        # either reports critical>0, regardless of what the QA Lead said.
+        review_summary = self._extract_review_critical(result)
+        critical_override = (
+            review_summary["code_review_critical"] > 0
+            or review_summary["security_critical"] > 0
+        )
         qa_failed = (
             (go_no_go and go_no_go != "GO")
             or build_status == "fail"
+            or critical_override
         )
         if qa_failed:
             self.state.build_ok = False
-            self.state.error = "build_failed_qa_gate"
+            qa_lead_said_go = (go_no_go == "GO" or build_status in {"clean", "warnings"})
+            self.state.error = (
+                "build_failed_qa_gate_critical_override"
+                if (critical_override and qa_lead_said_go)
+                else "build_failed_qa_gate"
+            )
             reason = (
                 f"QA gate: go_no_go={go_no_go or 'unknown'}, "
                 f"build_status={build_status or 'unknown'}, "
-                f"blockers={blocking_issues!r}"
+                f"blockers={blocking_issues!r}, "
+                f"review_critical={review_summary['code_review_critical']}, "
+                f"security_critical={review_summary['security_critical']}, "
+                f"evidence={review_summary['evidence']!r}"
             )
-            log.error("Build QA gate failed — %s", reason)
+            log.error("Build QA gate failed: %s", reason)
             if self.state.draft_id:
                 from sentinel_v2.dashboard_state import update_draft
                 try:
@@ -2508,6 +2527,124 @@ class SentinelLoopFlow(Flow[SentinelState]):
         raw = self._extract_raw(result)
         parsed = self._coerce_json(raw)
         return parsed if isinstance(parsed, dict) else {}
+
+    def _extract_review_critical(self, result) -> dict:
+        """Scan code-review and security-audit task outputs for CRITICAL findings.
+
+        Defense-in-depth for the build QA gate. The QA Lead is an LLM and
+        has, in production, returned ``go_no_go='GO'`` / ``build_status='clean'``
+        while the Code Reviewer and Security Engineer tasks each reported
+        unresolved CRITICAL findings in their own structured outputs.
+
+        This helper inspects ``result.tasks_output`` (CrewAI), matches the
+        Code Reviewer and Security Engineer / Auditor tasks by agent role
+        substring, and counts CRITICALs across several output shapes:
+
+        - explicit numeric counters: ``critical_count``, ``critical``,
+          ``criticals``
+        - nested counters: ``issue_count_by_severity.critical``,
+          ``vulnerability_count_by_severity.critical``,
+          ``issues_count_by_severity.critical``
+        - findings arrays with ``severity == 'critical'``
+        - reviewer/auditor's own ``go_no_go != 'GO'`` (treated as >=1
+          critical when no count was emitted)
+        - last-ditch substring scan for ``"severity": "critical"`` tokens
+
+        Returns ``{code_review_critical, security_critical, matched_tasks,
+        evidence}``. Always non-throwing; returns zeros on any failure.
+        """
+        summary = {
+            "code_review_critical": 0,
+            "security_critical": 0,
+            "matched_tasks": [],
+            "evidence": [],
+        }
+        try:
+            tasks_output = getattr(result, "tasks_output", None)
+        except Exception:
+            return summary
+        # CrewAI exposes tasks_output as a List[TaskOutput]. Be strict: bare
+        # Mocks in tests auto-generate a Mock for any attribute access, which
+        # is truthy but not iterable; restrict to true list/tuple to keep the
+        # helper safe across the (loose) test fixtures.
+        if not isinstance(tasks_output, (list, tuple)):
+            return summary
+
+        for task_out in tasks_output:
+            try:
+                agent_role = str(getattr(task_out, "agent", "") or "").lower()
+            except Exception:
+                continue
+            is_review = "code reviewer" in agent_role or "code review" in agent_role
+            is_security = "security" in agent_role
+            if not (is_review or is_security):
+                continue
+
+            parsed = None
+            pyd = getattr(task_out, "pydantic", None)
+            if pyd is not None:
+                try:
+                    parsed = pyd.model_dump()
+                except Exception:
+                    parsed = None
+            if parsed is None:
+                jd = getattr(task_out, "json_dict", None)
+                if isinstance(jd, dict):
+                    parsed = jd
+            if parsed is None:
+                raw = getattr(task_out, "raw", None) or ""
+                parsed = self._coerce_json(raw)
+
+            crit = 0
+            if isinstance(parsed, dict):
+                for k in ("critical_count", "critical", "criticals"):
+                    v = parsed.get(k)
+                    if isinstance(v, int):
+                        crit = max(crit, v)
+                for nest_key in (
+                    "issue_count_by_severity",
+                    "vulnerability_count_by_severity",
+                    "issues_count_by_severity",
+                ):
+                    sub = parsed.get(nest_key)
+                    if isinstance(sub, dict):
+                        v = sub.get("critical")
+                        if isinstance(v, int):
+                            crit = max(crit, v)
+                for findings_key in ("findings", "issues", "vulnerabilities"):
+                    arr = parsed.get(findings_key)
+                    if isinstance(arr, list):
+                        count_in_arr = sum(
+                            1
+                            for f in arr
+                            if isinstance(f, dict)
+                            and str(
+                                f.get("severity") or f.get("cvss_severity") or ""
+                            ).strip().lower()
+                            == "critical"
+                        )
+                        crit = max(crit, count_in_arr)
+                gng = str(parsed.get("go_no_go") or "").strip().upper()
+                if gng and gng != "GO" and crit == 0:
+                    # Reviewer/auditor refused to ship but emitted no count;
+                    # treat the refusal itself as one critical.
+                    crit = 1
+            else:
+                raw_text = str(getattr(task_out, "raw", "") or "").lower()
+                crit = raw_text.count('"severity": "critical"') + raw_text.count(
+                    '"severity":"critical"'
+                )
+
+            if crit <= 0:
+                continue
+            if is_review:
+                summary["code_review_critical"] += crit
+            else:
+                summary["security_critical"] += crit
+            summary["matched_tasks"].append(agent_role)
+            summary["evidence"].append(f"{agent_role}: critical={crit}")
+
+        return summary
 
     def _parse_deploy_result(self, result) -> dict:
         """Best-effort dict view of a deploy or QA crew result.
