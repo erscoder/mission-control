@@ -170,6 +170,37 @@ def test_run_shell_rejects_pipe(workspace):
     assert "|" in result
 
 
+def test_run_shell_rejects_stderr_redirect(workspace):
+    """Build agent ran `npx tsc 2>&1` live; shlex kept `2>&1` as one token,
+    tsc treated it as a path arg, TS6231 forever. Reject with a clear hint.
+    """
+    tool = RunShellTool()
+    result = tool._run(workspace_dir=str(workspace), command="npx tsc 2>&1")
+    assert "shell-error" in result
+    assert "2>&1" in result
+
+
+def test_run_shell_rejects_stdout_redirect(workspace):
+    tool = RunShellTool()
+    result = tool._run(workspace_dir=str(workspace), command="echo hi > /tmp/out")
+    assert "shell-error" in result
+    assert ">" in result
+
+
+def test_run_shell_rejects_append_redirect(workspace):
+    tool = RunShellTool()
+    result = tool._run(workspace_dir=str(workspace), command="echo hi >> log.txt")
+    assert "shell-error" in result
+    assert ">>" in result
+
+
+def test_run_shell_rejects_stdin_redirect(workspace):
+    tool = RunShellTool()
+    result = tool._run(workspace_dir=str(workspace), command="cat < input.txt")
+    assert "shell-error" in result
+    assert "<" in result
+
+
 def test_run_shell_allows_leading_cd_chain(workspace):
     """The 'cd <subdir> && <cmd>' prefix is the one allowed chain."""
     (workspace / "frontend").mkdir()

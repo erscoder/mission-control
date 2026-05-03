@@ -260,12 +260,27 @@ class RunShellTool(BaseTool):
         # arguments (e.g. 'npm install foo && npm install bar' becomes a
         # tag name '&&' to npm, causing EINVALIDTAGNAME). Force agents to
         # make separate calls per command.
+        #
+        # Includes shell redirects (`2>&1`, `>`, `>>`, `<`, `<<`, `&>`):
+        # observed live, the build agent ran `npx tsc 2>&1` and tsc treated
+        # `2>&1` as a path argument because shlex preserves it as a single
+        # token; tsc then fails with TS6231 'Could not resolve the path 2>&1'
+        # forever, agent reads the unhelpful error, retries the same shell
+        # form, build attempt exhausts on a non-issue. Reject early with a
+        # clear error so the agent can correct.
+        _SHELL_OPS = {
+            "&&", "||", ";", "|",
+            ">", ">>", "<", "<<",
+            "2>&1", "2>", "1>", "&>", "1>&2", "2>&-",
+        }
         for tok in argv:
-            if tok in ("&&", "||", ";", "|"):
+            if tok in _SHELL_OPS:
                 return (
                     f"shell-error: shell operator {tok!r} not supported. "
-                    "Issue one run_shell call per command (no chaining). "
-                    "The only allowed chain is a leading 'cd <subdir> && <cmd>'."
+                    "subprocess.run uses shell=False so redirects and pipes "
+                    "do not work. Issue one run_shell call per command and "
+                    "read the captured output from the tool result. The only "
+                    "allowed chain is a leading 'cd <subdir> && <cmd>'."
                 )
 
         binary = os.path.basename(argv[0])
