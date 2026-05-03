@@ -511,6 +511,40 @@ def _verify_npm_build(workspace_dir: str, *, timeout: int = 600) -> dict:
             out["details"][sub] = info
             continue
 
+        # If a Prisma schema exists, regenerate `@prisma/client` BEFORE the
+        # build runs. Without this, `tsc` fails with TS2305 'Module
+        # @prisma/client has no exported member PrismaClient' because the
+        # generated client lives at `node_modules/.prisma/client/` and is
+        # only emitted by `prisma generate`. The canonical package.json now
+        # has a `postinstall: prisma generate || ...` hook which handles
+        # the common case, but agents that rewrite scripts or install
+        # extra deps with `npm install --no-save` can skip postinstall;
+        # this safety net guarantees the client exists before tsc runs.
+        schema_path = sub_path / "prisma" / "schema.prisma"
+        npx_path = npx
+        if sub == "backend" and schema_path.is_file() and npx_path:
+            try:
+                gen_proc = subprocess.run(
+                    [npx_path, "--no-install", "prisma", "generate", "--schema=prisma/schema.prisma"],
+                    cwd=str(sub_path),
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                )
+                if gen_proc.returncode != 0:
+                    # Non-fatal: fall through to the build, which will surface
+                    # the underlying problem (e.g. invalid schema). Log the
+                    # tail so the next attempt's revision_notes carry it.
+                    info["prisma_generate_rc"] = gen_proc.returncode
+                    info["prisma_generate_tail"] = (
+                        (gen_proc.stderr or gen_proc.stdout or "")[-400:]
+                    )
+            except subprocess.TimeoutExpired:
+                info["prisma_generate_rc"] = -1
+                info["prisma_generate_tail"] = "timeout after 180s"
+            except FileNotFoundError:
+                pass
+
         if "build" in scripts:
             cmd = [npm, "run", "build"]
         elif npx and (sub_path / "tsconfig.json").is_file():
