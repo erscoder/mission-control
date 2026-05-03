@@ -521,6 +521,34 @@ def _verify_npm_build(workspace_dir: str, *, timeout: int = 600) -> dict:
             out["details"][sub] = info
             continue
 
+        # Wipe stale build artifacts BEFORE re-running the build. Between
+        # build-crew retries the workspace already contains `dist/` and
+        # `tsconfig.tsbuildinfo` from the previous attempt; TypeScript's
+        # incremental compilation reads the stale tsbuildinfo, gets confused
+        # against the freshly-rewritten `src/`, and emits errors that send
+        # the agent into "needs manual fix" prose instead of a real patch.
+        # Always remove these so every attempt verifies from a clean slate.
+        # Cheap: dist is small (<10MB), node_modules/.cache only exists when
+        # webpack/babel made a cache, frontend `.next/` and `out/` are next.js
+        # outputs that must be rebuilt to reflect new src.
+        for stale in ("dist", "tsconfig.tsbuildinfo", "tsconfig.build.tsbuildinfo"):
+            target = sub_path / stale
+            try:
+                if target.is_dir():
+                    shutil.rmtree(target, ignore_errors=True)
+                elif target.exists():
+                    target.unlink()
+            except Exception:
+                pass
+        cache_dir = sub_path / "node_modules" / ".cache"
+        if cache_dir.is_dir():
+            shutil.rmtree(cache_dir, ignore_errors=True)
+        if sub == "frontend":
+            for stale in (".next", "out"):
+                target = sub_path / stale
+                if target.is_dir():
+                    shutil.rmtree(target, ignore_errors=True)
+
         try:
             build_proc = subprocess.run(
                 cmd,

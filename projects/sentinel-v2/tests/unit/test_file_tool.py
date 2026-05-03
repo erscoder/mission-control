@@ -180,3 +180,76 @@ def test_run_shell_allows_leading_cd_chain(workspace):
     )
     assert "exit=0" in result
     assert "here" in result
+
+
+# ── Argv path-validation: defense-in-depth against `rm -rf` outside ws ───────
+
+
+def test_run_shell_rejects_rm_absolute_outside_workspace(workspace):
+    """rm with an absolute path outside the workspace must be refused."""
+    tool = RunShellTool()
+    result = tool._run(
+        workspace_dir=str(workspace),
+        command="rm -rf /tmp/some-other-dir",
+    )
+    assert "shell-error" in result
+    assert "outside workspace" in result
+
+
+def test_run_shell_rejects_mv_to_operator_home(workspace):
+    """mv targeting ~ (operator home) must be refused."""
+    tool = RunShellTool()
+    result = tool._run(
+        workspace_dir=str(workspace),
+        command="mv dist ~/stash",
+    )
+    assert "shell-error" in result
+    assert "~" in result
+
+
+def test_run_shell_rejects_rm_traversal(workspace):
+    """rm with `..` traversing past the workspace must be refused."""
+    tool = RunShellTool()
+    result = tool._run(
+        workspace_dir=str(workspace),
+        command="rm -rf ../../etc/passwd",
+    )
+    assert "shell-error" in result
+
+
+def test_run_shell_allows_rm_inside_workspace(workspace):
+    """rm of a path inside the workspace stays allowed (the agent's
+    legitimate `rm -rf dist tsconfig.tsbuildinfo` cleanup case).
+    """
+    (workspace / "dist").mkdir()
+    (workspace / "dist" / "stale.js").write_text("// old")
+    tool = RunShellTool()
+    result = tool._run(
+        workspace_dir=str(workspace),
+        command="rm -rf dist",
+    )
+    assert "exit=0" in result
+    assert not (workspace / "dist").exists()
+
+
+def test_run_shell_rejects_sh_after_whitelist_tightening(workspace):
+    """sh is removed from the whitelist because `sh -c '...'` re-introduces
+    full shell expansion that bypasses the per-binary path validation.
+    """
+    tool = RunShellTool()
+    result = tool._run(
+        workspace_dir=str(workspace),
+        command="sh -c 'rm -rf /tmp/pwn'",
+    )
+    assert "shell-error" in result
+    assert "not in whitelist" in result
+
+
+def test_run_shell_rejects_bash_after_whitelist_tightening(workspace):
+    tool = RunShellTool()
+    result = tool._run(
+        workspace_dir=str(workspace),
+        command="bash -c 'rm -rf /tmp/pwn'",
+    )
+    assert "shell-error" in result
+    assert "not in whitelist" in result

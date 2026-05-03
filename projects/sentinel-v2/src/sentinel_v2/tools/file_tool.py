@@ -25,6 +25,10 @@ log = logging.getLogger("sentinel_v2.tools.file")
 WORKSPACES_ROOT = Path(os.environ.get("SENTINEL_WORKSPACES_ROOT", os.path.expanduser("~/Sentinel")))
 
 # Commands an agent may invoke. Anything else is refused. Keep this list tight.
+# `sh` and `bash` are deliberately omitted: `sh -c "<arbitrary>"` re-introduces
+# unrestricted shell expansion (pipes, redirects, command substitution) that
+# bypasses the per-binary path validation below. Agents that need a shell
+# pipeline must split it into separate run_shell calls.
 _SHELL_WHITELIST = {
     # Build / package managers
     "npm", "npx", "pnpm", "node", "yarn",
@@ -40,9 +44,16 @@ _SHELL_WHITELIST = {
     "ls", "cat", "head", "tail", "find", "grep", "wc", "pwd", "which", "stat",
     # Filesystem write (workspace-scoped via cwd)
     "mkdir", "rm", "mv", "cp", "touch", "chmod",
-    # Shell + misc
-    "sh", "bash", "echo", "test", "true", "false",
+    # Misc
+    "echo", "test", "true", "false",
 }
+
+# Binaries that mutate the filesystem. Every non-flag positional argument
+# passed to one of these MUST resolve to a path inside the workspace — agents
+# have, on a hallucinated "manual cleanup" path, attempted `rm -rf ~` and
+# `mv ../* /tmp`. The validator below rejects anything that escapes the
+# workspace via absolute paths, `..` traversal, or `~` expansion.
+_PATH_MUTATING_BINARIES = {"rm", "mv", "cp", "chmod", "touch", "mkdir"}
 
 # Pattern: ``cd <subdir> && <rest>``. Agents fall back to this when they want
 # to run a command in a sub-directory of the workspace; subprocess.run does
@@ -72,6 +83,51 @@ def _safe_child(workspace: Path, rel_path: str) -> Path:
     if not str(candidate).startswith(str(workspace)):
         raise ValueError(f"path {rel_path!r} escapes workspace {workspace}")
     return candidate
+
+
+def _validate_destructive_argv(
+    binary: str, argv: list[str], cwd: Path, workspace: Path
+) -> str | None:
+    """For path-mutating binaries, every non-flag positional argument MUST
+    resolve to a path inside ``workspace``. Returns an error string when a
+    path escapes (absolute path outside workspace, ``..`` traversal up past
+    workspace, ``~`` expansion to the operator's home, etc.) or ``None`` when
+    the argv is safe to execute.
+
+    This is an in-process defense-in-depth layer: even though run_shell uses
+    ``cwd=workspace`` and ``shell=False``, ``rm -rf /Users/kike/Documents``
+    will still execute happily because the absolute path is interpreted by
+    ``rm``, not by the shell. Block such argv before subprocess.run sees it.
+    """
+    if binary not in _PATH_MUTATING_BINARIES:
+        return None
+    for tok in argv[1:]:
+        # Flag tokens (single ``-`` or long ``--name``). Catches ``-rf``,
+        # ``--recursive``, ``--``, etc. The bare ``-`` is treated as flag too.
+        if tok.startswith("-"):
+            continue
+        # Empty tokens (rare; shlex.split keeps them only on quoted "" args)
+        if not tok:
+            continue
+        # ``~`` expansion is a Python-level concern: shlex.split keeps the
+        # literal ``~``, but Path.expanduser() would resolve to the operator
+        # home. Treat any leading ``~`` as an immediate escape attempt.
+        if tok.startswith("~"):
+            return (
+                f"shell-error: destructive binary {binary!r} cannot operate on "
+                f"path {tok!r} (~ expands to operator home, outside workspace)"
+            )
+        try:
+            candidate = Path(tok)
+            target = (candidate if candidate.is_absolute() else (cwd / candidate)).resolve()
+        except Exception as e:
+            return f"shell-error: cannot resolve path {tok!r} for {binary!r}: {e}"
+        if not str(target).startswith(str(workspace)):
+            return (
+                f"shell-error: destructive binary {binary!r} cannot operate on "
+                f"{tok!r} (resolves to {target}, outside workspace {workspace})"
+            )
+    return None
 
 
 # ── WriteFileTool ─────────────────────────────────────────────────────────────
@@ -215,6 +271,14 @@ class RunShellTool(BaseTool):
         binary = os.path.basename(argv[0])
         if binary not in _SHELL_WHITELIST:
             return f"shell-error: {binary!r} not in whitelist"
+
+        # Defense-in-depth: subprocess.run's cwd parameter only sets where the
+        # process starts; absolute paths in argv (e.g. `rm -rf /Users/kike/...`)
+        # bypass that constraint completely. Validate every path-touching
+        # argument for path-mutating binaries before letting subprocess see it.
+        argv_err = _validate_destructive_argv(binary, argv, cwd, ws)
+        if argv_err:
+            return argv_err
 
         timeout = max(1, min(int(timeout_seconds), 1800))
         try:

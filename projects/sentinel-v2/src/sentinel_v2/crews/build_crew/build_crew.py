@@ -181,6 +181,17 @@ def build_crew(cycle: int = 1) -> Crew:
             "5. Read `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` from env at runtime. List them in "
             "   `.env.example` but never hardcode.\n"
             "6. Tests only on the risky slices: auth, Stripe webhook, core business rule.\n"
+            "7. NEVER tell the operator to run manual commands. You are the operator. If "
+            "   `npm run build` fails on stale artifacts (e.g. `tsconfig.tsbuildinfo` "
+            "   pointing at deleted modules, `dist/` containing old compiled code that "
+            "   shadows new `src/`), fix it yourself with `run_shell('rm -rf dist "
+            "   tsconfig.tsbuildinfo tsconfig.build.tsbuildinfo node_modules/.cache', "
+            "   subdir='backend')` and re-run the build. Output that says \"requires "
+            "   manual fix\", \"delete the dist/ directory\", \"clear the cache\", or any "
+            "   variant that asks the operator to do shell work is an automatic "
+            "   build-failure signal: the post-build verification gate will reject the "
+            "   draft and start a fresh retry. Your final answer must be code that "
+            "   compiles, not a runbook.\n"
         ),
         tools=[write_file, list_files, run_shell, stripe_create_product, stripe_list_products],
         llm=minimax,
