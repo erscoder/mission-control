@@ -80,6 +80,89 @@ class TestSentinelLoopFlowHelpers:
         assert parsed["deployment_id"] == "abc123"
 
 
+class TestWorkspaceFileManifest:
+    """Tests for ``_workspace_file_manifest``: file inventory the build crew
+    consumes on retries to patch instead of regenerate.
+    """
+
+    def test_returns_empty_for_missing_workspace(self, tmp_path):
+        from sentinel_v2.flows.sentinel_loop import _workspace_file_manifest
+        assert _workspace_file_manifest(str(tmp_path / "does_not_exist")) == {}
+
+    def test_lists_authored_files_with_short_sha1(self, tmp_path):
+        from sentinel_v2.flows.sentinel_loop import _workspace_file_manifest
+
+        (tmp_path / "backend" / "src").mkdir(parents=True)
+        (tmp_path / "backend" / "src" / "main.ts").write_text("hello")
+        (tmp_path / "frontend" / "src").mkdir(parents=True)
+        (tmp_path / "frontend" / "src" / "page.tsx").write_text("page")
+
+        manifest = _workspace_file_manifest(str(tmp_path))
+        assert "backend/src/main.ts" in manifest
+        assert "frontend/src/page.tsx" in manifest
+        # sha1 truncated to 12 chars
+        assert len(manifest["backend/src/main.ts"]) == 12
+        assert all(c in "0123456789abcdef" for c in manifest["backend/src/main.ts"])
+
+    def test_skips_node_modules_dist_next_out_cache_git_coverage(self, tmp_path):
+        from sentinel_v2.flows.sentinel_loop import _workspace_file_manifest
+
+        (tmp_path / "backend" / "node_modules").mkdir(parents=True)
+        (tmp_path / "backend" / "node_modules" / "pkg.js").write_text("noise")
+        (tmp_path / "backend" / "dist").mkdir()
+        (tmp_path / "backend" / "dist" / "main.js").write_text("compiled")
+        (tmp_path / "frontend" / ".next").mkdir(parents=True)
+        (tmp_path / "frontend" / ".next" / "build.json").write_text("{}")
+        (tmp_path / "frontend" / "out").mkdir()
+        (tmp_path / "frontend" / "out" / "index.html").write_text("static")
+        (tmp_path / "frontend" / "node_modules" / ".cache").mkdir(parents=True)
+        (tmp_path / "frontend" / "node_modules" / ".cache" / "babel.json").write_text("{}")
+        (tmp_path / ".git").mkdir()
+        (tmp_path / ".git" / "HEAD").write_text("ref: refs/heads/main")
+        (tmp_path / "coverage").mkdir()
+        (tmp_path / "coverage" / "lcov.info").write_text("data")
+        (tmp_path / "backend" / "src").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "backend" / "src" / "keep.ts").write_text("kept")
+
+        manifest = _workspace_file_manifest(str(tmp_path))
+        assert "backend/src/keep.ts" in manifest
+        for excluded in (
+            "backend/node_modules/pkg.js",
+            "backend/dist/main.js",
+            "frontend/.next/build.json",
+            "frontend/out/index.html",
+            "frontend/node_modules/.cache/babel.json",
+            ".git/HEAD",
+            "coverage/lcov.info",
+        ):
+            assert excluded not in manifest, f"manifest should skip {excluded}"
+
+    def test_skips_tsbuildinfo_files(self, tmp_path):
+        from sentinel_v2.flows.sentinel_loop import _workspace_file_manifest
+        (tmp_path / "backend").mkdir()
+        (tmp_path / "backend" / "tsconfig.tsbuildinfo").write_text("stale")
+        (tmp_path / "backend" / "tsconfig.build.tsbuildinfo").write_text("stale")
+        (tmp_path / "backend" / "tsconfig.json").write_text("{}")
+
+        manifest = _workspace_file_manifest(str(tmp_path))
+        assert "backend/tsconfig.json" in manifest
+        assert "backend/tsconfig.tsbuildinfo" not in manifest
+        assert "backend/tsconfig.build.tsbuildinfo" not in manifest
+
+    def test_truncates_with_sentinel_marker(self, tmp_path):
+        from sentinel_v2.flows.sentinel_loop import _workspace_file_manifest
+        d = tmp_path / "src"
+        d.mkdir()
+        for i in range(10):
+            (d / f"f{i:02d}.ts").write_text(f"// {i}")
+
+        manifest = _workspace_file_manifest(str(tmp_path), max_files=3)
+        # 3 capped real files + 1 truncation sentinel
+        assert "__truncated__" in manifest
+        assert len([k for k in manifest if k != "__truncated__"]) == 3
+        assert "+7 more files" in manifest["__truncated__"]
+
+
 class TestSentinelLoopFlowKickoff:
     """Tests for full kickoff flow (with mocked crews)."""
 

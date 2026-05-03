@@ -131,6 +131,49 @@ def _prebake_frontend_files(workspace_dir: str, slug: str, stack: str = "nextjs_
     return written
 
 
+def _workspace_file_manifest(workspace_dir: str, max_files: int = 600) -> dict[str, str]:
+    """Return ``{relative_path: sha1_short}`` for every source file in the
+    workspace. Pointer the build crew uses on retries to know what's already
+    on disk and patch surgically instead of regenerating from scratch.
+
+    Skips runtime artefacts (``node_modules/``, ``dist/``, ``.next/``,
+    ``out/``, ``.cache/``, ``.git/``, ``*.tsbuildinfo``) so the manifest
+    reflects only authored files. Bounded to ``max_files`` entries; on
+    overflow, returns the first ``max_files`` paths sorted lexicographically
+    plus a sentinel ``__truncated__`` key with the full count, so the agent
+    sees that the workspace is bigger than what it received.
+    """
+    import hashlib
+    from pathlib import Path
+
+    ws = Path(workspace_dir)
+    if not ws.is_dir():
+        return {}
+
+    skip_dirs = {"node_modules", "dist", ".next", "out", ".cache", ".git", "coverage"}
+    manifest: dict[str, str] = {}
+    truncated = 0
+    for path in sorted(ws.rglob("*")):
+        if not path.is_file():
+            continue
+        rel_parts = path.relative_to(ws).parts
+        if any(part in skip_dirs for part in rel_parts):
+            continue
+        if path.name.endswith(".tsbuildinfo"):
+            continue
+        if len(manifest) >= max_files:
+            truncated += 1
+            continue
+        try:
+            sha = hashlib.sha1(path.read_bytes()).hexdigest()[:12]
+        except Exception:
+            continue
+        manifest[str(path.relative_to(ws))] = sha
+    if truncated:
+        manifest["__truncated__"] = f"+{truncated} more files (cap={max_files})"
+    return manifest
+
+
 def _verify_package_json_unchanged(workspace_dir: str, stack: str = "node_nestjs") -> bool:
     """Return True if backend/package.json matches the canonical template, False if it diverged.
 
@@ -1434,6 +1477,11 @@ class SentinelLoopFlow(Flow[SentinelState]):
                     revision_notes=f"[Auto-retry {attempt}/{MAX_BUILD_RETRIES}] {feedback}",
                 )
 
+            # Surface what's already on disk so the leads patch instead of
+            # regenerate. Empty on attempt 1 (workspace freshly pre-baked but
+            # no agent code yet); populated on every retry. Capped at 600
+            # entries; the leads only need the path inventory, not contents.
+            existing_files = _workspace_file_manifest(self.state.workspace_dir)
             try:
                 crew = build_crew(cycle=self.state.cycle_count)
                 result = crew.kickoff(
@@ -1444,6 +1492,7 @@ class SentinelLoopFlow(Flow[SentinelState]):
                         "slug": slug,
                         "draft_id": self.state.draft_id or "unknown",
                         "revision_notes": feedback,
+                        "existing_files": existing_files,
                     }
                 )
             except Exception as e:
