@@ -163,6 +163,126 @@ class TestWorkspaceFileManifest:
         assert "+7 more files" in manifest["__truncated__"]
 
 
+class TestStderrClassification:
+    """``_classify_build_stderr`` extracts structured signal from raw build
+    output so retry feedback can be a surgical brief, not a 1500-char wall.
+    """
+
+    def test_classifies_ts2307_module_not_found(self):
+        from sentinel_v2.flows.sentinel_loop import _classify_build_stderr
+        stderr = (
+            "src/modules/reminders/reminders.service.ts:4:25 - error TS2307: "
+            "Cannot find module 'date-fns' or its corresponding type declarations."
+        )
+        c = _classify_build_stderr(stderr)
+        assert c["failure_class"] == "ts_module_not_found"
+        assert "src/modules/reminders/reminders.service.ts" in c["affected_files"]
+        assert "date-fns" in c["missing_imports"]
+
+    def test_classifies_ts2305_missing_export(self):
+        from sentinel_v2.flows.sentinel_loop import _classify_build_stderr
+        stderr = (
+            "src/prisma/prisma.service.ts:18:10 - error TS2305: "
+            "Module '\"@prisma/client\"' has no exported member 'PrismaClient'."
+        )
+        c = _classify_build_stderr(stderr)
+        assert c["failure_class"] == "ts_missing_export"
+        assert "PrismaClient" in c["missing_exports"]
+        assert "src/prisma/prisma.service.ts" in c["affected_files"]
+
+    def test_classifies_ts2339_property_missing(self):
+        from sentinel_v2.flows.sentinel_loop import _classify_build_stderr
+        stderr = (
+            "src/modules/stripe/stripe.service.ts:11:43 - error TS2339: "
+            "Property 'STRIPE_SECRET_KEY' does not exist on type 'ProcessEnv'."
+        )
+        c = _classify_build_stderr(stderr)
+        assert c["failure_class"] == "ts_property_missing"
+        assert "src/modules/stripe/stripe.service.ts" in c["affected_files"]
+
+    def test_classifies_next_parallel_routes(self):
+        from sentinel_v2.flows.sentinel_loop import _classify_build_stderr
+        stderr = (
+            "src/app/login/page.tsx\nYou cannot have two parallel pages that "
+            "resolve to the same path. Please check /(auth)/login and /login"
+        )
+        c = _classify_build_stderr(stderr)
+        assert c["failure_class"] == "next_parallel_routes"
+        assert "/(auth)/login" in c["parallel_route_paths"]
+        assert "/login" in c["parallel_route_paths"]
+
+    def test_classifies_next_module_not_found(self):
+        from sentinel_v2.flows.sentinel_loop import _classify_build_stderr
+        stderr = (
+            "Failed to compile.\n./src/app/dashboard/documents/page.tsx\n"
+            "Module not found: Can't resolve '@/components/ui/Button'"
+        )
+        c = _classify_build_stderr(stderr)
+        assert c["failure_class"] == "next_module_not_found"
+        assert "@/components/ui/Button" in c["missing_imports"]
+        assert "src/app/dashboard/documents/page.tsx" in c["affected_files"]
+
+    def test_classifies_eresolve(self):
+        from sentinel_v2.flows.sentinel_loop import _classify_build_stderr
+        stderr = "npm error code ERESOLVE\nnpm error ERESOLVE could not resolve"
+        c = _classify_build_stderr(stderr)
+        assert c["failure_class"] == "eresolve"
+
+    def test_classifies_generic_when_no_match(self):
+        from sentinel_v2.flows.sentinel_loop import _classify_build_stderr
+        c = _classify_build_stderr("some random output with no known signature")
+        assert c["failure_class"] == "generic"
+        assert c["raw_tail"]
+
+    def test_strips_ansi_color_codes(self):
+        from sentinel_v2.flows.sentinel_loop import _classify_build_stderr
+        stderr = "\x1b[91merror\x1b[0m TS2307: Cannot find module 'foo'"
+        c = _classify_build_stderr(stderr)
+        assert "\x1b[91m" not in c["raw_tail"]
+        assert "foo" in c["missing_imports"]
+
+    def test_caps_lists_at_twenty_entries(self):
+        from sentinel_v2.flows.sentinel_loop import _classify_build_stderr
+        # 30 distinct missing modules
+        stderr = "\n".join(f"Cannot find module 'mod{i}'" for i in range(30))
+        c = _classify_build_stderr(stderr)
+        assert len(c["missing_imports"]) == 20
+
+
+class TestWorkspaceManifestDiff:
+    """``_diff_workspace_manifests`` powers the agent-regression detector
+    that runs after each crew kickoff.
+    """
+
+    def test_added_modified_deleted(self):
+        from sentinel_v2.flows.sentinel_loop import _diff_workspace_manifests
+        pre = {"a.ts": "aaa111", "b.ts": "bbb222", "c.ts": "ccc333"}
+        post = {"b.ts": "bbb222", "c.ts": "ZZZ999", "d.ts": "ddd444"}
+        diff = _diff_workspace_manifests(pre, post)
+        assert diff["added"] == ["d.ts"]
+        assert diff["deleted"] == ["a.ts"]
+        assert diff["modified"] == ["c.ts"]
+
+    def test_ignores_truncation_sentinel(self):
+        from sentinel_v2.flows.sentinel_loop import _diff_workspace_manifests
+        pre = {"a.ts": "aaa111", "__truncated__": "+5 more files (cap=3)"}
+        post = {"a.ts": "aaa111", "__truncated__": "+8 more files (cap=3)"}
+        diff = _diff_workspace_manifests(pre, post)
+        assert diff == {"added": [], "modified": [], "deleted": []}
+
+    def test_empty_pre_treats_everything_as_added(self):
+        from sentinel_v2.flows.sentinel_loop import _diff_workspace_manifests
+        diff = _diff_workspace_manifests({}, {"a.ts": "aaa", "b.ts": "bbb"})
+        assert diff["added"] == ["a.ts", "b.ts"]
+        assert diff["deleted"] == []
+        assert diff["modified"] == []
+
+    def test_empty_post_treats_everything_as_deleted(self):
+        from sentinel_v2.flows.sentinel_loop import _diff_workspace_manifests
+        diff = _diff_workspace_manifests({"a.ts": "aaa", "b.ts": "bbb"}, {})
+        assert diff["deleted"] == ["a.ts", "b.ts"]
+
+
 class TestSentinelLoopFlowKickoff:
     """Tests for full kickoff flow (with mocked crews)."""
 

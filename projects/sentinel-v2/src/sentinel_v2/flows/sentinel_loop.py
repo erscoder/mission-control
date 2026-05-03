@@ -174,6 +174,133 @@ def _workspace_file_manifest(workspace_dir: str, max_files: int = 600) -> dict[s
     return manifest
 
 
+def _classify_build_stderr(stderr_tail: str) -> dict:
+    """Extract structured signal from raw build stderr.
+
+    Produces ``{failure_class, affected_files, missing_imports, missing_exports,
+    parallel_route_paths, raw_tail}`` so the retry feedback bullet-points
+    exactly which files to fix and which imports to satisfy. Compact,
+    deterministic, regex-only — no LLM call. Used to replace the 1500-char
+    raw stderr blob in revision_notes with something the leads can act on
+    surgically.
+
+    Failure classes (first match wins, generic catch-all last):
+      next_parallel_routes  - Next.js: two parallel pages at the same path
+      ts_module_not_found   - TS2307 / Cannot find module
+      ts_missing_export     - TS2305 / has no exported member
+      ts_property_missing   - TS2339 / Property X does not exist on Y
+      ts_type_mismatch      - TS2322 / TS2724 / TS2345
+      next_module_not_found - Next.js Module not found resolution
+      eresolve              - npm peer dep resolution failure
+      generic               - none of the above
+    """
+    import re
+
+    raw = stderr_tail or ""
+    # ANSI strip so regex sees plain text
+    no_ansi = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", raw)
+
+    out = {
+        "failure_class": "generic",
+        "affected_files": [],
+        "missing_imports": [],
+        "missing_exports": [],
+        "parallel_route_paths": [],
+        "raw_tail": no_ansi[-500:],
+    }
+
+    # Classification (first match wins)
+    if re.search(r"two parallel pages that resolve to the same path", no_ansi):
+        out["failure_class"] = "next_parallel_routes"
+    elif re.search(r"TS2307[: ]|Cannot find module", no_ansi):
+        out["failure_class"] = "ts_module_not_found"
+    elif re.search(r"TS2305[: ]|has no exported member", no_ansi):
+        out["failure_class"] = "ts_missing_export"
+    elif re.search(r"TS2339[: ]|does not exist on type", no_ansi):
+        out["failure_class"] = "ts_property_missing"
+    elif re.search(r"TS(2322|2345|2724)[: ]|is not assignable to type", no_ansi):
+        out["failure_class"] = "ts_type_mismatch"
+    elif re.search(r"Module not found.*Can't resolve", no_ansi):
+        out["failure_class"] = "next_module_not_found"
+    elif re.search(r"ERESOLVE|peer dep", no_ansi, re.IGNORECASE):
+        out["failure_class"] = "eresolve"
+
+    # Affected files: src/... or any rel path with .ts/.tsx/.js/.jsx/.json
+    affected = set()
+    for m in re.finditer(r"([\w./\-]+\.(?:tsx?|jsx?|json|prisma))(?::\d+)?", no_ansi):
+        path = m.group(1).lstrip("./")
+        # Skip stack-trace style absolute paths and node_modules noise
+        if path.startswith("/") or "node_modules/" in path:
+            continue
+        if path.endswith(".d.ts"):
+            continue
+        affected.add(path)
+    out["affected_files"] = sorted(affected)[:20]
+
+    # Missing imports: 'Cannot find module 'X'' or 'Can't resolve 'X''
+    missing_imports = set()
+    for m in re.finditer(r"Cannot find module ['\"]([^'\"]+)['\"]", no_ansi):
+        missing_imports.add(m.group(1))
+    for m in re.finditer(r"Can't resolve ['\"]([^'\"]+)['\"]", no_ansi):
+        missing_imports.add(m.group(1))
+    out["missing_imports"] = sorted(missing_imports)[:20]
+
+    # Missing exports: 'has no exported member 'X''
+    missing_exports = set()
+    for m in re.finditer(r"has no exported member ['\"`]?(\w+)['\"`]?", no_ansi):
+        missing_exports.add(m.group(1))
+    out["missing_exports"] = sorted(missing_exports)[:20]
+
+    # Parallel route paths: 'Please check /path1 and /path2'
+    parallel = set()
+    for m in re.finditer(r"Please check (/[\w/()\-]+) and (/[\w/()\-]+)", no_ansi):
+        parallel.add(m.group(1))
+        parallel.add(m.group(2))
+    out["parallel_route_paths"] = sorted(parallel)[:10]
+
+    return out
+
+
+def _format_retry_feedback(attempt: int, first_failure: str, classified: dict) -> str:
+    """Render structured stderr classification as a compact retry brief
+    for the build crew. Replaces the raw ``Stderr tail: ...`` blob.
+    """
+    lines = [
+        f"Build attempt {attempt} failed at {first_failure}.",
+        f"failure_class: {classified['failure_class']}",
+    ]
+    if classified["affected_files"]:
+        lines.append(f"affected_files: {classified['affected_files']}")
+    if classified["missing_imports"]:
+        lines.append(f"missing_imports: {classified['missing_imports']}")
+    if classified["missing_exports"]:
+        lines.append(f"missing_exports: {classified['missing_exports']}")
+    if classified["parallel_route_paths"]:
+        lines.append(f"parallel_route_paths: {classified['parallel_route_paths']}")
+    lines.append("")
+    lines.append("Patch ONLY the affected_files listed above. Add the missing")
+    lines.append("imports/exports they reference. Do NOT touch unrelated files.")
+    lines.append("")
+    lines.append("Raw stderr tail:")
+    lines.append(classified["raw_tail"])
+    return "\n".join(lines)
+
+
+def _diff_workspace_manifests(pre: dict, post: dict) -> dict:
+    """Compare two workspace manifests; return added/modified/deleted paths.
+
+    Sentinel keys (``__truncated__``) are ignored. Pure dict diff, no I/O.
+    """
+    pre_clean = {k: v for k, v in pre.items() if not k.startswith("__")}
+    post_clean = {k: v for k, v in post.items() if not k.startswith("__")}
+    pre_paths = set(pre_clean)
+    post_paths = set(post_clean)
+    added = sorted(post_paths - pre_paths)
+    deleted = sorted(pre_paths - post_paths)
+    modified = sorted(p for p in pre_paths & post_paths if pre_clean[p] != post_clean[p])
+    return {"added": added, "modified": modified, "deleted": deleted}
+
+
 def _verify_package_json_unchanged(workspace_dir: str, stack: str = "node_nestjs") -> bool:
     """Return True if backend/package.json matches the canonical template, False if it diverged.
 
@@ -1482,6 +1609,7 @@ class SentinelLoopFlow(Flow[SentinelState]):
             # no agent code yet); populated on every retry. Capped at 600
             # entries; the leads only need the path inventory, not contents.
             existing_files = _workspace_file_manifest(self.state.workspace_dir)
+            pre_kickoff_manifest = dict(existing_files)  # captured for diff verification
             try:
                 crew = build_crew(cycle=self.state.cycle_count)
                 result = crew.kickoff(
@@ -1662,14 +1790,56 @@ class SentinelLoopFlow(Flow[SentinelState]):
                 end_trace(_trace, output={"build_verification": "exhausted"}, level="ERROR")
                 return
 
-            feedback = (
-                f"Build attempt {attempt} produced code that fails `npm install` / "
-                f"`npm run build` at {first_failure}. Stderr tail:\n{tail[:1500]}\n\n"
-                "Read the errors carefully. Use `list_files` to identify the "
-                "offending file(s) and patch ONLY the broken imports, types, or "
-                "missing files. Do NOT regenerate the workspace from scratch; the "
-                "previous attempt's code is on disk."
+            # D: structured stderr classification replaces raw 1500-char tail.
+            # Gives the leads a typed failure_class + affected_files list to
+            # patch surgically, not a wall of ANSI-coloured text to skim.
+            classified = _classify_build_stderr(tail)
+            feedback = _format_retry_feedback(attempt, first_failure, classified)
+            log_event(
+                _trace,
+                "build_stderr_classified",
+                metadata={
+                    "failure_class": classified["failure_class"],
+                    "affected_files": classified["affected_files"],
+                    "missing_imports": classified["missing_imports"],
+                },
             )
+
+            # C: post-attempt workspace diff verification. If the lead deleted
+            # files NOT named in the failure stderr, that's agent regression
+            # (rotating which files they remember between retries). Append a
+            # named warning to the feedback so the next attempt sees exactly
+            # which files were lost and can re-author them surgically.
+            try:
+                post_kickoff_manifest = _workspace_file_manifest(self.state.workspace_dir)
+                ws_diff = _diff_workspace_manifests(pre_kickoff_manifest, post_kickoff_manifest)
+            except Exception as diff_err:  # noqa: BLE001 - defensive only
+                log.warning("Post-attempt workspace diff skipped: %s", diff_err)
+                ws_diff = {"added": [], "modified": [], "deleted": []}
+
+            stderr_text = " ".join(classified["affected_files"]) + " " + classified["raw_tail"]
+            unjustified_deletions = [
+                p for p in ws_diff["deleted"]
+                if p not in stderr_text
+                and not any(p.endswith(suffix) for suffix in (".tsbuildinfo",))
+            ]
+            if unjustified_deletions:
+                regression_warning = (
+                    "\n\nAGENT REGRESSION DETECTED — the previous attempt deleted "
+                    f"these files NOT named in the build stderr: {unjustified_deletions[:15]}. "
+                    "Re-author them in this attempt. Each one was working code from "
+                    "an earlier attempt; do not assume they should be replaced."
+                )
+                feedback += regression_warning
+                log.warning("Agent regression on attempt %d: deleted %d unjustified files",
+                            attempt, len(unjustified_deletions))
+                log_event(
+                    _trace,
+                    "agent_regression",
+                    level="WARNING",
+                    metadata={"attempt": attempt, "unjustified_deletions": unjustified_deletions[:15]},
+                )
+
             self._save_checkpoint()
             continue  # next attempt
 
