@@ -59,15 +59,27 @@ RESEARCH → MATCH → BUILD → APPROVE (human feedback) → DEPLOY
 
 4. Run Sentinel V2:
    ```bash
-   # Run once (single cycle)
-   uv run python -m sentinel_v2.main --mode once
+   # Daemon mode - REQUIRED to use Docker (sandboxed)
+   docker compose up -d sentinel flask
+   docker compose logs -f sentinel
 
-   # Run in daemon mode (continuous loop)
-   uv run python -m sentinel_v2.main --mode daemon
+   # One-shot debugging on bare mac (controlled inputs only)
+   uv run python -m sentinel_v2.main --mode once
 
    # Visualize the flow graph
    uv run python -m sentinel_v2.main --mode plot
    ```
+
+### Daemon execution policy (sandbox)
+
+The continuous daemon MUST run inside Docker (`docker compose up -d sentinel`). Never run `--mode daemon` directly on the bare mac for any production / continuous use.
+
+Build and deploy crews shell out heavily (npm, prisma, flyctl, rm, mv, cp, ...) and several `subprocess.run` paths bypass `RunShellTool`'s argv validation (`_verify_npm_build`, `fly_tool`, `osv_scanner_tool`, `shared_postgres`). Bare-mac execution re-exposes the entire host filesystem to LLM-driven shell calls. Inside Docker, the only host path the agent can reach is `~/Sentinel/` via the bind-mount in `docker-compose.yml`; every other host path is physically unreachable from the container's mount namespace.
+
+Operator notes:
+- Files written by the daemon inside `~/Sentinel/draft_*` are `root:root` on the mac (container runs as root). Cleanup needs `sudo rm -rf ~/Sentinel/draft_X` or `docker exec sentinel rm -rf /root/Sentinel/draft_X`.
+- The sandbox protects against agent-driven destructive shell. It does NOT protect against an attacker with shell on the mac (`docker exec sentinel bash` bypasses every guard).
+- macOS bind perf: if `npm install` of a large workspace becomes painfully slow, switch the mount to `${HOME}/Sentinel:/root/Sentinel:delegated`. Don't pre-optimize.
 
 ## Architecture
 

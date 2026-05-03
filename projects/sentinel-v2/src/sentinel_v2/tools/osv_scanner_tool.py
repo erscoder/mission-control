@@ -16,10 +16,13 @@ import logging
 import os
 import shutil
 import subprocess
+from pathlib import Path
 from typing import Any, Type
 
 from crewai.tools import BaseTool
 from pydantic import BaseModel, Field
+
+from sentinel_v2.tools.file_tool import WORKSPACES_ROOT
 
 log = logging.getLogger("sentinel_v2.tools.osv")
 
@@ -105,6 +108,17 @@ class OsvScannerTool(BaseTool):
     def _run(self, scan_dir: str) -> str:
         if not shutil.which("osv-scanner"):
             return json.dumps({"error": "osv-scanner binary not on PATH"})
+        # Defense-in-depth: even with the daemon running inside a container
+        # bind-mounted only at /root/Sentinel, an agent calling
+        # osv_scan('/etc') still wanders info-disclosure paths. Reject any
+        # scan_dir that is not the workspaces root or a subpath of it.
+        try:
+            root = WORKSPACES_ROOT.resolve()
+            target = Path(scan_dir).resolve()
+        except Exception as e:
+            return json.dumps({"error": f"scan_dir resolve failed: {e}"})
+        if target != root and not str(target).startswith(str(root) + os.sep):
+            return json.dumps({"error": f"scan_dir {scan_dir!r} escapes workspaces root {root}"})
         if not os.path.isdir(scan_dir):
             return json.dumps({"error": f"scan_dir not a directory: {scan_dir}"})
 

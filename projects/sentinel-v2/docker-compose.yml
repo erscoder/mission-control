@@ -13,6 +13,11 @@ services:
     env_file: .env
     environment:
       SENTINEL_TMPDIR: /tmp/sentinel_shared
+      # Sandbox: daemon writes draft workspaces under /root/Sentinel inside
+      # the container, which is bind-mounted from the operator's ~/Sentinel
+      # below. Pinning this env removes the host-vs-container path drift that
+      # WORKSPACES_ROOT would otherwise pick up via os.path.expanduser("~").
+      SENTINEL_WORKSPACES_ROOT: /root/Sentinel
       # Langfuse tracing — points to shared instance in synapseia-network.
       # Override LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY via .env if
       # you've created a dedicated Sentinel project in the Langfuse UI.
@@ -27,6 +32,11 @@ services:
     volumes:
       - sentinel_tmp:/tmp/sentinel_shared
       - ./sentinel.db:/app/sentinel.db
+      # Workspace sandbox bind. Linux container kernel namespace makes every
+      # OTHER host path physically unreachable from agent shell calls — even
+      # the subprocess.run paths that bypass RunShellTool. Operator keeps
+      # visibility on ~/Sentinel/draft_* from the mac for debugging.
+      - ${HOME}/Sentinel:/root/Sentinel
     restart: unless-stopped
     healthcheck:
       # find -mmin avoids spawning the Python interpreter (slow under cycle load).
@@ -43,9 +53,14 @@ services:
     env_file: .env
     environment:
       SENTINEL_TMPDIR: /tmp/sentinel_shared
+      # Same workspace root as the daemon so any future UI feature that
+      # introspects workspace files resolves the same paths the daemon writes.
+      SENTINEL_WORKSPACES_ROOT: /root/Sentinel
     volumes:
       - sentinel_tmp:/tmp/sentinel_shared
       - ./sentinel.db:/app/sentinel.db
+      # Read-only bind: dashboard never mutates workspaces; only the daemon does.
+      - ${HOME}/Sentinel:/root/Sentinel:ro
     ports:
       - "5173:5173"
     restart: unless-stopped
