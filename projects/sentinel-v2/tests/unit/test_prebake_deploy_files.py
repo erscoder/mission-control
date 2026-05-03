@@ -147,6 +147,49 @@ def test_prebake_substitutes_slug_correctly(tmp_path: Path) -> None:
 
     pkg = json.loads((workspace / "backend" / "package.json").read_text())
     assert pkg["name"] == "myslug-backend"
+
+
+def test_prebake_frontend_writes_canonical_ui_kit(tmp_path: Path) -> None:
+    """Canonical UI primitives must be pre-baked under frontend/src/.
+
+    Build agents have repeatedly imported `@/components/ui/Button` (or
+    relative paths to it) but skipped writing the file on retries,
+    leaving every page that uses Button with `Module not found: Can't
+    resolve '@/components/ui/Button'` and exhausting the build retry
+    budget on a missing-primitive issue. Pinning Button + Card + Input
+    + Label + lib/utils.ts so every workspace boots with a working UI
+    kit and agent regression cannot remove them.
+    """
+    from sentinel_v2.flows.sentinel_loop import _prebake_frontend_files
+
+    workspace = tmp_path / "draft_c1_app"
+    workspace.mkdir()
+
+    written = _prebake_frontend_files(str(workspace), "myapp")
+
+    fe = workspace / "frontend"
+    expected_rels = {
+        "src/components/ui/Button.tsx",
+        "src/components/ui/Card.tsx",
+        "src/components/ui/Input.tsx",
+        "src/components/ui/Label.tsx",
+        "src/lib/utils.ts",
+    }
+    for rel in expected_rels:
+        assert (fe / rel).is_file(), f"Canonical primitive {rel} missing from frontend bake"
+    assert expected_rels.issubset(set(written.keys()))
+
+    # Canonical exports the build agent imports must be present.
+    button = (fe / "src/components/ui/Button.tsx").read_text()
+    assert "export const Button" in button
+    assert "export default Button" in button
+
+    card = (fe / "src/components/ui/Card.tsx").read_text()
+    for export_name in ("Card", "CardHeader", "CardTitle", "CardContent", "CardFooter"):
+        assert f"export const {export_name}" in card
+
+    utils = (fe / "src/lib/utils.ts").read_text()
+    assert "export function cn" in utils
     # Sanity: the unsubstituted token must not survive in any baked file (walk
     # the whole baked tree, including nested protected source files).
     for path in (workspace / "backend").rglob("*"):
