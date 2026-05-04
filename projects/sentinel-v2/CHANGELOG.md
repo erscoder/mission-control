@@ -5,6 +5,10 @@ the commit hash so every change is traceable and auditable.
 
 ## [Unreleased]
 
+## 2026-05-04 · d538bf4 - Bump strategic_manager max_iter 25 -> 50
+
+ComplianceDesk re-build attempt 1/6 (post-A+B+C+D + frontend pkg pin) escalated on `blocked_agent_loop` after the `strategic_manager` exhausted the 25-iter cap on the 6-stage planner chain. CrewAI then tried to set `TaskOutput.raw = [ChatCompletionMessageFunctionTool, ...]` and Pydantic rejected it because the field is `str`. The whole cycle stopped on attempt 1 with all 5 retries forfeited. The 25-iter cap was set before the planner chain expanded from one monolithic `plan_task` to six sequential stages (architecture / domain / services / api / infra / files). The manager now reasons across all six during sequential delegation and routinely needs more than 25 iter on a non-trivial app like ComplianceDesk. Match the leads' `max_iter=50` so the manager can converge. Token cost rises linearly but a no-iter cap that kills the cycle is strictly worse than a permissive one — the post-build verification gate + QA fail-closed gate + critical override still catch real failures.
+
 ## 2026-05-04 · 2f435e2 - Pin @hookform/resolvers + zustand + date-fns in canonical frontend
 
 ComplianceDesk re-build cycle (post-A+B+C+D, attempts 1-6) exhausted at frontend.build with `Module not found` on three packages the agent imports out of habit but the canonical frontend pkg.json never pinned: `@hookform/resolvers` (paired with the already-pinned react-hook-form for zod-validated forms; agents always import `@hookform/resolvers/zod`), `zustand` (state management; agent reaches for it on dashboard pages), `date-fns` (already in backend canonical; frontend imports it for formatting too). Same shape as prior pre-pin commits (next-auth in 556f493, @nestjs/schedule in 15a064c). Agent doesn't need to install them on top; canonical pre-bake handles it before every build attempt. Lands for next build cycle. 8/8 prebake tests pass.
