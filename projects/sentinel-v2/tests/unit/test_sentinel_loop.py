@@ -222,6 +222,26 @@ class TestStderrClassification:
         assert "@/components/ui/Button" in c["missing_imports"]
         assert "src/app/dashboard/documents/page.tsx" in c["affected_files"]
 
+    def test_classifies_ts2353_unknown_property(self):
+        from sentinel_v2.flows.sentinel_loop import _classify_build_stderr
+        stderr = (
+            "src/modules/subscriptions/subscriptions.service.ts:118:20 - error TS2353: "
+            "Object literal may only specify known properties, and "
+            "'stripeSubscriptionId' does not exist in type 'SubscriptionWhereInput'."
+        )
+        c = _classify_build_stderr(stderr)
+        assert c["failure_class"] == "ts_unknown_property"
+
+    def test_classifies_ts4073_private_name(self):
+        from sentinel_v2.flows.sentinel_loop import _classify_build_stderr
+        stderr = (
+            "src/modules/reminders/reminders.controller.ts:13:30 - error TS4073: "
+            "Parameter 'filters' of public method from exported class has or "
+            "is using private name 'ReminderFiltersDto'."
+        )
+        c = _classify_build_stderr(stderr)
+        assert c["failure_class"] == "ts_private_name"
+
     def test_classifies_eresolve(self):
         from sentinel_v2.flows.sentinel_loop import _classify_build_stderr
         stderr = "npm error code ERESOLVE\nnpm error ERESOLVE could not resolve"

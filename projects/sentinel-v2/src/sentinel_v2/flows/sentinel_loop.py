@@ -220,6 +220,10 @@ def _classify_build_stderr(stderr_tail: str) -> dict:
         out["failure_class"] = "ts_property_missing"
     elif re.search(r"TS(2322|2345|2724)[: ]|is not assignable to type", no_ansi):
         out["failure_class"] = "ts_type_mismatch"
+    elif re.search(r"TS2353[: ]|Object literal may only specify known properties", no_ansi):
+        out["failure_class"] = "ts_unknown_property"
+    elif re.search(r"TS407[345][: ]|has or is using private name", no_ansi):
+        out["failure_class"] = "ts_private_name"
     elif re.search(r"Module not found.*Can't resolve", no_ansi):
         out["failure_class"] = "next_module_not_found"
     elif re.search(r"ERESOLVE|peer dep", no_ansi, re.IGNORECASE):
